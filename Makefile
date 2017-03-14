@@ -4,4 +4,4 @@ passthrough: src/passthrough.c
 test: passthrough
 	mkdir -p mnt_test || true
 	fusermount3 -u mnt_test || true
-	./passthrough -f mnt_test
+	./passthrough -f --path=`realpath test_path` mnt_test

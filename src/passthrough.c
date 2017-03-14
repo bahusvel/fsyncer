@@ -37,6 +37,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <fuse.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -412,7 +413,49 @@ static struct fuse_operations xmp_oper = {
 #endif
 };
 
+/*
+ * Command line options
+ *
+ * We can't set default values for the char* fields here because
+ * fuse_opt_parse would attempt to free() them when the user specifies
+ * different values on the command line.
+ */
+static struct options {
+	const char *real_path;
+	int show_help;
+} options;
+
+static void show_help(const char *progname) {
+	printf("usage: %s [options] <mountpoint>\n\n", progname);
+}
+
+#define OPTION(t, p)                                                           \
+	{ t, offsetof(struct options, p), 1 }
+static const struct fuse_opt option_spec[] = {
+	OPTION("--path=%s", real_path), OPTION("-h", show_help),
+	OPTION("--help", show_help), FUSE_OPT_END};
+
 int main(int argc, char *argv[]) {
 	umask(0);
-	return fuse_main(argc, argv, &xmp_oper, NULL);
+	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
+	/* Set defaults -- we have to use strdup so that
+	   fuse_opt_parse can free the defaults if other
+	   values are specified */
+	options.real_path = strdup("/");
+
+	/* Parse options */
+	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
+		return 1;
+
+	/* When --help is specified, first print our own file-system
+	   specific help text, then signal fuse_main to show
+	   additional help (by adding `--help` to the options again)
+	   without usage: line (by setting argv[0] to the empty
+	   string) */
+	if (options.show_help) {
+		show_help(argv[0]);
+		args.argv[0] = (char *)"";
+	}
+	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
 }
