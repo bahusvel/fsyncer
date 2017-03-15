@@ -23,19 +23,24 @@
 #include <sys/xattr.h>
 #endif
 
+#include "defs.h"
+
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
 
 	/* On Linux this could just be 'mknod(path, mode, rdev)' but this
 	   is more portable */
 	if (S_ISREG(mode)) {
-		res = open(path, O_CREAT | O_EXCL | O_WRONLY, mode);
+		res = open(real_path, O_CREAT | O_EXCL | O_WRONLY, mode);
 		if (res >= 0)
 			res = close(res);
 	} else if (S_ISFIFO(mode))
-		res = mkfifo(path, mode);
+		res = mkfifo(real_path, mode);
 	else
-		res = mknod(path, mode, rdev);
+		res = mknod(real_path, mode, rdev);
 	if (res == -1)
 		return -errno;
 
@@ -45,7 +50,10 @@ int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 int xmp_mkdir(const char *path, mode_t mode) {
 	int res;
 
-	res = mkdir(path, mode);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = mkdir(real_path, mode);
 	if (res == -1)
 		return -errno;
 
@@ -55,7 +63,10 @@ int xmp_mkdir(const char *path, mode_t mode) {
 int xmp_unlink(const char *path) {
 	int res;
 
-	res = unlink(path);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = unlink(real_path);
 	if (res == -1)
 		return -errno;
 
@@ -65,7 +76,10 @@ int xmp_unlink(const char *path) {
 int xmp_rmdir(const char *path) {
 	int res;
 
-	res = rmdir(path);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = rmdir(real_path);
 	if (res == -1)
 		return -errno;
 
@@ -75,7 +89,13 @@ int xmp_rmdir(const char *path) {
 int xmp_symlink(const char *from, const char *to) {
 	int res;
 
-	res = symlink(from, to);
+	char real_from[MAX_PATH_SIZE];
+	fake_root(real_from, options.real_path, from);
+
+	char real_to[MAX_PATH_SIZE];
+	fake_root(real_to, options.real_path, to);
+
+	res = symlink(real_from, real_to);
 	if (res == -1)
 		return -errno;
 
@@ -88,7 +108,13 @@ int xmp_rename(const char *from, const char *to, unsigned int flags) {
 	if (flags)
 		return -EINVAL;
 
-	res = rename(from, to);
+	char real_from[MAX_PATH_SIZE];
+	fake_root(real_from, options.real_path, from);
+
+	char real_to[MAX_PATH_SIZE];
+	fake_root(real_to, options.real_path, to);
+
+	res = rename(real_from, real_to);
 	if (res == -1)
 		return -errno;
 
@@ -98,7 +124,13 @@ int xmp_rename(const char *from, const char *to, unsigned int flags) {
 int xmp_link(const char *from, const char *to) {
 	int res;
 
-	res = link(from, to);
+	char real_from[MAX_PATH_SIZE];
+	fake_root(real_from, options.real_path, from);
+
+	char real_to[MAX_PATH_SIZE];
+	fake_root(real_to, options.real_path, to);
+
+	res = link(real_from, real_to);
 	if (res == -1)
 		return -errno;
 
@@ -109,7 +141,10 @@ int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	(void)fi;
 	int res;
 
-	res = chmod(path, mode);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = chmod(real_path, mode);
 	if (res == -1)
 		return -errno;
 
@@ -121,7 +156,10 @@ int xmp_chown(const char *path, uid_t uid, gid_t gid,
 	(void)fi;
 	int res;
 
-	res = lchown(path, uid, gid);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = lchown(real_path, uid, gid);
 	if (res == -1)
 		return -errno;
 
@@ -132,7 +170,10 @@ int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 	(void)fi;
 	int res;
 
-	res = truncate(path, size);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = truncate(real_path, size);
 	if (res == -1)
 		return -errno;
 
@@ -143,9 +184,14 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 			  struct fuse_file_info *fi) {
 	int fd;
 	int res;
-	printf("Write %.*s @ %lu to %s\n", size, buf, offset, path);
 	(void)fi;
-	fd = open(path, O_WRONLY);
+
+	printf("Write %.*s @ %lu to %s\n", size, buf, offset, path);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	fd = open(real_path, O_WRONLY);
 	if (fd == -1)
 		return -errno;
 
@@ -166,7 +212,10 @@ int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
 	if (mode)
 		return -EOPNOTSUPP;
 
-	fd = open(path, O_WRONLY);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	fd = open(real_path, O_WRONLY);
 	if (fd == -1)
 		return -errno;
 
@@ -181,14 +230,22 @@ int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
 /* xattr operations are optional and can safely be left unimplemented */
 int xmp_setxattr(const char *path, const char *name, const char *value,
 				 size_t size, int flags) {
-	int res = lsetxattr(path, name, value, size, flags);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	int res = lsetxattr(real_path, name, value, size, flags);
 	if (res == -1)
 		return -errno;
 	return 0;
 }
 
 int xmp_removexattr(const char *path, const char *name) {
-	int res = lremovexattr(path, name);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	int res = lremovexattr(real_path, name);
 	if (res == -1)
 		return -errno;
 	return 0;

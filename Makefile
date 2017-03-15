@@ -1,4 +1,4 @@
-CFLAGS=-D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
+CFLAGS= -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
 
 DEPS = include/defs.h
 _OBJ = main.o misc.o read.o write.o

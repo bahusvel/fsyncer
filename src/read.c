@@ -23,12 +23,17 @@
 #include <sys/xattr.h>
 #endif
 
+#include "defs.h"
+
 int xmp_getattr(const char *path, struct stat *stbuf,
 				struct fuse_file_info *fi) {
 	(void)fi;
 	int res;
 
-	res = lstat(path, stbuf);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = lstat(real_path, stbuf);
 	if (res == -1)
 		return -errno;
 
@@ -38,7 +43,10 @@ int xmp_getattr(const char *path, struct stat *stbuf,
 int xmp_access(const char *path, int mask) {
 	int res;
 
-	res = access(path, mask);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = access(real_path, mask);
 	if (res == -1)
 		return -errno;
 
@@ -48,7 +56,10 @@ int xmp_access(const char *path, int mask) {
 int xmp_readlink(const char *path, char *buf, size_t size) {
 	int res;
 
-	res = readlink(path, buf, size - 1);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = readlink(real_path, buf, size - 1);
 	if (res == -1)
 		return -errno;
 
@@ -66,7 +77,10 @@ int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	(void)fi;
 	(void)flags;
 
-	dp = opendir(path);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	dp = opendir(real_path);
 	if (dp == NULL)
 		return -errno;
 
@@ -89,8 +103,11 @@ int xmp_utimens(const char *path, const struct timespec ts[2],
 	(void)fi;
 	int res;
 
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
 	/* don't use utime/utimes since they follow symlinks */
-	res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
+	res = utimensat(0, real_path, ts, AT_SYMLINK_NOFOLLOW);
 	if (res == -1)
 		return -errno;
 
@@ -101,7 +118,10 @@ int xmp_utimens(const char *path, const struct timespec ts[2],
 int xmp_open(const char *path, struct fuse_file_info *fi) {
 	int res;
 
-	res = open(path, fi->flags);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = open(real_path, fi->flags);
 	if (res == -1)
 		return -errno;
 
@@ -113,9 +133,12 @@ int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 			 struct fuse_file_info *fi) {
 	int fd;
 	int res;
-
 	(void)fi;
-	fd = open(path, O_RDONLY);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	fd = open(real_path, O_RDONLY);
 	if (fd == -1)
 		return -errno;
 
@@ -130,7 +153,10 @@ int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 int xmp_statfs(const char *path, struct statvfs *stbuf) {
 	int res;
 
-	res = statvfs(path, stbuf);
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	res = statvfs(real_path, stbuf);
 	if (res == -1)
 		return -errno;
 
@@ -139,14 +165,22 @@ int xmp_statfs(const char *path, struct statvfs *stbuf) {
 
 #ifdef HAVE_SETXATTR
 int xmp_getxattr(const char *path, const char *name, char *value, size_t size) {
-	int res = lgetxattr(path, name, value, size);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	int res = lgetxattr(real_path, name, value, size);
 	if (res == -1)
 		return -errno;
 	return res;
 }
 
 int xmp_listxattr(const char *path, char *list, size_t size) {
-	int res = llistxattr(path, list, size);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	int res = llistxattr(real_path, list, size);
 	if (res == -1)
 		return -errno;
 	return res;

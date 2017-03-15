@@ -82,8 +82,8 @@ static void show_help(const char *progname) {
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
-	OPTION("--path=%s", real_path), OPTION("-h", show_help),
-	OPTION("--help", show_help), FUSE_OPT_END};
+	OPTION("--path=%s", real_path), OPTION("--async", async),
+	OPTION("-h", show_help), OPTION("--help", show_help), FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
 	umask(0);
