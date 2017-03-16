@@ -8,10 +8,19 @@ ODIR=build
 $(ODIR)/%.o: src/%.c $(DEPS)
 	gcc -c -o $@ $< $(CFLAGS)
 
+ll_passthrough: test/passthrough.c
+	gcc `pkg-config fuse3 --cflags --libs` -o $@ $^
+
+test_ll: ll_passthrough
+	mkdir mnt_test || true
+	fusermount3 -u mnt_test || true
+	./ll_passthrough -f mnt_test
+
 build/passthrough: $(OBJ)
+	mkdir build || true
 	gcc -o $@ $^ `pkg-config fuse3 --libs` -L/usr/local/lib
 
 test: build/passthrough
-	mkdir -p mnt_test || true
+	mkdir mnt_test || true
 	fusermount3 -u mnt_test || true
 	build/passthrough -f --path=`realpath test_path` mnt_test

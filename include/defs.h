@@ -27,6 +27,7 @@
 struct options {
 	const char *real_path;
 	int async;
+	int port;
 	int show_help;
 } options;
 

@@ -14,16 +14,26 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <fuse.h>
+#include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <pthread.h>
 #ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
 #endif
 #include "defs.h"
+
+#define on_error(...) { fprintf(stderr, __VA_ARGS__); fflush(stderr); exit(1); }
+#define BUFFER_SIZE 1024
+
+static int server_fd;
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
@@ -37,8 +47,6 @@ static struct fuse_operations xmp_oper = {
 	.access = xmp_access,
 	.readlink = xmp_readlink,
 	.readdir = xmp_readdir,
-	.mknod = xmp_mknod,
-	.mkdir = xmp_mkdir,
 	.symlink = xmp_symlink,
 	.unlink = xmp_unlink,
 	.rmdir = xmp_rmdir,
@@ -68,9 +76,7 @@ static struct fuse_operations xmp_oper = {
 };
 
 /*
- * Command line options
- *
- * We can't set default values for the char* fields here because
+ * Command line optionsvoid *(*__start_routine)(void *)or the char* fields here because
  * fuse_opt_parse would attempt to free() them when the user specifies
  * different values on the command line.
  */
@@ -79,10 +85,24 @@ static void show_help(const char *progname) {
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 }
 
+static void *server_loop(void *arg) {
+	struct sockaddr_in client;
+	int client_fd;
+	char buf[BUFFER_SIZE];
+
+	while (1) {
+		socklen_t client_len = sizeof(client);
+		client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
+		if (client_fd < 0) on_error("Could not establish new connection\n");
+		// TODO negotiate with client
+		// TODO add client to replicate_to list
+	}
+}
+
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
-	OPTION("--path=%s", real_path), OPTION("--async", async),
+	OPTION("--path=%s", real_path), OPTION("--port=%d", port), OPTION("--async", async),
 	OPTION("-h", show_help), OPTION("--help", show_help), FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
@@ -93,6 +113,7 @@ int main(int argc, char *argv[]) {
 	   fuse_opt_parse can free the defaults if other
 	   values are specified */
 	options.real_path = strdup("/");
+	options.port = 222;
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
@@ -107,5 +128,30 @@ int main(int argc, char *argv[]) {
 		show_help(argv[0]);
 		args.argv[0] = (char *)"";
 	}
+
+	server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (server_fd < 0) on_error("Could not create socket\n");
+
+	struct sockaddr_in server = {
+			.sin_family = AF_INET,
+			.sin_port = htons(options.port),
+			.sin_addr.s_addr = htonl(INADDR_ANY)
+	};
+
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, 1, sizeof(1));
+
+	int err = bind(server_fd,(struct sockaddr *) &server, sizeof(server));
+	if (err < 0) on_error("Could not bind socket\n");
+
+	err = listen(server_fd, 128);
+	if (err < 0) on_error("Could not listen\n");
+
+	pthread_t server_thread;
+
+	err = pthread_create(&server_thread, NULL, server_loop, NULL);
+	if (err) on_error("Failed to start server thread");
+
+
 	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
 }
