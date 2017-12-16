@@ -14,23 +14,28 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <fuse.h>
-#include <stdlib.h>
+#include <netinet/in.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <pthread.h>
 #ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
 #endif
 #include "defs.h"
 
-#define on_error(...) { fprintf(stderr, __VA_ARGS__); fflush(stderr); exit(1); }
+#define on_error(...)                                                          \
+	{                                                                          \
+		fprintf(stderr, __VA_ARGS__);                                          \
+		fflush(stderr);                                                        \
+		exit(1);                                                               \
+	}
 #define BUFFER_SIZE 1024
 
 static int server_fd;
@@ -76,8 +81,8 @@ static struct fuse_operations xmp_oper = {
 };
 
 /*
- * Command line optionsvoid *(*__start_routine)(void *)or the char* fields here because
- * fuse_opt_parse would attempt to free() them when the user specifies
+ * Command line optionsvoid *(*__start_routine)(void *)or the char* fields here
+ * because fuse_opt_parse would attempt to free() them when the user specifies
  * different values on the command line.
  */
 
@@ -92,8 +97,9 @@ static void *server_loop(void *arg) {
 
 	while (1) {
 		socklen_t client_len = sizeof(client);
-		client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
-		if (client_fd < 0) on_error("Could not establish new connection\n");
+		client_fd = accept(server_fd, (struct sockaddr *)&client, &client_len);
+		if (client_fd < 0)
+			on_error("Could not establish new connection\n");
 		// TODO negotiate with client
 		// TODO add client to replicate_to list
 	}
@@ -102,8 +108,9 @@ static void *server_loop(void *arg) {
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
-	OPTION("--path=%s", real_path), OPTION("--port=%d", port), OPTION("--async", async),
-	OPTION("-h", show_help), OPTION("--help", show_help), FUSE_OPT_END};
+	OPTION("--path=%s", real_path), OPTION("--port=%d", port),
+	OPTION("--async", async),		OPTION("-h", show_help),
+	OPTION("--help", show_help),	FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
 	umask(0);
@@ -131,27 +138,28 @@ int main(int argc, char *argv[]) {
 
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-	if (server_fd < 0) on_error("Could not create socket\n");
+	if (server_fd < 0)
+		on_error("Could not create socket\n");
 
-	struct sockaddr_in server = {
-			.sin_family = AF_INET,
-			.sin_port = htons(options.port),
-			.sin_addr.s_addr = htonl(INADDR_ANY)
-	};
+	struct sockaddr_in server = {.sin_family = AF_INET,
+								 .sin_port = htons(options.port),
+								 .sin_addr.s_addr = htonl(INADDR_ANY)};
 
 	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, 1, sizeof(1));
 
-	int err = bind(server_fd,(struct sockaddr *) &server, sizeof(server));
-	if (err < 0) on_error("Could not bind socket\n");
+	int err = bind(server_fd, (struct sockaddr *)&server, sizeof(server));
+	if (err < 0)
+		on_error("Could not bind socket\n");
 
 	err = listen(server_fd, 128);
-	if (err < 0) on_error("Could not listen\n");
+	if (err < 0)
+		on_error("Could not listen\n");
 
 	pthread_t server_thread;
 
 	err = pthread_create(&server_thread, NULL, server_loop, NULL);
-	if (err) on_error("Failed to start server thread");
-
+	if (err)
+		on_error("Failed to start server thread");
 
 	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
 }

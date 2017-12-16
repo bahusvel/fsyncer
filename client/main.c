@@ -1,30 +1,7 @@
-#define FUSE_USE_VERSION 30
-
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
-#ifdef linux
-/* For pread()/pwrite()/utimensat() */
-#define _XOPEN_SOURCE 700
-#endif
-
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <fuse.h>
-#include <stddef.h>
+#include <defs.h>
 #include <stdio.h>
-#include <string.h>
+#include <stdlib.h>
 #include <sys/stat.h>
-#include <sys/time.h>
-#include <unistd.h>
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
-
-#include "defs.h"
-#include "ops.h"
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
@@ -138,8 +115,7 @@ int xmp_link(const char *from, const char *to) {
 	return 0;
 }
 
-int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
-	(void)fi;
+int xmp_chmod(const char *path, mode_t mode) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
@@ -152,9 +128,7 @@ int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	return 0;
 }
 
-int xmp_chown(const char *path, uid_t uid, gid_t gid,
-			  struct fuse_file_info *fi) {
-	(void)fi;
+int xmp_chown(const char *path, uid_t uid, gid_t gid) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
@@ -167,8 +141,7 @@ int xmp_chown(const char *path, uid_t uid, gid_t gid,
 	return 0;
 }
 
-int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
-	(void)fi;
+int xmp_truncate(const char *path, off_t size) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
@@ -181,11 +154,9 @@ int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 	return 0;
 }
 
-int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
-			  struct fuse_file_info *fi) {
+int xmp_write(const char *path, const char *buf, size_t size, off_t offset) {
 	int fd;
 	int res;
-	(void)fi;
 
 	printf("Write %.*s @ %lu to %s\n", size, buf, offset, path);
 
@@ -205,11 +176,9 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 }
 
 #ifdef HAVE_POSIX_FALLOCATE
-int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
-				  struct fuse_file_info *fi) {
+int xmp_fallocate(const char *path, int mode, off_t offset, off_t length) {
 	int fd;
 	int res;
-	(void)fi;
 	if (mode)
 		return -EOPNOTSUPP;
 
@@ -251,5 +220,6 @@ int xmp_removexattr(const char *path, const char *name) {
 		return -errno;
 	return 0;
 }
-
 #endif
+
+int main() { return 0; }
