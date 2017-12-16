@@ -22,11 +22,6 @@ enum op_type {
 	REMOVEXATTR
 };
 
-#define SIZEOF_MODE_T 4
-#define SIZEOF_DEV_T 8
-#define SIZEOF_UID_T 4
-#define SIZEOF_GID_T 4
-
 struct op_message {
 	enum op_type op_type;
 	uint32_t op_length;
@@ -43,7 +38,7 @@ int send_op(op_message message) {}
 	*(typeof(val) *)(msg_data + i) = val;                                      \
 	i += sizeof(val);
 #define ENCODE_OPAQUE(size, buf)                                               \
-	ENCODE_VALUE(size);                                                        \
+	ENCODE_VALUE(htobe32(size));                                               \
 	memcpy(msg_data + i, buf, size);                                           \
 	i += size;
 
@@ -55,19 +50,19 @@ int send_op(op_message message) {}
 	off_t i = 0;                                                               \
 	unsigned char *msg_data = msg->data;
 
-op_message encode_mknod(const char *path, mode_t mode, dev_t rdev) {
-	NEW_MSG(strlen(path) + 1 + SIZEOF_MODE_T + SIZEOF_DEV_T, MKNOD);
+op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);
 	ENCODE_STRING(path);
-	ENCODE_VALUE(mode);
-	ENCODE_VALUE(rdev);
+	ENCODE_VALUE(htobe32(mode));
+	ENCODE_VALUE(htobe32(rdev));
 	return msg;
 }
 void decode_mknod() {}
 
-op_message encode_mkdir(const char *path, mode_t mode) {
-	NEW_MSG(strlen(path) + 1 + SIZEOF_MODE_T, MKDIR);
+op_message encode_mkdir(const char *path, uint32_t mode) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode), MKDIR);
 	ENCODE_STRING(path);
-	ENCODE_VALUE(mode);
+	ENCODE_VALUE(htobe32(mode));
 	return msg;
 }
 void decode_mkdir() {}
@@ -98,7 +93,7 @@ op_message encode_rename(const char *from, const char *to, uint32_t flags) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1 + sizeof(flags), RENAME);
 	ENCODE_STRING(from);
 	ENCODE_STRING(to);
-	ENCODE_VALUE(flags);
+	ENCODE_VALUE(htobe32(flags));
 	return msg;
 }
 void decode_rename() {}
@@ -111,19 +106,19 @@ op_message encode_link(const char *from, const char *to) {
 }
 void decode_link() {}
 
-op_message encode_chmod(const char *path, mode_t mode) {
-	NEW_MSG(strlen(path) + 1 + SIZEOF_MODE_T, CHMOD);
+op_message encode_chmod(const char *path, uint32_t mode) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode), CHMOD);
 	ENCODE_STRING(path);
-	ENCODE_VALUE(mode);
+	ENCODE_VALUE(htobe32(mode));
 	return msg;
 }
 void decode_chmod() {}
 
-op_message encode_chown(const char *path, uid_t uid, gid_t gid) {
-	NEW_MSG(strlen(path) + 1 + SIZEOF_UID_T + SIZEOF_GID_T, CHOWN);
+op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
+	NEW_MSG(strlen(path) + 1 + sizeof(uid) + sizeof(gid), CHOWN);
 	ENCODE_STRING(path);
-	ENCODE_VALUE(uid);
-	ENCODE_VALUE(gid);
+	ENCODE_VALUE(htobe32(uid));
+	ENCODE_VALUE(htobe32(gid));
 	return msg;
 }
 void decode_chown() {}
@@ -131,7 +126,7 @@ void decode_chown() {}
 op_message encode_truncate(const char *path, int64_t size) {
 	NEW_MSG(strlen(path) + 1 + sizeof(size), TRUNCATE);
 	ENCODE_STRING(path);
-	ENCODE_VALUE(size);
+	ENCODE_VALUE(htobe64(size));
 	return msg;
 }
 void decode_truncate() {}
@@ -141,7 +136,7 @@ op_message encode_write(const char *path, const char *buf, uint64_t size,
 	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
 	ENCODE_STRING(path);
 	ENCODE_OPAQUE(size, buf);
-	ENCODE_VALUE(offset);
+	ENCODE_VALUE(htobe64(offset));
 	return msg;
 }
 void decode_write() {}
@@ -151,9 +146,9 @@ op_message encode_fallocate(const char *path, int32_t mode, int64_t offset,
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(offset) + sizeof(length),
 			FALLOCATE);
 	ENCODE_STRING(path);
-	ENCODE_VALUE(mode);
-	ENCODE_VALUE(offset);
-	ENCODE_VALUE(length);
+	ENCODE_VALUE(htobe32(mode));
+	ENCODE_VALUE(htobe64(offset));
+	ENCODE_VALUE(htobe64(length));
 	return msg;
 }
 void decode_fallocate() {}
@@ -166,7 +161,7 @@ op_message encode_setxattr(const char *path, const char *name,
 	ENCODE_STRING(path);
 	ENCODE_STRING(name);
 	ENCODE_OPAQUE(size, value);
-	ENCODE_VALUE(flags);
+	ENCODE_VALUE(htobe32(flags));
 	return msg;
 }
 void decode_setxattr() {}
