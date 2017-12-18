@@ -1,34 +1,10 @@
+#include "defs.h"
 #include <endian.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-
-enum op_type {
-	MKNOD,
-	MKDIR,
-	UNLINK,
-	RMDIR,
-	SYMLINK,
-	RENAME,
-	LINK,
-	CHMOD,
-	CHOWN,
-	TRUNCATE,
-	WRITE,
-	FALLOCATE,
-	SETXATTR,
-	REMOVEXATTR
-};
-
-struct op_message {
-	enum op_type op_type;
-	uint32_t op_length;
-	unsigned char data[];
-};
-
-typedef struct op_message *op_message;
 
 #define ENCODE_STRING(str)                                                     \
 	memcpy(msg_data, str, strlen(str) + 1);                                    \

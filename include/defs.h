@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
@@ -24,6 +25,31 @@ struct options {
 	int port;
 	int show_help;
 } options;
+
+enum op_type {
+	MKNOD,
+	MKDIR,
+	UNLINK,
+	RMDIR,
+	SYMLINK,
+	RENAME,
+	LINK,
+	CHMOD,
+	CHOWN,
+	TRUNCATE,
+	WRITE,
+	FALLOCATE,
+	SETXATTR,
+	REMOVEXATTR
+};
+
+struct op_message {
+	enum op_type op_type;
+	uint32_t op_length;
+	unsigned char data[];
+};
+
+typedef struct op_message *op_message;
 
 static int fake_root(char *dest, const char *root_path, const char *path) {
 	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
