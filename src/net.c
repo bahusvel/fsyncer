@@ -30,25 +30,28 @@ struct op_message {
 
 typedef struct op_message *op_message;
 
-int send_op(op_message message) {}
 #define ENCODE_STRING(str)                                                     \
-	memcpy(msg_data + i, str, strlen(str) + 1);                                \
-	i += strlen(str) + 1;
+	memcpy(msg_data, str, strlen(str) + 1);                                    \
+	msg_data += strlen(str) + 1;
 #define ENCODE_VALUE(val)                                                      \
-	*(typeof(val) *)(msg_data + i) = val;                                      \
-	i += sizeof(val);
+	*(typeof(val) *)(msg_data) = val;                                          \
+	msg_data += sizeof(val);
 #define ENCODE_OPAQUE(size, buf)                                               \
 	ENCODE_VALUE(htobe32(size));                                               \
-	memcpy(msg_data + i, buf, size);                                           \
-	i += size;
+	memcpy(msg_data, buf, size);                                               \
+	msg_data += size;
 
 #define NEW_MSG(size, type)                                                    \
 	size_t tmp_size = (size) + sizeof(struct op_message);                      \
 	op_message msg = malloc(tmp_size);                                         \
 	msg->op_type = type;                                                       \
 	msg->op_length = tmp_size;                                                 \
-	off_t i = 0;                                                               \
 	unsigned char *msg_data = msg->data;
+
+int send_op(op_message message) {
+	free(message);
+	return 0;
+}
 
 op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);
@@ -57,7 +60,6 @@ op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	ENCODE_VALUE(htobe32(rdev));
 	return msg;
 }
-void decode_mknod() {}
 
 op_message encode_mkdir(const char *path, uint32_t mode) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode), MKDIR);
@@ -65,21 +67,18 @@ op_message encode_mkdir(const char *path, uint32_t mode) {
 	ENCODE_VALUE(htobe32(mode));
 	return msg;
 }
-void decode_mkdir() {}
 
 op_message encode_unlink(const char *path) {
 	NEW_MSG(strlen(path) + 1, UNLINK);
 	ENCODE_STRING(path);
 	return msg;
 }
-void decode_unlink() {}
 
 op_message encode_rmdir(const char *path) {
 	NEW_MSG(strlen(path), RMDIR);
 	ENCODE_STRING(path);
 	return msg;
 }
-void decode_rmdir() {}
 
 op_message encode_symlink(const char *from, const char *to) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1, SYMLINK);
@@ -87,7 +86,6 @@ op_message encode_symlink(const char *from, const char *to) {
 	ENCODE_STRING(to);
 	return msg;
 }
-void decode_symlink() {}
 
 op_message encode_rename(const char *from, const char *to, uint32_t flags) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1 + sizeof(flags), RENAME);
@@ -96,7 +94,6 @@ op_message encode_rename(const char *from, const char *to, uint32_t flags) {
 	ENCODE_VALUE(htobe32(flags));
 	return msg;
 }
-void decode_rename() {}
 
 op_message encode_link(const char *from, const char *to) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1, LINK);
@@ -104,7 +101,6 @@ op_message encode_link(const char *from, const char *to) {
 	ENCODE_STRING(to);
 	return msg;
 }
-void decode_link() {}
 
 op_message encode_chmod(const char *path, uint32_t mode) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode), CHMOD);
@@ -112,7 +108,6 @@ op_message encode_chmod(const char *path, uint32_t mode) {
 	ENCODE_VALUE(htobe32(mode));
 	return msg;
 }
-void decode_chmod() {}
 
 op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
 	NEW_MSG(strlen(path) + 1 + sizeof(uid) + sizeof(gid), CHOWN);
@@ -121,7 +116,6 @@ op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
 	ENCODE_VALUE(htobe32(gid));
 	return msg;
 }
-void decode_chown() {}
 
 op_message encode_truncate(const char *path, int64_t size) {
 	NEW_MSG(strlen(path) + 1 + sizeof(size), TRUNCATE);
@@ -129,7 +123,6 @@ op_message encode_truncate(const char *path, int64_t size) {
 	ENCODE_VALUE(htobe64(size));
 	return msg;
 }
-void decode_truncate() {}
 
 op_message encode_write(const char *path, const char *buf, uint64_t size,
 						int64_t offset) {
@@ -139,7 +132,6 @@ op_message encode_write(const char *path, const char *buf, uint64_t size,
 	ENCODE_VALUE(htobe64(offset));
 	return msg;
 }
-void decode_write() {}
 
 op_message encode_fallocate(const char *path, int32_t mode, int64_t offset,
 							int64_t length) {
@@ -151,7 +143,6 @@ op_message encode_fallocate(const char *path, int32_t mode, int64_t offset,
 	ENCODE_VALUE(htobe64(length));
 	return msg;
 }
-void decode_fallocate() {}
 
 op_message encode_setxattr(const char *path, const char *name,
 						   const char *value, uint64_t size, int32_t flags) {
@@ -164,7 +155,6 @@ op_message encode_setxattr(const char *path, const char *name,
 	ENCODE_VALUE(htobe32(flags));
 	return msg;
 }
-void decode_setxattr() {}
 
 op_message encode_removexattr(const char *path, const char *name) {
 	NEW_MSG(strlen(path) + 1 + strlen(name) + 1, REMOVEXATTR);
@@ -172,4 +162,3 @@ op_message encode_removexattr(const char *path, const char *name) {
 	ENCODE_STRING(name);
 	return msg;
 }
-void decode_removexattr() {}

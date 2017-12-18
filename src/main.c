@@ -29,6 +29,7 @@
 #include <sys/xattr.h>
 #endif
 #include "defs.h"
+#include "ops.h"
 
 #define on_error(...)                                                          \
 	{                                                                          \

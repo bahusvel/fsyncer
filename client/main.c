@@ -1,7 +1,22 @@
-#include <defs.h>
+#include "defs.h"
+#include <endian.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+
+#define DECODE_STRING()                                                        \
+	(const char *)encoded;                                                     \
+	encoded += strlen((const char *)encoded) + 1
+
+#define DECODE_VALUE(type, convert)                                            \
+	convert(*(type *)encoded);                                                 \
+	encoded += sizeof(type)
+
+#define DECODE_OPAQUE_SIZE() (size_t) be32toh(*(uint32_t *)encoded)
+#define DECODE_OPAQUE()                                                        \
+	(const char *)(encoded + sizeof(uint32_t));                                \
+	encoded += be32toh(*(uint32_t *)encoded)
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
@@ -25,6 +40,13 @@ int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	return 0;
 }
 
+int do_mknod(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
+	dev_t rdev = DECODE_VALUE(uint32_t, be32toh);
+	return xmp_mknod(path, mode, rdev);
+}
+
 int xmp_mkdir(const char *path, mode_t mode) {
 	int res;
 
@@ -36,6 +58,12 @@ int xmp_mkdir(const char *path, mode_t mode) {
 		return -errno;
 
 	return 0;
+}
+
+int do_mkdir(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
+	return xmp_mkdir(path, mode);
 }
 
 int xmp_unlink(const char *path) {
@@ -51,6 +79,11 @@ int xmp_unlink(const char *path) {
 	return 0;
 }
 
+int do_unlink(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	return xmp_unlink(path);
+}
+
 int xmp_rmdir(const char *path) {
 	int res;
 
@@ -62,6 +95,11 @@ int xmp_rmdir(const char *path) {
 		return -errno;
 
 	return 0;
+}
+
+int do_rmdir(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	return xmp_rmdir(path);
 }
 
 int xmp_symlink(const char *from, const char *to) {
@@ -78,6 +116,12 @@ int xmp_symlink(const char *from, const char *to) {
 		return -errno;
 
 	return 0;
+}
+
+int do_symlink(unsigned char *encoded) {
+	const char *from = DECODE_STRING();
+	const char *to = DECODE_STRING();
+	return xmp_symlink(from, to);
 }
 
 int xmp_rename(const char *from, const char *to, unsigned int flags) {
@@ -99,6 +143,13 @@ int xmp_rename(const char *from, const char *to, unsigned int flags) {
 	return 0;
 }
 
+int do_rename(unsigned char *encoded) {
+	const char *from = DECODE_STRING();
+	const char *to = DECODE_STRING();
+	unsigned int flags = DECODE_VALUE(uint32_t, be32toh);
+	return xmp_rename(from, to, flags);
+}
+
 int xmp_link(const char *from, const char *to) {
 	int res;
 
@@ -115,6 +166,12 @@ int xmp_link(const char *from, const char *to) {
 	return 0;
 }
 
+int do_link(unsigned char *encoded) {
+	const char *from = DECODE_STRING();
+	const char *to = DECODE_STRING();
+	return xmp_link(from, to);
+}
+
 int xmp_chmod(const char *path, mode_t mode) {
 	int res;
 
@@ -126,6 +183,12 @@ int xmp_chmod(const char *path, mode_t mode) {
 		return -errno;
 
 	return 0;
+}
+
+int do_chmod(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
+	return xmp_chmod(path, mode);
 }
 
 int xmp_chown(const char *path, uid_t uid, gid_t gid) {
@@ -141,6 +204,13 @@ int xmp_chown(const char *path, uid_t uid, gid_t gid) {
 	return 0;
 }
 
+int do_chown(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	uid_t uid = DECODE_VALUE(uint32_t, be32toh);
+	gid_t gid = DECODE_VALUE(uint32_t, be32toh);
+	return xmp_chown(path, uid, gid);
+}
+
 int xmp_truncate(const char *path, off_t size) {
 	int res;
 
@@ -152,6 +222,12 @@ int xmp_truncate(const char *path, off_t size) {
 		return -errno;
 
 	return 0;
+}
+
+int do_truncate(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	off_t size = DECODE_VALUE(int64_t, be64toh);
+	return xmp_truncate(path, size);
 }
 
 int xmp_write(const char *path, const char *buf, size_t size, off_t offset) {
@@ -175,6 +251,14 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset) {
 	return res;
 }
 
+int do_write(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	size_t size = DECODE_OPAQUE_SIZE();
+	const char *buf = DECODE_OPAQUE();
+	off_t offset = DECODE_VALUE(int64_t, be64toh);
+	return xmp_write(path, buf, size, offset);
+}
+
 #ifdef HAVE_POSIX_FALLOCATE
 int xmp_fallocate(const char *path, int mode, off_t offset, off_t length) {
 	int fd;
@@ -194,6 +278,13 @@ int xmp_fallocate(const char *path, int mode, off_t offset, off_t length) {
 	close(fd);
 	return res;
 }
+int do_fallocate(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	int mode = DECODE_VALUE(int32_t, be32toh);
+	off_t offset = DECODE_VALUE(int64_t, be64toh);
+	off_t length = DECODE_VALUE(int64_t, be64toh);
+	return xmp_fallocate(path, mode, offset, length);
+}
 #endif
 
 #ifdef HAVE_SETXATTR
@@ -210,6 +301,15 @@ int xmp_setxattr(const char *path, const char *name, const char *value,
 	return 0;
 }
 
+int do_setxattr(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	const char *name = DECODE_STRING();
+	size_t size = DECODE_OPAQUE_SIZE();
+	const char *value = DECODE_OPAQUE();
+	int flags = DECODE_VALUE(int32_t, be32toh);
+	return xmp_setxattr(path, name, value, size, flags);
+}
+
 int xmp_removexattr(const char *path, const char *name) {
 
 	char real_path[MAX_PATH_SIZE];
@@ -220,6 +320,13 @@ int xmp_removexattr(const char *path, const char *name) {
 		return -errno;
 	return 0;
 }
+
+int do_removexattr(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	const char *name = DECODE_STRING();
+	return xmp_removexattr(path, name);
+}
+
 #endif
 
 int main() { return 0; }
