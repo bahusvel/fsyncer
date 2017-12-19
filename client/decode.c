@@ -334,11 +334,14 @@ int do_removexattr(unsigned char *encoded) {
 }
 #endif
 
-static int xmp_create(const char *path, mode_t mode) {
-	int res;
+static int xmp_create(const char *path, mode_t mode, int flags) {
+	int fd;
 
-	res = creat(path, mode);
-	if (res == -1)
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, dst_path, path);
+
+	fd = open(real_path, flags, mode);
+	if (fd == -1)
 		return -errno;
 
 	return 0;
@@ -347,7 +350,8 @@ static int xmp_create(const char *path, mode_t mode) {
 int do_create(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
-	return xmp_create(path, mode);
+	int flags = DECODE_VALUE(int32_t, be32toh);
+	return xmp_create(path, mode, flags);
 }
 
 int do_call(op_message message) {

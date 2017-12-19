@@ -1,15 +1,3 @@
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
-#ifdef linux
-/* For pread()/pwrite()/utimensat() */
-#define _XOPEN_SOURCE 700
-#endif
-
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stddef.h>
@@ -17,15 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
+
 #include "defs.h"
-#include "ops.h"
 
 #define on_error(...)                                                          \
 	{                                                                          \
@@ -39,44 +20,26 @@ static int client_fd = 0;
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
-	// cfg->use_ino = 1;
+	cfg->use_ino = 1;
+	cfg->nullpath_ok = 1;
+
+	/* Pick up changes from lower filesystem right away. This is
+	   also necessary for better hardlink support. When the kernel
+	   calls the unlink() handler, it does not know the inode of
+	   the to-be-removed entry and can therefore not invalidate
+	   the cache of the associated inode - resulting in an
+	   incorrect st_nlink value being reported for any remaining
+	   hardlinks to this inode. */
+	cfg->entry_timeout = 0;
+	cfg->attr_timeout = 0;
+	cfg->negative_timeout = 0;
+
 	return NULL;
 }
 
-static struct fuse_operations xmp_oper = {
-	.init = xmp_init,
-	.getattr = xmp_getattr,
-	.access = xmp_access,
-	.readlink = xmp_readlink,
-	.readdir = xmp_readdir,
-	.symlink = xmp_symlink,
-	.unlink = xmp_unlink,
-	.rmdir = xmp_rmdir,
-	.rename = xmp_rename,
-	.link = xmp_link,
-	.chmod = xmp_chmod,
-	.chown = xmp_chown,
-	.truncate = xmp_truncate,
-#ifdef HAVE_UTIMENSAT
-	.utimens = xmp_utimens,
-#endif
-	.open = xmp_open,
-	.read = xmp_read,
-	.write = xmp_write,
-	.statfs = xmp_statfs,
-	.release = xmp_release,
-	.fsync = xmp_fsync,
-#ifdef HAVE_POSIX_FALLOCATE
-	.fallocate = xmp_fallocate,
-#endif
-#ifdef HAVE_SETXATTR
-	.setxattr = xmp_setxattr,
-	.getxattr = xmp_getxattr,
-	.listxattr = xmp_listxattr,
-	.removexattr = xmp_removexattr,
-#endif
-	.create = xmp_create,
-};
+void gen_read_ops(struct fuse_operations *xmp_oper);
+
+void gen_write_ops(struct fuse_operations *xmp_oper);
 
 /*
  * Command line optionsvoid *(*__start_routine)(void *)or the char* fields here
@@ -172,6 +135,10 @@ int main(int argc, char *argv[]) {
 	err = pthread_create(&server_thread, NULL, server_loop, NULL);
 	if (err)
 		on_error("Failed to start server thread");
+
+	struct fuse_operations xmp_oper;
+	gen_read_ops(&xmp_oper);
+	gen_write_ops(&xmp_oper);
 
 	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
 }
