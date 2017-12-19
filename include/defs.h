@@ -7,8 +7,6 @@
 #include <config.h>
 #endif
 
-#define _GNU_SOURCE
-
 #include <fuse.h>
 
 #include <byteswap.h>
@@ -56,6 +54,7 @@ struct op_msg {
 };
 
 typedef struct op_msg *op_message;
+
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define htobe64(val) bswap_64(val)
 #define be64toh(val) bswap_64(val)

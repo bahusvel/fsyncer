@@ -1,7 +1,7 @@
 CFLAGS= -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
 
 DEPS = include/defs.h
-_OBJ = main.o misc.o read.o write.o
+_OBJ = main.o read.o write.o
 OBJ= $(patsubst %,$(ODIR)/%,$(_OBJ))
 ODIR=build/fs
 
