@@ -1,9 +1,4 @@
-#include "defs.h"
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
+#include "net.h"
 
 #define ENCODE_STRING(str)                                                     \
 	memcpy(msg_data, str, strlen(str) + 1);                                    \

@@ -22,5 +22,6 @@ build/passthrough: $(OBJ)
 
 test: build/passthrough
 	mkdir mnt_test || true
+	mkdir test_path || true
 	fusermount3 -u mnt_test || true
 	build/passthrough -f --path=`realpath test_path` mnt_test
