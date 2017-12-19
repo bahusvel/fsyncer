@@ -18,16 +18,11 @@
 	msg_data += size;
 
 #define NEW_MSG(size, type)                                                    \
-	size_t tmp_size = (size) + sizeof(struct op_message);                      \
+	size_t tmp_size = (size) + sizeof(struct op_msg);                          \
 	op_message msg = malloc(tmp_size);                                         \
 	msg->op_type = type;                                                       \
 	msg->op_length = tmp_size;                                                 \
 	unsigned char *msg_data = msg->data;
-
-int send_op(op_message message) {
-	free(message);
-	return 0;
-}
 
 op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);

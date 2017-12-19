@@ -1,9 +1,10 @@
 #ifndef _FSYNCER_OPS_
 #define _FSYNCER_OPS_
 
+#include "defs.h"
+
 #include <fuse.h>
-#include <stddef.h>
-#include <sys/stat.h>
+
 #ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
 #endif

@@ -1,6 +1,3 @@
-
-#define FUSE_USE_VERSION 30
-
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -39,7 +36,8 @@
 	}
 #define BUFFER_SIZE 1024
 
-static int server_fd;
+static int server_fd = 0;
+static int client_fd = 0;
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
@@ -106,12 +104,23 @@ static void *server_loop(void *arg) {
 	}
 }
 
+int send_op(op_message message) {
+	if (client_fd == 0) {
+		return 0;
+	}
+	if (send(client_fd, (const void *)message, message->op_length, 0) < 0) {
+		perror("Failed sending op to client");
+		return -1;
+	}
+	free(message);
+	return 0;
+}
+
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
 	OPTION("--path=%s", real_path), OPTION("--port=%d", port),
-	OPTION("--async", async),		OPTION("-h", show_help),
-	OPTION("--help", show_help),	FUSE_OPT_END};
+	OPTION("-h", show_help), OPTION("--help", show_help), FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
 	umask(0);
@@ -121,7 +130,7 @@ int main(int argc, char *argv[]) {
 	   fuse_opt_parse can free the defaults if other
 	   values are specified */
 	options.real_path = strdup("/");
-	options.port = 222;
+	options.port = 2323;
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)

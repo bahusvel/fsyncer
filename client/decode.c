@@ -352,12 +352,16 @@ int do_call(op_message message) {
 		return do_truncate(message->data);
 	case WRITE:
 		return do_write(message->data);
+#ifdef HAVE_POSIX_FALLOCATE
 	case FALLOCATE:
 		return do_fallocate(message->data);
+#endif
+#ifdef HAVE_SETXATTR
 	case SETXATTR:
 		return do_setxattr(message->data);
 	case REMOVEXATTR:
 		return do_removexattr(message->data);
+#endif
 	default: {
 		printf("Unknown vfs call!");
 		exit(-1);

@@ -1,6 +1,6 @@
 #ifndef _FSYNCER_DEFS_
 #define _FSYNCER_DEFS_
-#define FUSE_USE_VERSION 30
+//#define FUSE_USE_VERSION 31
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -21,7 +22,6 @@
 
 struct options {
 	const char *real_path;
-	int async;
 	int port;
 	int show_help;
 } options;
@@ -43,13 +43,13 @@ enum op_type {
 	REMOVEXATTR
 };
 
-struct op_message {
+struct op_msg {
 	enum op_type op_type;
 	uint32_t op_length;
 	unsigned char data[];
 };
 
-typedef struct op_message *op_message;
+typedef struct op_msg *op_message;
 
 static int fake_root(char *dest, const char *root_path, const char *path) {
 	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
