@@ -1,4 +1,5 @@
-mnt_test
+test_src
+test_dst
 test_path
 *.o
 build

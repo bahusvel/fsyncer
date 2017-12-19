@@ -33,7 +33,6 @@
 		fflush(stderr);                                                        \
 		exit(1);                                                               \
 	}
-#define BUFFER_SIZE 1024
 
 static int server_fd = 0;
 static int client_fd = 0;
@@ -76,6 +75,7 @@ static struct fuse_operations xmp_oper = {
 	.listxattr = xmp_listxattr,
 	.removexattr = xmp_removexattr,
 #endif
+	.create = xmp_create,
 };
 
 /*
@@ -90,14 +90,13 @@ static void show_help(const char *progname) {
 
 static void *server_loop(void *arg) {
 	struct sockaddr_in client;
-	int client_fd;
-	// char buf[BUFFER_SIZE];
 
 	while (1) {
 		socklen_t client_len = sizeof(client);
 		client_fd = accept(server_fd, (struct sockaddr *)&client, &client_len);
 		if (client_fd < 0)
 			on_error("Could not establish new connection\n");
+		printf("Client connected!\n");
 		// TODO negotiate with client
 		// TODO add client to replicate_to list
 	}
@@ -111,6 +110,8 @@ int send_op(op_message message) {
 		perror("Failed sending op to client");
 		return -1;
 	}
+	printf("Sent message %d %d\n", message->op_type, message->op_length);
+
 	free(message);
 	return 0;
 }
@@ -118,8 +119,9 @@ int send_op(op_message message) {
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
-	OPTION("--path=%s", real_path), OPTION("--port=%d", port),
-	OPTION("-h", show_help), OPTION("--help", show_help), FUSE_OPT_END};
+	OPTION("--path=%s", real_path),		OPTION("--port=%d", port),
+	OPTION("--consistent", consistent), OPTION("-h", show_help),
+	OPTION("--help", show_help),		FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
 	umask(0);
@@ -130,6 +132,7 @@ int main(int argc, char *argv[]) {
 	   values are specified */
 	options.real_path = strdup("/");
 	options.port = 2323;
+	options.consistent = 1;
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)

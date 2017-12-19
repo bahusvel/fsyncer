@@ -1,8 +1,6 @@
+#include "decode.h"
 #include "defs.h"
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 
 #define DECODE_STRING()                                                        \
 	(const char *)encoded;                                                     \
@@ -15,13 +13,22 @@
 #define DECODE_OPAQUE_SIZE() (size_t) be32toh(*(uint32_t *)encoded)
 #define DECODE_OPAQUE()                                                        \
 	(const char *)(encoded + sizeof(uint32_t));                                \
-	encoded += be32toh(*(uint32_t *)encoded)
+	encoded += be32toh(*(uint32_t *)encoded) + sizeof(uint32_t)
+
+static int fake_root(char *dest, const char *root_path, const char *path) {
+	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
+		return -1;
+	}
+	strcpy(dest, root_path);
+	strcat(dest, path);
+	return 0;
+}
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	/* On Linux this could just be 'mknod(path, mode, rdev)' but this
 	   is more portable */
@@ -50,7 +57,7 @@ int xmp_mkdir(const char *path, mode_t mode) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = mkdir(real_path, mode);
 	if (res == -1)
@@ -69,7 +76,7 @@ int xmp_unlink(const char *path) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = unlink(real_path);
 	if (res == -1)
@@ -87,7 +94,7 @@ int xmp_rmdir(const char *path) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = rmdir(real_path);
 	if (res == -1)
@@ -105,10 +112,10 @@ int xmp_symlink(const char *from, const char *to) {
 	int res;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, options.real_path, from);
+	fake_root(real_from, dst_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, options.real_path, to);
+	fake_root(real_to, dst_path, to);
 
 	res = symlink(real_from, real_to);
 	if (res == -1)
@@ -130,10 +137,10 @@ int xmp_rename(const char *from, const char *to, unsigned int flags) {
 		return -EINVAL;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, options.real_path, from);
+	fake_root(real_from, dst_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, options.real_path, to);
+	fake_root(real_to, dst_path, to);
 
 	res = rename(real_from, real_to);
 	if (res == -1)
@@ -153,10 +160,10 @@ int xmp_link(const char *from, const char *to) {
 	int res;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, options.real_path, from);
+	fake_root(real_from, dst_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, options.real_path, to);
+	fake_root(real_to, dst_path, to);
 
 	res = link(real_from, real_to);
 	if (res == -1)
@@ -175,7 +182,7 @@ int xmp_chmod(const char *path, mode_t mode) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = chmod(real_path, mode);
 	if (res == -1)
@@ -194,7 +201,7 @@ int xmp_chown(const char *path, uid_t uid, gid_t gid) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = lchown(real_path, uid, gid);
 	if (res == -1)
@@ -214,7 +221,7 @@ int xmp_truncate(const char *path, off_t size) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = truncate(real_path, size);
 	if (res == -1)
@@ -233,10 +240,10 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset) {
 	int fd;
 	int res;
 
-	printf("Write %.*s @ %lu to %s\n", size, buf, offset, path);
+	printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	fd = open(real_path, O_WRONLY);
 	if (fd == -1)
@@ -266,7 +273,7 @@ int xmp_fallocate(const char *path, int mode, off_t offset, off_t length) {
 		return -EOPNOTSUPP;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	fd = open(real_path, O_WRONLY);
 	if (fd == -1)
@@ -292,7 +299,7 @@ int xmp_setxattr(const char *path, const char *name, const char *value,
 				 size_t size, int flags) {
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	int res = lsetxattr(real_path, name, value, size, flags);
 	if (res == -1)
@@ -312,7 +319,7 @@ int do_setxattr(unsigned char *encoded) {
 int xmp_removexattr(const char *path, const char *name) {
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	int res = lremovexattr(real_path, name);
 	if (res == -1)
@@ -326,6 +333,22 @@ int do_removexattr(unsigned char *encoded) {
 	return xmp_removexattr(path, name);
 }
 #endif
+
+static int xmp_create(const char *path, mode_t mode) {
+	int res;
+
+	res = creat(path, mode);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+int do_create(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
+	return xmp_create(path, mode);
+}
 
 int do_call(op_message message) {
 	switch (message->op_type) {
@@ -361,6 +384,8 @@ int do_call(op_message message) {
 	case REMOVEXATTR:
 		return do_removexattr(message->data);
 #endif
+	case CREATE:
+		return do_create(message->data);
 	default: {
 		printf("Unknown vfs call!");
 		exit(-1);

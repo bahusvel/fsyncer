@@ -1,6 +1,26 @@
 #include "defs.h"
-#include "net.h"
 #include "ops.h"
+#include <stdlib.h>
+
+#define ENCODE_STRING(str)                                                     \
+	memcpy(msg_data, str, strlen(str) + 1);                                    \
+	msg_data += strlen(str) + 1;
+#define ENCODE_VALUE(val)                                                      \
+	*(typeof(val) *)(msg_data) = val;                                          \
+	msg_data += sizeof(val);
+#define ENCODE_OPAQUE(size, buf)                                               \
+	ENCODE_VALUE(htobe32(size));                                               \
+	memcpy(msg_data, buf, size);                                               \
+	msg_data += size;
+
+#define NEW_MSG(size, type)                                                    \
+	size_t tmp_size = (size) + sizeof(struct op_msg);                          \
+	op_message msg = malloc(tmp_size);                                         \
+	msg->op_type = type;                                                       \
+	msg->op_length = tmp_size;                                                 \
+	unsigned char *msg_data = msg->data;
+
+int send_op(op_message message);
 
 static int fake_root(char *dest, const char *root_path, const char *path) {
 	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
@@ -9,6 +29,14 @@ static int fake_root(char *dest, const char *root_path, const char *path) {
 	strcpy(dest, root_path);
 	strcat(dest, path);
 	return 0;
+}
+
+op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(mode));
+	ENCODE_VALUE(htobe32(rdev));
+	return msg;
 }
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
@@ -36,6 +64,13 @@ int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	return 0;
 }
 
+op_message encode_mkdir(const char *path, uint32_t mode) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode), MKDIR);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(mode));
+	return msg;
+}
+
 int xmp_mkdir(const char *path, mode_t mode) {
 	int res;
 
@@ -50,6 +85,12 @@ int xmp_mkdir(const char *path, mode_t mode) {
 		return -errno;
 
 	return 0;
+}
+
+op_message encode_unlink(const char *path) {
+	NEW_MSG(strlen(path) + 1, UNLINK);
+	ENCODE_STRING(path);
+	return msg;
 }
 
 int xmp_unlink(const char *path) {
@@ -68,6 +109,12 @@ int xmp_unlink(const char *path) {
 	return 0;
 }
 
+op_message encode_rmdir(const char *path) {
+	NEW_MSG(strlen(path), RMDIR);
+	ENCODE_STRING(path);
+	return msg;
+}
+
 int xmp_rmdir(const char *path) {
 	int res;
 
@@ -82,6 +129,13 @@ int xmp_rmdir(const char *path) {
 		return -errno;
 
 	return 0;
+}
+
+op_message encode_symlink(const char *from, const char *to) {
+	NEW_MSG(strlen(from) + 1 + strlen(to) + 1, SYMLINK);
+	ENCODE_STRING(from);
+	ENCODE_STRING(to);
+	return msg;
 }
 
 int xmp_symlink(const char *from, const char *to) {
@@ -101,6 +155,14 @@ int xmp_symlink(const char *from, const char *to) {
 		return -errno;
 
 	return 0;
+}
+
+op_message encode_rename(const char *from, const char *to, uint32_t flags) {
+	NEW_MSG(strlen(from) + 1 + strlen(to) + 1 + sizeof(flags), RENAME);
+	ENCODE_STRING(from);
+	ENCODE_STRING(to);
+	ENCODE_VALUE(htobe32(flags));
+	return msg;
 }
 
 int xmp_rename(const char *from, const char *to, unsigned int flags) {
@@ -125,6 +187,13 @@ int xmp_rename(const char *from, const char *to, unsigned int flags) {
 	return 0;
 }
 
+op_message encode_link(const char *from, const char *to) {
+	NEW_MSG(strlen(from) + 1 + strlen(to) + 1, LINK);
+	ENCODE_STRING(from);
+	ENCODE_STRING(to);
+	return msg;
+}
+
 int xmp_link(const char *from, const char *to) {
 	int res;
 
@@ -144,6 +213,13 @@ int xmp_link(const char *from, const char *to) {
 	return 0;
 }
 
+op_message encode_chmod(const char *path, uint32_t mode) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode), CHMOD);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(mode));
+	return msg;
+}
+
 int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	(void)fi;
 	int res;
@@ -159,6 +235,14 @@ int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 		return -errno;
 
 	return 0;
+}
+
+op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
+	NEW_MSG(strlen(path) + 1 + sizeof(uid) + sizeof(gid), CHOWN);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(uid));
+	ENCODE_VALUE(htobe32(gid));
+	return msg;
 }
 
 int xmp_chown(const char *path, uid_t uid, gid_t gid,
@@ -179,6 +263,13 @@ int xmp_chown(const char *path, uid_t uid, gid_t gid,
 	return 0;
 }
 
+op_message encode_truncate(const char *path, int64_t size) {
+	NEW_MSG(strlen(path) + 1 + sizeof(size), TRUNCATE);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe64(size));
+	return msg;
+}
+
 int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 	(void)fi;
 	int res;
@@ -194,6 +285,15 @@ int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 		return -errno;
 
 	return 0;
+}
+
+op_message encode_write(const char *path, const char *buf, uint64_t size,
+						int64_t offset) {
+	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
+	ENCODE_STRING(path);
+	ENCODE_OPAQUE(size, buf);
+	ENCODE_VALUE(htobe64(offset));
+	return msg;
 }
 
 int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
@@ -223,6 +323,18 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 }
 
 #ifdef HAVE_POSIX_FALLOCATE
+
+op_message encode_fallocate(const char *path, int32_t mode, int64_t offset,
+							int64_t length) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(offset) + sizeof(length),
+			FALLOCATE);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(mode));
+	ENCODE_VALUE(htobe64(offset));
+	ENCODE_VALUE(htobe64(length));
+	return msg;
+}
+
 int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
 				  struct fuse_file_info *fi) {
 	int fd;
@@ -251,6 +363,18 @@ int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
 #endif
 
 #ifdef HAVE_SETXATTR
+op_message encode_setxattr(const char *path, const char *name,
+						   const char *value, uint64_t size, int32_t flags) {
+	NEW_MSG(strlen(path) + 1 + strlen(name) + 1 + size + sizeof(size) +
+				sizeof(flags),
+			SETXATTR);
+	ENCODE_STRING(path);
+	ENCODE_STRING(name);
+	ENCODE_OPAQUE(size, value);
+	ENCODE_VALUE(htobe32(flags));
+	return msg;
+}
+
 /* xattr operations are optional and can safely be left unimplemented */
 int xmp_setxattr(const char *path, const char *name, const char *value,
 				 size_t size, int flags) {
@@ -268,6 +392,13 @@ int xmp_setxattr(const char *path, const char *name, const char *value,
 	return 0;
 }
 
+op_message encode_removexattr(const char *path, const char *name) {
+	NEW_MSG(strlen(path) + 1 + strlen(name) + 1, REMOVEXATTR);
+	ENCODE_STRING(path);
+	ENCODE_STRING(name);
+	return msg;
+}
+
 int xmp_removexattr(const char *path, const char *name) {
 
 	if (send_op(encode_removexattr(path, name)) < 0)
@@ -282,5 +413,25 @@ int xmp_removexattr(const char *path, const char *name) {
 
 	return 0;
 }
-
 #endif
+
+op_message encode_create(const char *path, uint32_t mode) {
+	NEW_MSG(strlen(path) + 1 + sizeof(mode), MKDIR);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(mode));
+	return msg;
+}
+
+int xmp_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+	int res;
+	(void)fi;
+
+	if (send_op(encode_create(path, mode)) < 0)
+		;
+
+	res = creat(path, mode);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}

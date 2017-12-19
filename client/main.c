@@ -4,18 +4,22 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 
+char *dst_path;
+
 int main(int argc, char **argv) {
 	int port = 2323;
 
-	if (argc != 2 && argc != 3) {
-		printf("Usage: fsyncer_client <server_address> [server port]\n");
+	if (argc != 3 && argc != 4) {
+		printf("Usage: fsyncer_client <sync_dst> <server_address> [server "
+			   "port]\n");
 		exit(-1);
 	}
 
+	dst_path = argv[1];
 	char *host = argv[2];
 
-	if (argc == 3) {
-		port = atoi(argv[2]);
+	if (argc == 4) {
+		port = atoi(argv[3]);
 	}
 
 	int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -36,12 +40,14 @@ int main(int argc, char **argv) {
 	printf("Connected to %s\n", host);
 
 	char rcv_buf[32 * 1024];
+	op_message msg = (op_message)rcv_buf;
 	while (1) {
-		if (recv(sock, rcv_buf, sizeof(rcv_buf), 0) < 0) {
+		if (recv(sock, rcv_buf, sizeof(rcv_buf), 0) <= 0) {
 			printf("recv failed\n");
 			break;
 		}
-		if (do_call((op_message)rcv_buf) < 0) {
+		printf("Received message %d %d\n", msg->op_type, msg->op_length);
+		if (do_call(msg) < 0) {
 			printf("error in replay\n");
 		}
 	}

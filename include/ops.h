@@ -3,12 +3,15 @@
 
 #include "defs.h"
 
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 31
 #include <fuse.h>
 
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
+struct options {
+	const char *real_path;
+	int port;
+	int consistent;
+	int show_help;
+} options;
 
 int xmp_getattr(const char *path, struct stat *stbuf,
 				struct fuse_file_info *fi);
@@ -54,5 +57,6 @@ int xmp_setxattr(const char *path, const char *name, const char *value,
 				 size_t size, int flags);
 int xmp_removexattr(const char *path, const char *name);
 #endif
+int xmp_create(const char *path, mode_t mode, struct fuse_file_info *fi);
 
 #endif

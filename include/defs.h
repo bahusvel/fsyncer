@@ -1,7 +1,7 @@
 #ifndef _FSYNCER_DEFS_
 #define _FSYNCER_DEFS_
 
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 31
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -22,12 +22,6 @@
 
 #define MAX_PATH_SIZE 4096
 
-struct options {
-	const char *real_path;
-	int port;
-	int show_help;
-} options;
-
 enum op_type {
 	MKNOD,
 	MKDIR,
@@ -42,7 +36,8 @@ enum op_type {
 	WRITE,
 	FALLOCATE,
 	SETXATTR,
-	REMOVEXATTR
+	REMOVEXATTR,
+	CREATE
 };
 
 struct op_msg {
@@ -55,10 +50,14 @@ typedef struct op_msg *op_message;
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define htobe64(val) bswap_64(val)
+#define be64toh(val) bswap_64(val)
 #define htobe32(val) bswap_32(val)
-#else
+#define be32toh(val) bswap_32(val)
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 #define htobe64(val) val
+#define be64toh(val) val
 #define htobe32(val) val
+#define be32toh(val) val
 #endif
 
 #endif

@@ -1,29 +1,5 @@
-#define FUSE_USE_VERSION 30
-
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
-#ifdef linux
-/* For pread()/pwrite()/utimensat() */
-#define _XOPEN_SOURCE 700
-#endif
-
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <fuse.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <unistd.h>
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
-
 #include "defs.h"
+#include "ops.h"
 
 static int fake_root(char *dest, const char *root_path, const char *path) {
 	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
