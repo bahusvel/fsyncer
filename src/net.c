@@ -1,5 +1,4 @@
 #include "defs.h"
-#include <endian.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>

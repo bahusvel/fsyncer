@@ -25,6 +25,15 @@
 
 #include "defs.h"
 
+static int fake_root(char *dest, const char *root_path, const char *path) {
+	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
+		return -1;
+	}
+	strcpy(dest, root_path);
+	strcat(dest, path);
+	return 0;
+}
+
 int xmp_getattr(const char *path, struct stat *stbuf,
 				struct fuse_file_info *fi) {
 	(void)fi;

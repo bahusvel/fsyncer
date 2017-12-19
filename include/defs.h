@@ -1,6 +1,7 @@
 #ifndef _FSYNCER_DEFS_
 #define _FSYNCER_DEFS_
-//#define FUSE_USE_VERSION 31
+
+#define FUSE_USE_VERSION 30
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -8,6 +9,7 @@
 /* For pread()/pwrite()/utimensat() */
 #define _XOPEN_SOURCE 700
 #endif
+#include <byteswap.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,13 +53,12 @@ struct op_msg {
 
 typedef struct op_msg *op_message;
 
-static int fake_root(char *dest, const char *root_path, const char *path) {
-	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
-		return -1;
-	}
-	strcpy(dest, root_path);
-	strcat(dest, path);
-	return 0;
-}
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define htobe64(val) bswap_64(val)
+#define htobe32(val) bswap_32(val)
+#else
+#define htobe64(val) val
+#define htobe32(val) val
+#endif
 
 #endif

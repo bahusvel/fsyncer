@@ -10,7 +10,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <fuse.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stddef.h>
@@ -92,7 +91,7 @@ static void show_help(const char *progname) {
 static void *server_loop(void *arg) {
 	struct sockaddr_in client;
 	int client_fd;
-	char buf[BUFFER_SIZE];
+	// char buf[BUFFER_SIZE];
 
 	while (1) {
 		socklen_t client_len = sizeof(client);
@@ -155,7 +154,7 @@ int main(int argc, char *argv[]) {
 								 .sin_port = htons(options.port),
 								 .sin_addr.s_addr = htonl(INADDR_ANY)};
 
-	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, 1, sizeof(1));
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(1));
 
 	int err = bind(server_fd, (struct sockaddr *)&server, sizeof(server));
 	if (err < 0)

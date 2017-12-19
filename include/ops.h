@@ -3,6 +3,7 @@
 
 #include "defs.h"
 
+#define FUSE_USE_VERSION 30
 #include <fuse.h>
 
 #ifdef HAVE_SETXATTR

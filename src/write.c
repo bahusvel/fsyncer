@@ -26,6 +26,15 @@
 #include "defs.h"
 #include "ops.h"
 
+static int fake_root(char *dest, const char *root_path, const char *path) {
+	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
+		return -1;
+	}
+	strcpy(dest, root_path);
+	strcat(dest, path);
+	return 0;
+}
+
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
 
@@ -187,7 +196,7 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 	int res;
 	(void)fi;
 
-	printf("Write %.*s @ %lu to %s\n", size, buf, offset, path);
+	printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
