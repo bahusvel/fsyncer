@@ -21,6 +21,11 @@ static int client_fd = 0;
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
 	cfg->use_ino = 1;
+	// NOTE this makes path NULL to parameters where fi->fh exists. This is evil
+	// for the current case of replication. But in future when this is properly
+	// handled it can improve performance.
+	// refer to
+	// https://libfuse.github.io/doxygen/structfuse__config.html#adc93fd1ac03d7f016d6b0bfab77f3863
 	// cfg->nullpath_ok = 1;
 
 	/* Pick up changes from lower filesystem right away. This is
