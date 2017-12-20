@@ -1,4 +1,4 @@
-CFLAGS= -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
+CFLAGS= -g -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
 
 DEPS = include/defs.h
 _OBJ = main.o read.o write.o
@@ -6,7 +6,7 @@ OBJ= $(patsubst %,$(ODIR)/%,$(_OBJ))
 ODIR=build/fs
 
 $(ODIR)/%.o: src/%.c $(DEPS)
-	gcc -c -o $@ $< $(CFLAGS)
+	clang -c -o $@ $< $(CFLAGS)
 
 dirs:
 	rm -rf build || true
@@ -26,11 +26,11 @@ test_ll: dirs ll_passthrough
 	./ll_passthrough -f test_src
 
 build/fs/passthrough: $(OBJ)
-	gcc -o $@ $^ `pkg-config fuse3 --libs` -L/usr/local/lib
+	clang -o $@ $^ `pkg-config fuse3 --libs` -L/usr/local/lib
 
 test_fs: dirs build/fs/passthrough
-	fusermount3 -u test_src || true
-	build/fs/passthrough -o allow_other -f --path=`realpath test_path` test_src
+	fusermount3 -u -z test_src || true
+	strace build/fs/passthrough -o allow_other -s -f --path=`realpath test_path` test_src
 
 build/client/client: dirs client/decode.c client/main.c
 	gcc -c $(CFLAGS) client/decode.c -o build/client/decode.o

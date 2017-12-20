@@ -20,8 +20,8 @@ static int client_fd = 0;
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
-	cfg->use_ino = 1;
-	cfg->nullpath_ok = 1;
+	// cfg->use_ino = 1;
+	// cfg->nullpath_ok = 1;
 
 	/* Pick up changes from lower filesystem right away. This is
 	   also necessary for better hardlink support. When the kernel
@@ -30,9 +30,9 @@ void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	   the cache of the associated inode - resulting in an
 	   incorrect st_nlink value being reported for any remaining
 	   hardlinks to this inode. */
-	cfg->entry_timeout = 0;
-	cfg->attr_timeout = 0;
-	cfg->negative_timeout = 0;
+	// cfg->entry_timeout = 0;
+	// cfg->attr_timeout = 0;
+	// cfg->negative_timeout = 0;
 
 	return NULL;
 }

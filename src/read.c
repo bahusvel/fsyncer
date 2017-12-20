@@ -160,6 +160,8 @@ static int xmp_open(const char *path, struct fuse_file_info *fi) {
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
+	printf("Open %s\n", real_path);
+
 	fd = open(real_path, fi->flags);
 	if (fd == -1)
 		return -errno;
@@ -173,13 +175,16 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 	int res;
 
 	(void)path;
+
+	printf("Read %lu\n", fi->fh);
+
 	res = pread(fi->fh, buf, size, offset);
 	if (res == -1)
 		res = -errno;
 
 	return res;
 }
-
+/*
 static int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
 						size_t size, off_t offset, struct fuse_file_info *fi) {
 	struct fuse_bufvec *src;
@@ -200,6 +205,7 @@ static int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
 
 	return 0;
 }
+*/
 
 static int xmp_statfs(const char *path, struct statvfs *stbuf) {
 	int res;
@@ -292,7 +298,7 @@ void gen_read_ops(struct fuse_operations *xmp_oper) {
 	xmp_oper->releasedir = xmp_releasedir;
 	xmp_oper->open = xmp_open;
 	xmp_oper->read = xmp_read;
-	xmp_oper->read_buf = xmp_read_buf;
+	// xmp_oper->read_buf = xmp_read_buf;
 	xmp_oper->statfs = xmp_statfs;
 	xmp_oper->flush = xmp_flush;
 	xmp_oper->release = xmp_release;

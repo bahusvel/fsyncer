@@ -1,6 +1,18 @@
 #include "defs.h"
 #include <stdlib.h>
 
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define htobe64(val) bswap_64(val)
+#define be64toh(val) bswap_64(val)
+#define htobe32(val) bswap_32(val)
+#define be32toh(val) bswap_32(val)
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define htobe64(val) val
+#define be64toh(val) val
+#define htobe32(val) val
+#define be32toh(val) val
+#endif
+
 #define ENCODE_STRING(str)                                                     \
 	memcpy(msg_data, str, strlen(str) + 1);                                    \
 	msg_data += strlen(str) + 1;

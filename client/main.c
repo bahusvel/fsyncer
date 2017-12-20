@@ -1,8 +1,10 @@
-#include "decode.h"
+#include "defs.h"
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+
+int do_call(op_message message);
 
 char *dst_path;
 
