@@ -41,12 +41,23 @@ int main(int argc, char **argv) {
 
 	printf("Connected to %s\n", host);
 
-	char rcv_buf[32 * 1024];
+	char rcv_buf[33 * 1024]; // 32k for max_write + 1k for headers
 	op_message msg = (op_message)rcv_buf;
 	while (1) {
-		if (recv(sock, rcv_buf, sizeof(rcv_buf), 0) <= 0) {
+		if (recv(sock, rcv_buf, sizeof(struct op_msg), 0) !=
+			sizeof(struct op_msg)) {
 			printf("recv failed\n");
 			break;
+		}
+		int received = sizeof(struct op_msg);
+		while (received != msg->op_length) {
+			int n =
+				recv(sock, rcv_buf + received, msg->op_length - received, 0);
+			if (n <= 0) {
+				printf("recv failed\n");
+				exit(-1);
+			}
+			received += n;
 		}
 		printf("Received message %d %d\n", msg->op_type, msg->op_length);
 		if (do_call(msg) < 0) {
