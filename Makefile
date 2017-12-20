@@ -9,9 +9,6 @@ $(ODIR)/%.o: src/%.c $(DEPS)
 	clang -c -o $@ $< $(CFLAGS)
 
 dirs:
-	rm -rf build || true
-	mkdir -p build/fs || true
-	mkdir -p build/client || true
 	mkdir test_src || true
 	mkdir test_path || true
 	rm -rf test_dst || true
@@ -28,11 +25,17 @@ test_ll: dirs ll_passthrough
 build/fs/passthrough: $(OBJ)
 	clang -o $@ $^ `pkg-config fuse3 --libs` -L/usr/local/lib
 
-test_fs: dirs build/fs/passthrough
+clean_fs:
+	rm -rf build/fs
+	mkdir -p build/fs
+
+test_fs: dirs clean_fs build/fs/passthrough
 	fusermount3 -u -z test_src || true
 	build/fs/passthrough -o allow_other -s -f --path=`realpath test_path` test_src
 
 build/client/client: dirs client/decode.c client/main.c
+	rm -rf build/client || true
+	mkdir -p build/client
 	gcc -c $(CFLAGS) client/decode.c -o build/client/decode.o
 	gcc -c $(CFLAGS) client/main.c -o build/client/main.o
 	gcc -o build/client/client build/client/*.o

@@ -21,7 +21,7 @@ static int client_fd = 0;
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
 	cfg->use_ino = 1;
-	cfg->nullpath_ok = 1;
+	// cfg->nullpath_ok = 1;
 
 	/* Pick up changes from lower filesystem right away. This is
 	   also necessary for better hardlink support. When the kernel
