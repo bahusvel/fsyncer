@@ -184,7 +184,7 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 
 	return res;
 }
-/*
+
 static int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
 						size_t size, off_t offset, struct fuse_file_info *fi) {
 	struct fuse_bufvec *src;
@@ -205,7 +205,6 @@ static int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
 
 	return 0;
 }
-*/
 
 static int xmp_statfs(const char *path, struct statvfs *stbuf) {
 	int res;
@@ -298,7 +297,7 @@ void gen_read_ops(struct fuse_operations *xmp_oper) {
 	xmp_oper->releasedir = xmp_releasedir;
 	xmp_oper->open = xmp_open;
 	xmp_oper->read = xmp_read;
-	// xmp_oper->read_buf = xmp_read_buf;
+	xmp_oper->read_buf = xmp_read_buf;
 	xmp_oper->statfs = xmp_statfs;
 	xmp_oper->flush = xmp_flush;
 	xmp_oper->release = xmp_release;

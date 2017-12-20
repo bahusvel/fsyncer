@@ -20,8 +20,8 @@ static int client_fd = 0;
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
-	// cfg->use_ino = 1;
-	// cfg->nullpath_ok = 1;
+	cfg->use_ino = 1;
+	cfg->nullpath_ok = 1;
 
 	/* Pick up changes from lower filesystem right away. This is
 	   also necessary for better hardlink support. When the kernel
@@ -30,9 +30,10 @@ void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	   the cache of the associated inode - resulting in an
 	   incorrect st_nlink value being reported for any remaining
 	   hardlinks to this inode. */
-	// cfg->entry_timeout = 0;
-	// cfg->attr_timeout = 0;
-	// cfg->negative_timeout = 0;
+	cfg->entry_timeout = 0;
+	cfg->attr_timeout = 0;
+	cfg->negative_timeout = 0;
+	conn->max_write = 32 * 1024;
 
 	return NULL;
 }
@@ -40,12 +41,6 @@ void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 void gen_read_ops(struct fuse_operations *xmp_oper);
 
 void gen_write_ops(struct fuse_operations *xmp_oper);
-
-/*
- * Command line optionsvoid *(*__start_routine)(void *)or the char* fields here
- * because fuse_opt_parse would attempt to free() them when the user specifies
- * different values on the command line.
- */
 
 static void show_help(const char *progname) {
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
@@ -136,7 +131,7 @@ int main(int argc, char *argv[]) {
 	if (err)
 		on_error("Failed to start server thread");
 
-	struct fuse_operations xmp_oper;
+	struct fuse_operations xmp_oper = {0};
 	gen_read_ops(&xmp_oper);
 	gen_write_ops(&xmp_oper);
 

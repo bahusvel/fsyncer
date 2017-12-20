@@ -17,12 +17,12 @@ dirs:
 	rm -rf test_dst || true
 	cp -rf test_path test_dst
 
-ll_passthrough: test/passthrough.c
+ll_passthrough: test/passthrough_fh.c
 	gcc `pkg-config fuse3 --cflags --libs` -o $@ $^
 
 test_ll: dirs ll_passthrough
 	mkdir test_src || true
-	fusermount3 -u test_src || true
+	fusermount3 -u -z test_src || true
 	./ll_passthrough -f test_src
 
 build/fs/passthrough: $(OBJ)
@@ -30,7 +30,7 @@ build/fs/passthrough: $(OBJ)
 
 test_fs: dirs build/fs/passthrough
 	fusermount3 -u -z test_src || true
-	strace build/fs/passthrough -o allow_other -s -f --path=`realpath test_path` test_src
+	build/fs/passthrough -o allow_other -s -f --path=`realpath test_path` test_src
 
 build/client/client: dirs client/decode.c client/main.c
 	gcc -c $(CFLAGS) client/decode.c -o build/client/decode.o
