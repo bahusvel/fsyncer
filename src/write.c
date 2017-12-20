@@ -425,7 +425,7 @@ static int xmp_removexattr(const char *path, const char *name) {
 #endif
 
 op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
-	NEW_MSG(strlen(path) + 1 + sizeof(mode), MKDIR);
+	NEW_MSG(strlen(path) + 1 + sizeof(mode), CREATE);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
 	ENCODE_VALUE(htobe32(flags));
