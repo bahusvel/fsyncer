@@ -152,12 +152,13 @@ static int xmp_symlink(const char *from, const char *to) {
 		;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, options.real_path, from);
+	if (from[0] == '/')
+		fake_root(real_from, options.real_path, from);
 
 	char real_to[MAX_PATH_SIZE];
 	fake_root(real_to, options.real_path, to);
 
-	res = symlink(real_from, real_to);
+	res = symlink(from[0] == '/' ? real_from : from, real_to);
 	if (res == -1)
 		return -errno;
 
