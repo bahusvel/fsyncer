@@ -160,7 +160,7 @@ static int xmp_open(const char *path, struct fuse_file_info *fi) {
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	printf("Open %s\n", real_path);
+	// printf("Open %s\n", real_path);
 
 	fd = open(real_path, fi->flags);
 	if (fd == -1)
@@ -176,7 +176,7 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 
 	(void)path;
 
-	printf("Read %lu\n", fi->fh);
+	// printf("Read %lu\n", fi->fh);
 
 	res = pread(fi->fh, buf, size, offset);
 	if (res == -1)
