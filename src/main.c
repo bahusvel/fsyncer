@@ -21,6 +21,7 @@ struct client_entry {
 	struct client_entry *next;
 };
 
+// FIXME A lock is needed here
 static struct client_entry client_list = {0};
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
