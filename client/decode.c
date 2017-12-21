@@ -49,11 +49,7 @@ int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 
 	/* On Linux this could just be 'mknod(path, mode, rdev)' but this
 	   is more portable */
-	if (S_ISREG(mode)) {
-		res = open(real_path, O_CREAT | O_EXCL | O_WRONLY, mode);
-		if (res >= 0)
-			res = close(res);
-	} else if (S_ISFIFO(mode))
+	if (S_ISFIFO(mode))
 		res = mkfifo(real_path, mode);
 	else
 		res = mknod(real_path, mode, rdev);

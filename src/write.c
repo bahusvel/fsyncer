@@ -229,7 +229,6 @@ op_message encode_chmod(const char *path, uint32_t mode) {
 }
 
 static int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
-	(void)fi;
 	int res;
 
 	if (send_op(encode_chmod(path, mode)) < 0)
@@ -240,7 +239,7 @@ static int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = chmod(path, mode);
+		res = chmod(real_path, mode);
 	}
 
 	if (res == -1)
@@ -259,7 +258,6 @@ op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
 
 static int xmp_chown(const char *path, uid_t uid, gid_t gid,
 					 struct fuse_file_info *fi) {
-	(void)fi;
 	int res;
 
 	if (send_op(encode_chown(path, uid, gid)) < 0)
@@ -270,7 +268,7 @@ static int xmp_chown(const char *path, uid_t uid, gid_t gid,
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = lchown(path, uid, gid);
+		res = lchown(real_path, uid, gid);
 	}
 
 	if (res == -1)
@@ -287,7 +285,6 @@ op_message encode_truncate(const char *path, int64_t size) {
 }
 
 int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
-	(void)fi;
 	int res;
 
 	if (send_op(encode_truncate(path, size)) < 0)
@@ -298,7 +295,7 @@ int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = truncate(path, size);
+		res = truncate(real_path, size);
 	}
 
 	if (res == -1)
