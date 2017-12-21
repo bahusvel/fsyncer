@@ -19,10 +19,12 @@
 #define ENCODE_VALUE(val)                                                      \
 	*(typeof(val) *)(msg_data) = val;                                          \
 	msg_data += sizeof(val);
-#define ENCODE_OPAQUE(size, buf)                                               \
-	ENCODE_VALUE(htobe32(size));                                               \
+#define ENCODE_FIXED_SIZE(size, buf)                                           \
 	memcpy(msg_data, buf, size);                                               \
 	msg_data += size;
+#define ENCODE_OPAQUE(size, buf)                                               \
+	ENCODE_VALUE(htobe32(size));                                               \
+	ENCODE_FIXED_SIZE(size, buf);
 
 #define NEW_MSG(size, type)                                                    \
 	size_t tmp_size = (size) + sizeof(struct op_msg);                          \
@@ -305,7 +307,7 @@ int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 	return 0;
 }
 
-op_message encode_write(const char *path, const char *buf, uint64_t size,
+op_message encode_write(const char *path, const char *buf, uint32_t size,
 						int64_t offset) {
 	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
 	ENCODE_STRING(path);
@@ -373,8 +375,8 @@ static int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
 
 #ifdef HAVE_SETXATTR
 op_message encode_setxattr(const char *path, const char *name,
-						   const char *value, uint64_t size, int32_t flags) {
-	NEW_MSG(strlen(path) + 1 + strlen(name) + 1 + size + sizeof(size) +
+						   const char *value, uint32_t size, int32_t flags) {
+	NEW_MSG(strlen(path) + 1 + strlen(name) + 1 + size + sizeof(uint32_t) +
 				sizeof(flags),
 			SETXATTR);
 	ENCODE_STRING(path);
@@ -453,10 +455,20 @@ static int xmp_create(const char *path, mode_t mode,
 }
 
 #ifdef HAVE_UTIMENSAT
+op_message encode_utimens(const char *path, const struct timespec ts[2]) {
+	NEW_MSG(strlen(path) + 1 + (sizeof(struct timespec) * 2), UTIMENS);
+	ENCODE_STRING(path);
+	// FIXME this is not endian safe, I know.
+	ENCODE_FIXED_SIZE((sizeof(struct timespec) * 2), ((const char *)ts));
+	return msg;
+}
+
 int xmp_utimens(const char *path, const struct timespec ts[2],
 				struct fuse_file_info *fi) {
-	(void)fi;
 	int res;
+
+	if (send_op(encode_utimens(path, ts)) < 0)
+		;
 
 	/* don't use utime/utimes since they follow symlinks */
 	if (fi)
@@ -464,7 +476,7 @@ int xmp_utimens(const char *path, const struct timespec ts[2],
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
+		res = utimensat(0, real_path, ts, AT_SYMLINK_NOFOLLOW);
 	}
 
 	if (res == -1)

@@ -28,6 +28,10 @@ char *dst_path;
 	(const char *)(encoded + sizeof(uint32_t));                                \
 	encoded += be32toh(*(uint32_t *)encoded) + sizeof(uint32_t)
 
+#define DECODE_FIXED_SIZE(size)                                                \
+	(encoded);                                                                 \
+	encoded += size;
+
 static int fake_root(char *dest, const char *root_path, const char *path) {
 	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
 		return -1;
@@ -372,6 +376,30 @@ int do_create(unsigned char *encoded) {
 	return xmp_create(path, mode, flags);
 }
 
+#ifdef HAVE_UTIMENSAT
+int xmp_utimens(const char *path, const struct timespec ts[2]) {
+	int res;
+
+	/* don't use utime/utimes since they follow symlinks */
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, dst_path, path);
+	res = utimensat(0, real_path, ts, AT_SYMLINK_NOFOLLOW);
+
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+int do_utimens(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	const struct timespec *ts =
+		(const struct timespec *)DECODE_FIXED_SIZE(sizeof(struct timespec) * 2);
+	return xmp_utimens(path, ts);
+}
+#endif
+
 int do_call(op_message message) {
 	switch (message->op_type) {
 	case MKNOD:
@@ -408,6 +436,10 @@ int do_call(op_message message) {
 #endif
 	case CREATE:
 		return do_create(message->data);
+#ifdef HAVE_UTIMENSAT
+	case UTIMENS:
+		return do_utimens(message->data);
+#endif
 	default: {
 		printf("Unknown vfs call!");
 		exit(-1);

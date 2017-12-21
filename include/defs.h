@@ -2,6 +2,7 @@
 #define _FSYNCER_DEFS_
 
 #define FUSE_USE_VERSION 31
+#define HAVE_UTIMENSAT 1
 
 #ifdef HAVE_CONFIG_H
 #include <config.h>
@@ -49,7 +50,8 @@ enum op_type {
 	FALLOCATE,
 	SETXATTR,
 	REMOVEXATTR,
-	CREATE
+	CREATE,
+	UTIMENS,
 };
 
 struct op_msg {

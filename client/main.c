@@ -45,15 +45,16 @@ int main(int argc, char **argv) {
 	op_message msg = (op_message)rcv_buf;
 	while (1) {
 		int received = 0, n = 0;
-		while (received != sizeof(struct op_msg)) {
-			n = recv(sock, rcv_buf, sizeof(struct op_msg), 0);
+		while (received < sizeof(struct op_msg)) {
+			n = recv(sock, rcv_buf + received, sizeof(struct op_msg) - received,
+					 0);
 			if (n <= 0) {
 				printf("recv failed %d/%lu\n", received, sizeof(struct op_msg));
 				exit(-1);
 			}
 			received += n;
 		}
-		while (received != msg->op_length) {
+		while (received < msg->op_length) {
 			n = recv(sock, rcv_buf + received, msg->op_length - received, 0);
 			if (n <= 0) {
 				printf("recv failed %d/%d\n", received, msg->op_length);
