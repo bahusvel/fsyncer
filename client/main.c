@@ -44,17 +44,19 @@ int main(int argc, char **argv) {
 	char rcv_buf[33 * 1024]; // 32k for max_write + 1k for headers
 	op_message msg = (op_message)rcv_buf;
 	while (1) {
-		if (recv(sock, rcv_buf, sizeof(struct op_msg), 0) !=
-			sizeof(struct op_msg)) {
-			printf("recv failed\n");
-			break;
-		}
-		int received = sizeof(struct op_msg);
-		while (received != msg->op_length) {
-			int n =
-				recv(sock, rcv_buf + received, msg->op_length - received, 0);
+		int received = 0, n = 0;
+		while (received != sizeof(struct op_msg)) {
+			n = recv(sock, rcv_buf, sizeof(struct op_msg), 0);
 			if (n <= 0) {
-				printf("recv failed\n");
+				printf("recv failed %d/%lu\n", received, sizeof(struct op_msg));
+				exit(-1);
+			}
+			received += n;
+		}
+		while (received != msg->op_length) {
+			n = recv(sock, rcv_buf + received, msg->op_length - received, 0);
+			if (n <= 0) {
+				printf("recv failed %d/%d\n", received, msg->op_length);
 				exit(-1);
 			}
 			received += n;

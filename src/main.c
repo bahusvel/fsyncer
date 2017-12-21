@@ -72,6 +72,7 @@ int send_op(op_message message) {
 	}
 	if (send(client_fd, (const void *)message, message->op_length, 0) < 0) {
 		perror("Failed sending op to client");
+		exit(-1);
 		res = -1;
 		goto out;
 	}
