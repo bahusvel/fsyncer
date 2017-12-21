@@ -59,6 +59,12 @@ static void *server_loop(void *arg) {
 		client_fd = accept(server_fd, (struct sockaddr *)&client, &client_len);
 		if (client_fd < 0)
 			on_error("Could not establish new connection\n");
+		if (setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, &(int){1024 * 1024},
+					   sizeof(int)) < 0) {
+			perror("Failed setting rcvbuf size");
+			exit(-1);
+		}
+
 		printf("Client connected!\n");
 		// TODO negotiate with client
 		// TODO add client to replicate_to list

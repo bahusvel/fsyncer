@@ -11,8 +11,6 @@ $(ODIR)/%.o: src/%.c $(DEPS)
 dirs:
 	mkdir test_src || true
 	mkdir test_path || true
-	rm -rf test_dst || true
-	cp -rf test_path test_dst
 
 ll_passthrough: test/passthrough_fh.c
 	gcc `pkg-config fuse3 --cflags --libs` -o $@ $^
@@ -26,12 +24,12 @@ build/fs/passthrough: $(OBJ)
 	clang -o $@ $^ `pkg-config fuse3 --libs` -L/usr/local/lib
 
 clean_fs:
-	rm -rf build/fs
+	rm -rf build/fs || true
 	mkdir -p build/fs
 
 test_fs: dirs clean_fs build/fs/passthrough
 	fusermount3 -u -z test_src || true
-	build/fs/passthrough -o allow_other -s -f --path=`realpath test_path` test_src
+	build/fs/passthrough -o allow_other -f --path=`realpath test_path` test_src
 
 build/client/client: dirs client/decode.c client/main.c
 	rm -rf build/client || true
@@ -40,5 +38,7 @@ build/client/client: dirs client/decode.c client/main.c
 	gcc -c $(CFLAGS) client/main.c -o build/client/main.o
 	gcc -o build/client/client build/client/*.o
 
-test_client: dirs build/client/client
+test_client: build/client/client
+	rm -rf test_dst || true
+	cp -rf test_path test_dst
 	build/client/client `realpath test_dst` 127.0.0.1

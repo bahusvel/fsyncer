@@ -30,6 +30,12 @@ int main(int argc, char **argv) {
 		exit(-1);
 	}
 
+	if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &(int){1024 * 1024},
+				   sizeof(int)) < 0) {
+		perror("Failed setting rcvbuf size");
+		exit(-1);
+	}
+
 	struct sockaddr_in server = {.sin_family = AF_INET,
 								 .sin_port = htons(port),
 								 .sin_addr = {.s_addr = inet_addr(host)}};
