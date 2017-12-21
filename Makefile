@@ -31,6 +31,11 @@ test_fs: dirs clean_fs build/fs/passthrough
 	fusermount3 -u -z test_src || true
 	build/fs/passthrough -o allow_other -f --path=`realpath test_path` test_src
 
+fscompare:
+	rm -rf build/fscompare || true
+	mkdir -p build/fscompare
+	gcc common/fscompare_main.c common/fscompare.c -o build/fscompare/fscompare
+
 build/client/client: dirs client/decode.c client/main.c
 	rm -rf build/client || true
 	mkdir -p build/client
