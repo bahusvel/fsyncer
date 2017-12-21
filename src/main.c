@@ -16,7 +16,12 @@
 	}
 
 static int server_fd = 0;
-static int client_fd = 0;
+struct client_entry {
+	int fd;
+	struct client_entry *next;
+};
+
+static struct client_entry client_list = {0};
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
@@ -56,7 +61,8 @@ static void *server_loop(void *arg) {
 
 	while (1) {
 		socklen_t client_len = sizeof(client);
-		client_fd = accept(server_fd, (struct sockaddr *)&client, &client_len);
+		int client_fd =
+			accept(server_fd, (struct sockaddr *)&client, &client_len);
 		if (client_fd < 0)
 			on_error("Could not establish new connection\n");
 		if (setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, &(int){1024 * 1024},
@@ -65,25 +71,33 @@ static void *server_loop(void *arg) {
 			exit(-1);
 		}
 
+		struct client_entry *entry = malloc(sizeof(struct client_entry));
+		if (entry == NULL) {
+			perror("malloc");
+			exit(-1);
+		}
+		entry->fd = client_fd;
+		entry->next = client_list.next;
+		client_list.next = entry;
+
 		printf("Client connected!\n");
 		// TODO negotiate with client
-		// TODO add client to replicate_to list
 	}
 }
 
 int send_op(op_message message) {
 	int res = 0;
-	if (client_fd == 0) {
-		goto out;
+	struct client_entry *prev = &client_list;
+	struct client_entry *i;
+	for (i = client_list.next; i != NULL; prev = i, i = i->next) {
+		if (send(i->fd, (const void *)message, message->op_length, 0) < 0) {
+			perror("Failed sending op to client");
+			prev->next = i->next;
+			close(i->fd);
+			free(i);
+		}
+		printf("Sent message %d %d\n", message->op_type, message->op_length);
 	}
-	if (send(client_fd, (const void *)message, message->op_length, 0) < 0) {
-		perror("Failed sending op to client");
-		exit(-1);
-		res = -1;
-		goto out;
-	}
-	printf("Sent message %d %d\n", message->op_type, message->op_length);
-out:
 	free(message);
 	return res;
 }
