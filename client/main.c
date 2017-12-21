@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
 		}
 		printf("Received message %d %d\n", msg->op_type, msg->op_length);
 		if (do_call(msg) < 0) {
-			printf("error in replay\n");
+			perror("error in replay");
 		}
 	}
 

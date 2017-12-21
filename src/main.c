@@ -66,17 +66,19 @@ static void *server_loop(void *arg) {
 }
 
 int send_op(op_message message) {
+	int res = 0;
 	if (client_fd == 0) {
-		return 0;
+		goto out;
 	}
 	if (send(client_fd, (const void *)message, message->op_length, 0) < 0) {
 		perror("Failed sending op to client");
-		return -1;
+		res = -1;
+		goto out;
 	}
 	printf("Sent message %d %d\n", message->op_type, message->op_length);
-
+out:
 	free(message);
-	return 0;
+	return res;
 }
 
 #define OPTION(t, p)                                                           \

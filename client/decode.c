@@ -1,4 +1,4 @@
- #include "defs.h"
+#include "defs.h"
 #include <stdlib.h>
 
 char *dst_path;
@@ -253,7 +253,7 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset) {
 	int fd;
 	int res;
 
-	printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
+	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, dst_path, path);
@@ -353,8 +353,13 @@ static int xmp_create(const char *path, mode_t mode, int flags) {
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, dst_path, path);
 
+	// printf("Create %s %d %d\n", real_path, mode, flags);
+
 	fd = open(real_path, flags, mode);
-	if (fd == -1)
+
+	if (fd != -1)
+		close(fd);
+	else
 		return -errno;
 
 	return 0;

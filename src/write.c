@@ -115,7 +115,7 @@ static int xmp_unlink(const char *path) {
 }
 
 op_message encode_rmdir(const char *path) {
-	NEW_MSG(strlen(path), RMDIR);
+	NEW_MSG(strlen(path) + 1, RMDIR);
 	ENCODE_STRING(path);
 	return msg;
 }
@@ -321,7 +321,7 @@ static int xmp_write(const char *path, const char *buf, size_t size,
 	if (send_op(encode_write(path, buf, size, offset)) < 0)
 		;
 
-	printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
+	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
 	res = pwrite(fi->fh, buf, size, offset);
 	if (res == -1)
@@ -425,7 +425,7 @@ static int xmp_removexattr(const char *path, const char *name) {
 #endif
 
 op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
-	NEW_MSG(strlen(path) + 1 + sizeof(mode), CREATE);
+	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(flags), CREATE);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
 	ENCODE_VALUE(htobe32(flags));
@@ -441,6 +441,8 @@ static int xmp_create(const char *path, mode_t mode,
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
+
+	// printf("Create %s %d %d\n", real_path, mode, fi->flags);
 
 	fd = open(real_path, fi->flags, mode);
 	if (fd == -1)
