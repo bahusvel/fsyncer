@@ -1,4 +1,5 @@
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@
 static int server_fd = 0;
 struct client_entry {
 	int fd;
+	enum client_mode mode;
 	struct client_entry *next;
 };
 
@@ -72,12 +74,27 @@ static void *server_loop(void *arg) {
 			exit(-1);
 		}
 
+		struct init_msg init;
+		if (recv(client_fd, &init, sizeof(init), MSG_WAITALL) != sizeof(init)) {
+			perror("Failed receiving init_msg");
+			exit(-1);
+		}
+
+		if (init.mode == MODE_SYNC &&
+			setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &(int){1},
+					   sizeof(int)) < 0) {
+			perror("Failed setting nodelay");
+			exit(-1);
+		}
+
 		struct client_entry *entry = malloc(sizeof(struct client_entry));
 		if (entry == NULL) {
 			perror("malloc");
 			exit(-1);
 		}
+
 		entry->fd = client_fd;
+		entry->mode = init.mode;
 		entry->next = client_list.next;
 		client_list.next = entry;
 
@@ -91,14 +108,27 @@ int send_op(op_message message) {
 	struct client_entry *prev = &client_list;
 	struct client_entry *i;
 	for (i = client_list.next; i != NULL; prev = i, i = i->next) {
+		if (i->mode == MODE_CONTROL) {
+			continue;
+		}
 		if (send(i->fd, (const void *)message, message->op_length, 0) < 0) {
 			perror("Failed sending op to client");
 			prev->next = i->next;
 			close(i->fd);
 			free(i);
+			continue;
 		}
-		printf("Sent message %d %d\n", message->op_type, message->op_length);
+		struct ack_msg ack;
+		if (i->mode == MODE_SYNC &&
+			recv(i->fd, &ack, sizeof(ack), MSG_WAITALL) != sizeof(ack)) {
+			perror("Failed receiving ack from client");
+			prev->next = i->next;
+			close(i->fd);
+			free(i);
+			continue;
+		}
 	}
+	printf("Sent message %d %d\n", message->op_type, message->op_length);
 	free(message);
 	return res;
 }

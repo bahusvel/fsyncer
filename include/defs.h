@@ -54,9 +54,19 @@ enum op_type {
 	UTIMENS,
 };
 
+enum client_mode { MODE_ASYNC, MODE_SYNC, MODE_CONTROL };
+
+struct init_msg {
+	enum client_mode mode;
+};
+
+struct ack_msg {
+	int retcode;
+};
+
 struct op_msg {
-	enum op_type op_type;
 	uint32_t op_length;
+	enum op_type op_type;
 	unsigned char data[];
 };
 

@@ -46,4 +46,4 @@ build/client/client: dirs client/decode.c client/main.c
 test_client: build/client/client
 	rm -rf test_dst || true
 	cp -rax test_path test_dst
-	build/client/client `realpath test_dst` 127.0.0.1
+	build/client/client -d `realpath test_dst` -h 127.0.0.1
