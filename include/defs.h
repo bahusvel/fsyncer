@@ -55,6 +55,11 @@ enum op_type {
 };
 
 enum client_mode { MODE_ASYNC, MODE_SYNC, MODE_CONTROL };
+enum command { CMD_CORK, CMD_UNCORK };
+
+struct command_msg {
+	enum command cmd;
+};
 
 struct init_msg {
 	enum client_mode mode;

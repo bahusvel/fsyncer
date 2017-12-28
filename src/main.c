@@ -17,6 +17,11 @@
 	}
 
 static int server_fd = 0;
+
+static int cork;
+static pthread_mutex_t cork_mutex;
+static pthread_cond_t cork_cv;
+
 struct client_entry {
 	int fd;
 	enum client_mode mode;
@@ -59,11 +64,62 @@ static void show_help(const char *progname) {
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 }
 
+static int do_cork() {
+	if (cork == 1) {
+		return -1;
+	}
+	pthread_mutex_lock(&cork_mutex);
+	cork = 1;
+	pthread_mutex_unlock(&cork_mutex);
+	return 0;
+}
+
+static int do_uncork() {
+	if (cork == 0) {
+		return -1;
+	}
+	pthread_mutex_lock(&cork_mutex);
+	cork = 0;
+	pthread_cond_broadcast(&cork_cv);
+	pthread_mutex_unlock(&cork_mutex);
+	return 0;
+}
+
+static void *control_loop(void *arg) {
+	int client_fd = (int)arg;
+	struct command_msg cmd;
+	struct ack_msg ack = {0};
+	while (1) {
+		ack.retcode = 0;
+		if (recv(client_fd, &cmd, sizeof(cmd), MSG_WAITALL) != sizeof(cmd)) {
+			perror("Failed receiving command_msg");
+			return NULL;
+		}
+		switch (cmd.cmd) {
+		case CMD_CORK:
+			ack.retcode = do_cork();
+			break;
+		case CMD_UNCORK:
+			ack.retcode = do_uncork();
+			break;
+		default:
+			ack.retcode = -1;
+			break;
+		}
+
+		if (send(client_fd, &ack, sizeof(ack), 0) < 0) {
+			perror("Unable to ack");
+			return NULL;
+		}
+	}
+}
+
 static void *server_loop(void *arg) {
 	struct sockaddr_in client;
+	socklen_t client_len = sizeof(client);
 
 	while (1) {
-		socklen_t client_len = sizeof(client);
+
 		int client_fd =
 			accept(server_fd, (struct sockaddr *)&client, &client_len);
 		if (client_fd < 0)
@@ -87,6 +143,16 @@ static void *server_loop(void *arg) {
 			exit(-1);
 		}
 
+		if (init.mode == MODE_CONTROL) {
+			pthread_t control_thread;
+			if (pthread_create(&control_thread, NULL, control_loop,
+							   (void *)(long)client_fd) < 0) {
+				perror("Failed to start control thread");
+				exit(-1);
+			}
+			continue;
+		}
+
 		struct client_entry *entry = malloc(sizeof(struct client_entry));
 		if (entry == NULL) {
 			perror("malloc");
@@ -107,10 +173,16 @@ int send_op(op_message message) {
 	int res = 0;
 	struct client_entry *prev = &client_list;
 	struct client_entry *i;
-	for (i = client_list.next; i != NULL; prev = i, i = i->next) {
-		if (i->mode == MODE_CONTROL) {
-			continue;
+
+	if (cork) {
+		pthread_mutex_lock(&cork_mutex);
+		while (cork) {
+			pthread_cond_wait(&cork_cv, &cork_mutex);
 		}
+		pthread_mutex_unlock(&cork_mutex);
+	}
+
+	for (i = client_list.next; i != NULL; prev = i, i = i->next) {
 		if (send(i->fd, (const void *)message, message->op_length, 0) < 0) {
 			perror("Failed sending op to client");
 			prev->next = i->next;
@@ -141,6 +213,8 @@ static const struct fuse_opt option_spec[] = {
 	OPTION("--help", show_help),		FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
+	pthread_mutex_init(&cork_mutex, NULL);
+	pthread_cond_init(&cork_cv, NULL);
 	umask(0);
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
