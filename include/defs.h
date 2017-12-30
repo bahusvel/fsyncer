@@ -63,6 +63,7 @@ struct command_msg {
 
 struct init_msg {
 	enum client_mode mode;
+	uint64_t dsthash;
 };
 
 struct ack_msg {

@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 
 #include "defs.h"
+#include "fscompare.h"
 
 #define on_error(...)                                                          \
 	{                                                                          \
@@ -136,13 +137,6 @@ static void *server_loop(void *arg) {
 			exit(-1);
 		}
 
-		if (init.mode == MODE_SYNC &&
-			setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &(int){1},
-					   sizeof(int)) < 0) {
-			perror("Failed setting nodelay");
-			exit(-1);
-		}
-
 		if (init.mode == MODE_CONTROL) {
 			pthread_t control_thread;
 			if (pthread_create(&control_thread, NULL, control_loop,
@@ -151,6 +145,25 @@ static void *server_loop(void *arg) {
 				exit(-1);
 			}
 			continue;
+		}
+
+		printf("Calculating source hash...\n");
+		unsigned long srchash = hash_metadata(options.real_path);
+		printf("Source hash is %16lx\n", srchash);
+
+		if (init.dsthash != srchash) {
+			printf("%16lx != %16lx client's hash does not match!\n",
+				   init.dsthash, srchash);
+			printf("Dropping this client!\n");
+			close(client_fd);
+			continue;
+		}
+
+		if (init.mode == MODE_SYNC &&
+			setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &(int){1},
+					   sizeof(int)) < 0) {
+			perror("Failed setting nodelay");
+			exit(-1);
 		}
 
 		struct client_entry *entry = malloc(sizeof(struct client_entry));
@@ -165,7 +178,6 @@ static void *server_loop(void *arg) {
 		client_list.next = entry;
 
 		printf("Client connected!\n");
-		// TODO negotiate with client
 	}
 }
 
@@ -200,7 +212,7 @@ int send_op(op_message message) {
 			continue;
 		}
 	}
-	printf("Sent message %d %d\n", message->op_type, message->op_length);
+	// printf("Sent message %d %d\n", message->op_type, message->op_length);
 	free(message);
 	return res;
 }
