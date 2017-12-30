@@ -9,6 +9,7 @@
 
 #include "defs.h"
 #include "fscompare.h"
+#include "fsyncer.h"
 
 #define on_error(...)                                                          \
 	{                                                                          \
@@ -151,7 +152,7 @@ static void *server_loop(void *arg) {
 		unsigned long srchash = hash_metadata(options.real_path);
 		printf("Source hash is %16lx\n", srchash);
 
-		if (init.dsthash != srchash) {
+		if ((!options.dontcheck) && init.dsthash != srchash) {
 			printf("%16lx != %16lx client's hash does not match!\n",
 				   init.dsthash, srchash);
 			printf("Dropping this client!\n");
@@ -220,9 +221,13 @@ int send_op(op_message message) {
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
-	OPTION("--path=%s", real_path),		OPTION("--port=%d", port),
-	OPTION("--consistent", consistent), OPTION("-h", show_help),
-	OPTION("--help", show_help),		FUSE_OPT_END};
+	OPTION("--path=%s", real_path),
+	OPTION("--port=%d", port),
+	OPTION("--consistent", consistent),
+	OPTION("--dont-check", dontcheck),
+	OPTION("-h", show_help),
+	OPTION("--help", show_help),
+	FUSE_OPT_END};
 
 int main(int argc, char *argv[]) {
 	pthread_mutex_init(&cork_mutex, NULL);
@@ -236,6 +241,7 @@ int main(int argc, char *argv[]) {
 	options.real_path = strdup("/");
 	options.port = 2323;
 	options.consistent = 1;
+	options.dontcheck = 0;
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)

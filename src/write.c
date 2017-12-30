@@ -1,48 +1,9 @@
+#include "codec.h"
 #include "defs.h"
+#include "fsyncer.h"
 #include <stdlib.h>
 
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define htobe64(val) bswap_64(val)
-#define be64toh(val) bswap_64(val)
-#define htobe32(val) bswap_32(val)
-#define be32toh(val) bswap_32(val)
-#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define htobe64(val) val
-#define be64toh(val) val
-#define htobe32(val) val
-#define be32toh(val) val
-#endif
-
-#define ENCODE_STRING(str)                                                     \
-	memcpy(msg_data, str, strlen(str) + 1);                                    \
-	msg_data += strlen(str) + 1;
-#define ENCODE_VALUE(val)                                                      \
-	*(typeof(val) *)(msg_data) = val;                                          \
-	msg_data += sizeof(val);
-#define ENCODE_FIXED_SIZE(size, buf)                                           \
-	memcpy(msg_data, buf, size);                                               \
-	msg_data += size;
-#define ENCODE_OPAQUE(size, buf)                                               \
-	ENCODE_VALUE(htobe32(size));                                               \
-	ENCODE_FIXED_SIZE(size, buf);
-
-#define NEW_MSG(size, type)                                                    \
-	size_t tmp_size = (size) + sizeof(struct op_msg);                          \
-	op_message msg = malloc(tmp_size);                                         \
-	msg->op_type = type;                                                       \
-	msg->op_length = tmp_size;                                                 \
-	unsigned char *msg_data = msg->data;
-
 int send_op(op_message message);
-
-static int fake_root(char *dest, const char *root_path, const char *path) {
-	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
-		return -1;
-	}
-	strcpy(dest, root_path);
-	strcat(dest, path);
-	return 0;
-}
 
 op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);

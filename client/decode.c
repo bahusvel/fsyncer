@@ -1,45 +1,15 @@
+#include "codec.h"
 #include "defs.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 char *dst_path;
-
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define htobe64(val) bswap_64(val)
-#define be64toh(val) bswap_64(val)
-#define htobe32(val) bswap_32(val)
-#define be32toh(val) bswap_32(val)
-#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define htobe64(val) val
-#define be64toh(val) val
-#define htobe32(val) val
-#define be32toh(val) val
-#endif
-
-#define DECODE_STRING()                                                        \
-	(const char *)encoded;                                                     \
-	encoded += strlen((const char *)encoded) + 1
-
-#define DECODE_VALUE(type, convert)                                            \
-	convert(*(type *)encoded);                                                 \
-	encoded += sizeof(type)
-
-#define DECODE_OPAQUE_SIZE() (size_t) be32toh(*(uint32_t *)encoded)
-#define DECODE_OPAQUE()                                                        \
-	(const char *)(encoded + sizeof(uint32_t));                                \
-	encoded += be32toh(*(uint32_t *)encoded) + sizeof(uint32_t)
-
-#define DECODE_FIXED_SIZE(size)                                                \
-	(encoded);                                                                 \
-	encoded += size;
-
-static int fake_root(char *dest, const char *root_path, const char *path) {
-	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
-		return -1;
-	}
-	strcpy(dest, root_path);
-	strcat(dest, path);
-	return 0;
-}
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
