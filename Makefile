@@ -1,13 +1,5 @@
 CFLAGS= -g -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
 
-DEPS = include/defs.h
-_OBJ = main.o read.o write.o
-OBJ= $(patsubst %,$(ODIR)/%,$(_OBJ))
-ODIR=build/fs
-
-$(ODIR)/%.o: src/%.c $(DEPS)
-	gcc -c -o $@ $< $(CFLAGS)
-
 dirs:
 	mkdir test_src || true
 	mkdir test_path || true
@@ -20,16 +12,9 @@ test_ll: dirs ll_passthrough
 	fusermount3 -u -z test_src || true
 	./ll_passthrough -f test_src
 
-build/fs/libpassthrough.a: clean_fs $(OBJ)
-	ar rcs -o $@ build/common/*.o build/fs/*.o
-
-clean_fs:
-	rm -rf build/fs || true
-	mkdir -p build/fs
-
-test_fs: dirs build/common build/fs/passthrough
+test_fs: dirs
 	fusermount3 -u -z test_src || true
-	build/fs/passthrough -o allow_other -f --path=`realpath test_path` test_src
+	cd fs && cargo run -- -o allow_other -f --path=`realpath ../test_path` ../test_src
 
 build/common: common/fscompare.c common/uvarint.c
 	rm -rf build/common || true
