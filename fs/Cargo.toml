@@ -2,7 +2,11 @@
 name = "fs"
 version = "0.1.0"
 authors = ["Denis Lavrov <bahus.vel@gmail.com>"]
+build = "build.rs"
 
 [dependencies]
 net2 = "0.2"
 lazy_static = "1.0.0"
+
+[build-dependencies]
+cc = "1.0"

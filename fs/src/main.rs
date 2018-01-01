@@ -1,4 +1,5 @@
 #![feature(libc)]
+
 extern crate libc;
 extern crate net2;
 #[macro_use]
@@ -28,6 +29,7 @@ struct options {
 unsafe impl Send for options {}
 
 #[repr(C)]
+#[allow(dead_code)]
 enum op_type {
     MKNOD,
 	MKDIR,
@@ -49,13 +51,14 @@ enum op_type {
 
 #[repr(C)]
 #[derive(PartialEq)]
+#[allow(non_camel_case_types)]
+#[allow(dead_code)]
 enum client_mode { MODE_ASYNC, MODE_SYNC, MODE_CONTROL }
 
 #[repr(C)]
 pub struct op_msg {
     op_length: u32,
     op_type: op_type,
-    data: [u8]
 }
 
 #[repr(C)]
@@ -74,9 +77,11 @@ struct Client {
     mode: client_mode,
 }
 
+#[link(name = "fsyncer", kind = "static")]
+#[link(name = "fuse3")]
 extern {
     fn fsyncer_parse_opts(argc: i32, argv: *const *const c_char) -> options;
-    fn fsyncer_fuse_main(argc: i32, argv: *const *const c_char) -> i32;
+    fn fsyncer_fuse_main(argc: i32, argv: *const *const c_char, sop: extern fn(*const c_void) -> i32) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
 }
 
@@ -95,7 +100,7 @@ fn handle_client(mut stream: TcpStream, options: &options) -> Result<(), io::Err
 
     let init = unsafe {transmute::<[u8; size_of::<init_msg>()],init_msg>(init_buf)};
 
-    if ((options.dontcheck == 0) && init.dsthash != srchash) {
+    if (options.dontcheck == 0) && init.dsthash != srchash {
         println!("%{:x} != {:x} client's hash does not match!",
                init.dsthash, srchash);
         println!("Dropping this client!");
@@ -103,7 +108,7 @@ fn handle_client(mut stream: TcpStream, options: &options) -> Result<(), io::Err
         return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
     }
 
-    if (init.mode == client_mode::MODE_SYNC) {
+    if init.mode == client_mode::MODE_SYNC {
         stream.set_nodelay(true)?;
     }
 
@@ -115,12 +120,13 @@ fn handle_client(mut stream: TcpStream, options: &options) -> Result<(), io::Err
 }
 
 #[no_mangle]
-pub extern "C" fn send_op(msg: *const op_msg) -> i32 {
+pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
+    let msg = unsafe {&*(msg_data as *const op_msg)};
     let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
     let list = res.deref_mut();
     let mut delete = Vec::new();
     for (i, ref mut client) in list.into_iter().enumerate() {
-        let buf = unsafe {slice::from_raw_parts(msg as *const u8, (*msg).op_length as usize)};
+        let buf = unsafe {slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize)};
         if client.stream.write_all(&buf).is_err() {
             println!("Failed sending op to client");
             delete.push(i);
@@ -148,6 +154,7 @@ fn main() {
 
     let options = unsafe {fsyncer_parse_opts(c_args.len() as i32, c_args.as_ptr())};
 
+    // FIXME use net2::TcpBuilder to set SO_REUSEADDR
     let listener = TcpListener::bind(format!("0.0.0.0:{}", options.port)).expect("Could not create server socket");
 
     thread::spawn(move || {
@@ -156,5 +163,5 @@ fn main() {
         }
     });
 
-    unsafe {fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr())};
+    unsafe {fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr(), send_op)};
 }

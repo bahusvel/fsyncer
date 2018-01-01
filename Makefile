@@ -20,14 +20,14 @@ test_ll: dirs ll_passthrough
 	fusermount3 -u -z test_src || true
 	./ll_passthrough -f test_src
 
-build/fs/passthrough: $(OBJ)
-	gcc -o $@ build/common/*.o $^ `pkg-config fuse3 --libs` -L/usr/local/lib
+build/fs/libpassthrough.a: clean_fs $(OBJ)
+	ar rcs -o $@ build/common/*.o build/fs/*.o
 
 clean_fs:
 	rm -rf build/fs || true
 	mkdir -p build/fs
 
-test_fs: dirs build/common clean_fs build/fs/passthrough
+test_fs: dirs build/common build/fs/passthrough
 	fusermount3 -u -z test_src || true
 	build/fs/passthrough -o allow_other -f --path=`realpath test_path` test_src
 
