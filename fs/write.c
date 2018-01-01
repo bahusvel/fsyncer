@@ -3,7 +3,7 @@
 #include "fsyncer.h"
 #include <stdlib.h>
 
-int (*send_op)(op_message message);
+int send_op(op_message message);
 
 op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);

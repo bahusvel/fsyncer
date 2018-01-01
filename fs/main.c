@@ -94,8 +94,6 @@ static void *control_loop(void *arg) {
 	}
 }
 
-int (*send_op)(op_message message);
-
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
 static const struct fuse_opt option_spec[] = {
