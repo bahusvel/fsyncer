@@ -229,6 +229,46 @@ static const struct fuse_opt option_spec[] = {
 	OPTION("--help", show_help),
 	FUSE_OPT_END};
 
+struct options fsyncer_parse_opts(int argc, char **argv) {
+	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
+	/* Set defaults -- we have to use strdup so that
+	   fuse_opt_parse can free the defaults if other
+	   values are specified */
+	options.real_path = strdup("/");
+	options.port = 2323;
+	options.consistent = 1;
+	options.dontcheck = 0;
+
+	/* Parse options */
+	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
+		exit(1);
+
+	return options;
+}
+
+int fsyncer_fuse_main(int argc, char **argv) {
+	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
+	/* Set defaults -- we have to use strdup so that
+	   fuse_opt_parse can free the defaults if other
+	   values are specified */
+	options.real_path = strdup("/");
+	options.port = 2323;
+	options.consistent = 1;
+	options.dontcheck = 0;
+
+	/* Parse options */
+	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
+		exit(1);
+
+	struct fuse_operations xmp_oper = {0};
+	gen_read_ops(&xmp_oper);
+	gen_write_ops(&xmp_oper);
+
+	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
+}
+
 int main(int argc, char *argv[]) {
 	pthread_mutex_init(&cork_mutex, NULL);
 	pthread_cond_init(&cork_cv, NULL);

@@ -3,3 +3,4 @@ test_dst
 test_path
 *.o
 build
+*target
