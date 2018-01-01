@@ -126,25 +126,9 @@ struct options fsyncer_parse_opts(int argc, char **argv) {
 }
 
 int fsyncer_fuse_main(int argc, char **argv) {
-	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-
-	/* Set defaults -- we have to use strdup so that
-	   fuse_opt_parse can free the defaults if other
-	   values are specified */
-	options.real_path = strdup("/");
-	options.port = 2323;
-	options.consistent = 1;
-	options.dontcheck = 0;
-
-	/* Parse options */
-	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1) {
-		printf("Fuse is not happy with the options\n");
-		exit(1);
-	}
-
 	struct fuse_operations xmp_oper = {0};
 	gen_read_ops(&xmp_oper);
 	gen_write_ops(&xmp_oper);
 
-	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
+	return fuse_main(argc, argv, &xmp_oper, NULL);
 }
