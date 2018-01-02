@@ -9,7 +9,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-char *dst_path;
+extern char *dst_path;
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;

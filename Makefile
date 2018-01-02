@@ -27,15 +27,7 @@ fscompare:
 	mkdir -p build/fscompare
 	gcc common/fscompare_main.c common/fscompare.c -o build/fscompare/fscompare
 
-build/client/client: dirs build/common client/decode.c client/main.c client/fdmap.rs
-	rm -rf build/client || true
-	mkdir -p build/client
-	gcc -c $(CFLAGS) client/decode.c -o build/client/decode.o
-	gcc -c $(CFLAGS) client/main.c -o build/client/main.o
-	rustc --crate-type staticlib client/fdmap.rs --out-dir build/client
-	gcc -o build/client/client build/client/*.o build/common/*.o -L build/client -lfdmap -ldl -lpthread
-
 test_client: build/client/client
 	rm -rf test_dst || true
 	cp -rax test_path test_dst
-	build/client/client -d `realpath test_dst` -h 127.0.0.1
+	cd client && cargo run -- -s -d `realpath ../test_dst`
