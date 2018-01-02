@@ -4,6 +4,7 @@ extern crate libc;
 extern crate net2;
 #[macro_use]
 extern crate lazy_static;
+extern crate common;
 
 use libc::{c_char, c_void, free};
 use std::ffi::CString;
@@ -16,6 +17,7 @@ use std::thread;
 use std::sync::Mutex;
 use std::slice;
 use std::ops::DerefMut;
+use common::*;
 
 #[repr(C)]
 struct options {
@@ -27,50 +29,6 @@ struct options {
 }
 
 unsafe impl Send for options {}
-
-#[repr(C)]
-#[allow(dead_code)]
-enum op_type {
-    MKNOD,
-	MKDIR,
-	UNLINK,
-	RMDIR,
-	SYMLINK,
-	RENAME,
-	LINK,
-	CHMOD,
-	CHOWN,
-	TRUNCATE,
-	WRITE,
-	FALLOCATE,
-	SETXATTR,
-	REMOVEXATTR,
-	CREATE,
-	UTIMENS,
-}
-
-#[repr(C)]
-#[derive(PartialEq)]
-#[allow(non_camel_case_types)]
-#[allow(dead_code)]
-enum client_mode { MODE_ASYNC, MODE_SYNC, MODE_CONTROL }
-
-#[repr(C)]
-pub struct op_msg {
-    op_length: u32,
-    op_type: op_type,
-}
-
-#[repr(C)]
-struct init_msg {
-    mode: client_mode,
-    dsthash: u64,
-}
-
-#[repr(C)]
-struct ack_msg {
-	retcode: i32
-}
 
 struct Client {
     stream: TcpStream,
