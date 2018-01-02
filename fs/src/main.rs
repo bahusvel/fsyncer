@@ -5,6 +5,7 @@ extern crate common;
 extern crate lazy_static;
 extern crate libc;
 extern crate net2;
+extern crate zstd;
 
 use libc::{c_char, c_void, free};
 use std::ffi::CString;
@@ -18,6 +19,7 @@ use std::sync::Mutex;
 use std::slice;
 use std::ops::DerefMut;
 use common::*;
+use std::sync::Arc;
 
 #[repr(C)]
 struct options {
@@ -31,7 +33,8 @@ struct options {
 unsafe impl Send for options {}
 
 struct Client {
-    stream: TcpStream,
+    write: Box<Write + Send>,
+    read: Box<Read + Send>,
     mode: client_mode,
 }
 
@@ -76,11 +79,18 @@ fn handle_client(mut stream: TcpStream, options: &options) -> Result<(), io::Err
         stream.set_nodelay(true)?;
     }
 
+    let writer = if init.compress && init.mode == client_mode::MODE_ASYNC{
+        Box::new(zstd::stream::Encoder::new(stream.try_clone()?, 0)?) as Box<Write + Send>
+    } else {
+        Box::new(stream.try_clone()?) as Box<Write + Send>
+    };
+
     SYNC_LIST
         .lock()
         .expect("Failed to lock SYNC_LIST")
         .push(Client {
-            stream: stream,
+            write: writer,
+            read: Box::new(stream),
             mode: init.mode,
         });
 
@@ -97,14 +107,14 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
     let mut delete = Vec::new();
     for (i, ref mut client) in list.into_iter().enumerate() {
         let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
-        if client.stream.write_all(&buf).is_err() {
+        if client.write.write_all(&buf).is_err() {
             println!("Failed sending op to client");
             delete.push(i);
             continue;
         }
         if client.mode == client_mode::MODE_SYNC {
             let mut ack_buf = [0; size_of::<ack_msg>()];
-            let ack = client.stream.read_exact(&mut ack_buf);
+            let ack = client.read.read_exact(&mut ack_buf);
             if ack.is_err() {
                 println!("Failed receiving ack from client {:?}", ack);
                 delete.push(i);

@@ -27,7 +27,7 @@ fscompare:
 	mkdir -p build/fscompare
 	gcc common/fscompare_main.c common/fscompare.c -o build/fscompare/fscompare
 
-test_client: build/client/client
+test_client:
 	rm -rf test_dst || true
 	cp -rax test_path test_dst
-	cd client && cargo run -- -s -d `realpath ../test_dst`
+	cd client && cargo run -- -d `realpath ../test_dst`

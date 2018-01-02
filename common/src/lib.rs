@@ -44,6 +44,7 @@ pub struct op_msg {
 pub struct init_msg {
     pub mode: client_mode,
     pub dsthash: u64,
+    pub compress: bool,
 }
 
 #[repr(C)]

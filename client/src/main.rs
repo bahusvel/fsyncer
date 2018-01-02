@@ -94,12 +94,11 @@ fn main() {
             .map(|v| v.parse().expect("Invalid format for port"))
             .unwrap(),
         mode,
+        dsthash,
+        true,
         do_call_wrapper,
     ).expect("Failed to connect to fsyncer");
 
-    client
-        .send_init(dsthash)
-        .expect("Failed to exchange fs hashes");
 
     println!("Connected to {}", matches.value_of("host").expect("No host specified"));
 
