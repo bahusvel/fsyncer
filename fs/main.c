@@ -1,19 +1,11 @@
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 
 #include "defs.h"
 #include "fscompare.h"
 #include "fsyncer.h"
-
-static int cork;
-static pthread_mutex_t cork_mutex;
-static pthread_cond_t cork_cv;
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)conn;
@@ -44,27 +36,7 @@ void gen_read_ops(struct fuse_operations *xmp_oper);
 
 void gen_write_ops(struct fuse_operations *xmp_oper);
 
-static int do_cork() {
-	if (cork == 1) {
-		return -1;
-	}
-	pthread_mutex_lock(&cork_mutex);
-	cork = 1;
-	pthread_mutex_unlock(&cork_mutex);
-	return 0;
-}
-
-static int do_uncork() {
-	if (cork == 0) {
-		return -1;
-	}
-	pthread_mutex_lock(&cork_mutex);
-	cork = 0;
-	pthread_cond_broadcast(&cork_cv);
-	pthread_mutex_unlock(&cork_mutex);
-	return 0;
-}
-
+/*
 static void *control_loop(void *arg) {
 	int client_fd = (int)arg;
 	struct command_msg cmd;
@@ -93,6 +65,7 @@ static void *control_loop(void *arg) {
 		}
 	}
 }
+*/
 
 #define OPTION(t, p)                                                           \
 	{ t, offsetof(struct options, p), 1 }
@@ -126,9 +99,25 @@ struct options fsyncer_parse_opts(int argc, char **argv) {
 }
 
 int fsyncer_fuse_main(int argc, char **argv) {
+	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
+	/* Set defaults -- we have to use strdup so that
+	   fuse_opt_parse can free the defaults if other
+	   values are specified */
+	options.real_path = strdup("/");
+	options.port = 2323;
+	options.consistent = 1;
+	options.dontcheck = 0;
+
+	/* Parse options */
+	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1) {
+		printf("Fuse is not happy with the options\n");
+		exit(1);
+	}
+
 	struct fuse_operations xmp_oper = {0};
 	gen_read_ops(&xmp_oper);
 	gen_write_ops(&xmp_oper);
 
-	return fuse_main(argc, argv, &xmp_oper, NULL);
+	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
 }

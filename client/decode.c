@@ -408,7 +408,7 @@ int do_call(op_message message) {
 		return do_utimens(message->data);
 #endif
 	default: {
-		printf("Unknown vfs call!");
+		printf("Unknown vfs call %d!\n", message->op_type);
 		exit(-1);
 	}
 	}

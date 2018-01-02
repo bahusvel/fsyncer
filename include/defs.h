@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#define HAVE_UTIMENSAT 1
+
 enum op_type {
 	MKNOD,
 	MKDIR,

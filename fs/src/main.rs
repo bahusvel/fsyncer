@@ -5,7 +5,7 @@ extern crate net2;
 #[macro_use]
 extern crate lazy_static;
 
-use libc::{c_char, c_void};
+use libc::{c_char, c_void, free};
 use std::ffi::CString;
 use std::net::{TcpListener, TcpStream};
 use net2::TcpStreamExt;
@@ -134,8 +134,9 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
         }
         if client.mode == client_mode::MODE_SYNC {
             let mut ack_buf = [0; size_of::<ack_msg>()];
-            if client.stream.read_exact(&mut ack_buf).is_err() {
-                println!("Failed receiving ack from client");
+            let ack = client.stream.read_exact(&mut ack_buf);
+            if ack.is_err() {
+                println!("Failed receiving ack from client {:?}", ack);
                 delete.push(i);
                 continue;
             }
@@ -144,6 +145,7 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
     for i in delete {
         list.remove(i);
     }
+    unsafe {free(msg_data as *mut c_void)};
     0
 }
 

@@ -38,4 +38,4 @@ build/client/client: dirs build/common client/decode.c client/main.c client/fdma
 test_client: build/client/client
 	rm -rf test_dst || true
 	cp -rax test_path test_dst
-	build/client/client -s -d `realpath test_dst` -h 127.0.0.1
+	build/client/client -d `realpath test_dst` -h 127.0.0.1
