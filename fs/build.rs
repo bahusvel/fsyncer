@@ -20,5 +20,6 @@ fn main() {
         .file("read.c")
         .file("write.c")
         .file("../common/fscompare.c")
+        .file("../common/fsops.c")
         .compile("fsyncer");
 }

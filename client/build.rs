@@ -7,5 +7,6 @@ fn main() {
         .warnings(false)
         .flag("-Wall")
         .file("decode.c")
+        .file("../common/fsops.c")
         .compile("fsyncer_client");
 }

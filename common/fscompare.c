@@ -17,22 +17,23 @@ void string_hash(const char *str) {
 	int c;
 
 	while ((c = *str++))
-		global_hash =
-			((global_hash << 5) + global_hash) + c; /* hash * 33 + c */
+		global_hash = ((global_hash << 5) + global_hash) + c; // hash * 33 + c
 }
 
+/*
 static int display_info(const char *fpath, const struct stat *sb, int tflag,
 						struct FTW *ftwbuf) {
 	// clang-format off
-    printf("%-3s %7jd %-40s\n",
-        (tflag == FTW_D) ?   "d"   : (tflag == FTW_DNR) ? "dnr" :
-        (tflag == FTW_DP) ?  "dp"  : (tflag == FTW_F) ?   "f" :
-        (tflag == FTW_NS) ?  "ns"  : (tflag == FTW_SL) ?  "sl" :
-        (tflag == FTW_SLN) ? "sln" : "???",
-        (intmax_t) sb->st_size, fpath+root_path_len);
+	printf("%-3s %7jd %-40s\n",
+		(tflag == FTW_D) ?   "d"   : (tflag == FTW_DNR) ? "dnr" :
+		(tflag == FTW_DP) ?  "dp"  : (tflag == FTW_F) ?   "f" :
+		(tflag == FTW_NS) ?  "ns"  : (tflag == FTW_SL) ?  "sl" :
+		(tflag == FTW_SLN) ? "sln" : "???",
+		(intmax_t) sb->st_size, fpath+root_path_len);
 	// clang-format on
-	return 0; /* To tell nftw() to continue */
+	return 0; // To tell nftw() to continue
 }
+*/
 
 static int hash_ftentry(const char *fpath, const struct stat *sb, int tflag,
 						struct FTW *ftwbuf) {
@@ -52,4 +53,4 @@ unsigned long hash_metadata(const char *path) {
 	return global_hash;
 }
 
-unsigned long hash_data(const char *path) {}
+// unsigned long hash_data(const char *path) {}

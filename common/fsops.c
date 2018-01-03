@@ -136,8 +136,8 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 }
 
 #ifdef HAVE_POSIX_FALLOCATE
-static int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
-						 int fd) {
+int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
+				  int fd) {
 	if (mode)
 		return -EOPNOTSUPP;
 

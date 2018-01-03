@@ -8,7 +8,11 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
 #include <unistd.h>
+
+#include <attr/xattr.h>
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev);
 int xmp_mkdir(const char *path, mode_t mode);
@@ -23,8 +27,8 @@ int xmp_truncate(const char *path, off_t size, int fd);
 int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 			  int fd);
 #ifdef HAVE_POSIX_FALLOCATE
-static int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
-						 int fd);
+int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
+				  int fd);
 #endif
 #ifdef HAVE_SETXATTR
 int xmp_setxattr(const char *path, const char *name, const char *value,

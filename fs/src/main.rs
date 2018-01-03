@@ -19,7 +19,6 @@ use std::sync::Mutex;
 use std::slice;
 use std::ops::DerefMut;
 use common::*;
-use std::sync::Arc;
 
 #[repr(C)]
 struct options {

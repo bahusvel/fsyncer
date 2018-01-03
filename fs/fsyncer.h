@@ -22,7 +22,11 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
 #include <unistd.h>
+
+#include <attr/xattr.h>
 
 struct options {
 	const char *real_path;
