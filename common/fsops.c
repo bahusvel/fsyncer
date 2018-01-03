@@ -184,9 +184,7 @@ int xmp_utimens(const char *path, const struct timespec ts[2], int fd) {
 	if (path == NULL)
 		res = futimens(fd, ts);
 	else {
-		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, path, path);
-		res = utimensat(0, real_path, ts, AT_SYMLINK_NOFOLLOW);
+		res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
 	}
 
 	if (res == -1)

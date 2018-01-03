@@ -12,6 +12,11 @@ test_ll: dirs ll_passthrough
 	fusermount3 -u -z test_src || true
 	./ll_passthrough -f test_src
 
+clean:
+	cd fs && cargo clean
+	cd common && cargo clean
+	cd client && cargo clean
+
 test_fs: dirs
 	fusermount3 -u -z test_src || true
 	cd fs && cargo run -- -o allow_other -f --path=`realpath ../test_path` ../test_src
