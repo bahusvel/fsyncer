@@ -1,5 +1,6 @@
 #include "codec.h"
 #include "defs.h"
+#include "fsops.h"
 #include "fsyncer.h"
 #include <stdlib.h>
 
@@ -13,23 +14,14 @@ op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	return msg;
 }
 
-static int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
-	int res;
-
+static int do_mknod(const char *path, mode_t mode, dev_t rdev) {
 	if (send_op(encode_mknod(path, mode, rdev)) < 0)
 		;
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	if (S_ISFIFO(mode))
-		res = mkfifo(real_path, mode);
-	else
-		res = mknod(real_path, mode, rdev);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_mknod(real_path, mode, rdev);
 }
 
 op_message encode_mkdir(const char *path, uint32_t mode) {
@@ -39,20 +31,14 @@ op_message encode_mkdir(const char *path, uint32_t mode) {
 	return msg;
 }
 
-static int xmp_mkdir(const char *path, mode_t mode) {
-	int res;
-
+static int do_mkdir(const char *path, mode_t mode) {
 	if (send_op(encode_mkdir(path, mode)) < 0)
 		;
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	res = mkdir(real_path, mode);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_mkdir(real_path, mode);
 }
 
 op_message encode_unlink(const char *path) {
@@ -61,20 +47,14 @@ op_message encode_unlink(const char *path) {
 	return msg;
 }
 
-static int xmp_unlink(const char *path) {
-	int res;
-
+static int do_unlink(const char *path) {
 	if (send_op(encode_unlink(path)) < 0)
 		;
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	res = unlink(real_path);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_unlink(real_path);
 }
 
 op_message encode_rmdir(const char *path) {
@@ -83,20 +63,14 @@ op_message encode_rmdir(const char *path) {
 	return msg;
 }
 
-static int xmp_rmdir(const char *path) {
-	int res;
-
+static int do_rmdir(const char *path) {
 	if (send_op(encode_rmdir(path)) < 0)
 		;
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	res = rmdir(real_path);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_rmdir(real_path);
 }
 
 op_message encode_symlink(const char *from, const char *to) {
@@ -106,9 +80,7 @@ op_message encode_symlink(const char *from, const char *to) {
 	return msg;
 }
 
-static int xmp_symlink(const char *from, const char *to) {
-	int res;
-
+static int do_symlink(const char *from, const char *to) {
 	if (send_op(encode_symlink(from, to)) < 0)
 		;
 
@@ -119,11 +91,7 @@ static int xmp_symlink(const char *from, const char *to) {
 	char real_to[MAX_PATH_SIZE];
 	fake_root(real_to, options.real_path, to);
 
-	res = symlink(from[0] == '/' ? real_from : from, real_to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_symlink(from[0] == '/' ? real_from : from, real_to);
 }
 
 op_message encode_rename(const char *from, const char *to, uint32_t flags) {
@@ -134,15 +102,14 @@ op_message encode_rename(const char *from, const char *to, uint32_t flags) {
 	return msg;
 }
 
-static int xmp_rename(const char *from, const char *to, unsigned int flags) {
-	int res;
+static int do_rename(const char *from, const char *to, unsigned int flags) {
+	if (flags)
+		return -EINVAL;
+
+	/* When we have renameat2() in libc, then we can implement flags */
 
 	if (send_op(encode_rename(from, to, flags)) < 0)
 		;
-
-	/* When we have renameat2() in libc, then we can implement flags */
-	if (flags)
-		return -EINVAL;
 
 	char real_from[MAX_PATH_SIZE];
 	fake_root(real_from, options.real_path, from);
@@ -150,11 +117,7 @@ static int xmp_rename(const char *from, const char *to, unsigned int flags) {
 	char real_to[MAX_PATH_SIZE];
 	fake_root(real_to, options.real_path, to);
 
-	res = rename(real_from, real_to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_rename(real_from, real_to, flags);
 }
 
 op_message encode_link(const char *from, const char *to) {
@@ -164,9 +127,7 @@ op_message encode_link(const char *from, const char *to) {
 	return msg;
 }
 
-static int xmp_link(const char *from, const char *to) {
-	int res;
-
+static int do_link(const char *from, const char *to) {
 	if (send_op(encode_link(from, to)) < 0)
 		;
 
@@ -176,11 +137,7 @@ static int xmp_link(const char *from, const char *to) {
 	char real_to[MAX_PATH_SIZE];
 	fake_root(real_to, options.real_path, to);
 
-	res = link(real_from, real_to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_link(real_from, real_to);
 }
 
 op_message encode_chmod(const char *path, uint32_t mode) {
@@ -190,24 +147,17 @@ op_message encode_chmod(const char *path, uint32_t mode) {
 	return msg;
 }
 
-static int xmp_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
-	int res;
-
+static int do_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	if (send_op(encode_chmod(path, mode)) < 0)
 		;
 
 	if (fi)
-		res = fchmod(fi->fh, mode);
+		return xmp_chmod(NULL, mode, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = chmod(real_path, mode);
+		return xmp_chmod(real_path, mode, -1);
 	}
-
-	if (res == -1)
-		return -errno;
-
-	return 0;
 }
 
 op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
@@ -218,25 +168,18 @@ op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
 	return msg;
 }
 
-static int xmp_chown(const char *path, uid_t uid, gid_t gid,
-					 struct fuse_file_info *fi) {
-	int res;
-
+static int do_chown(const char *path, uid_t uid, gid_t gid,
+					struct fuse_file_info *fi) {
 	if (send_op(encode_chown(path, uid, gid)) < 0)
 		;
 
 	if (fi)
-		res = fchown(fi->fh, uid, gid);
+		return xmp_chown(NULL, uid, gid, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = lchown(real_path, uid, gid);
+		return xmp_chown(real_path, uid, gid, -1);
 	}
-
-	if (res == -1)
-		return -errno;
-
-	return 0;
 }
 
 op_message encode_truncate(const char *path, int64_t size) {
@@ -246,24 +189,18 @@ op_message encode_truncate(const char *path, int64_t size) {
 	return msg;
 }
 
-int xmp_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
-	int res;
-
+static int do_truncate(const char *path, off_t size,
+					   struct fuse_file_info *fi) {
 	if (send_op(encode_truncate(path, size)) < 0)
 		;
 
 	if (fi)
-		res = ftruncate(fi->fh, size);
+		return xmp_truncate(NULL, size, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = truncate(real_path, size);
+		return xmp_truncate(real_path, size, -1);
 	}
-
-	if (res == -1)
-		return -errno;
-
-	return 0;
 }
 
 op_message encode_write(const char *path, const char *buf, uint32_t size,
@@ -275,24 +212,18 @@ op_message encode_write(const char *path, const char *buf, uint32_t size,
 	return msg;
 }
 
-static int xmp_write(const char *path, const char *buf, size_t size,
-					 off_t offset, struct fuse_file_info *fi) {
-	int res;
-
+static int do_write(const char *path, const char *buf, size_t size,
+					off_t offset, struct fuse_file_info *fi) {
 	if (send_op(encode_write(path, buf, size, offset)) < 0)
 		;
 
 	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
-	res = pwrite(fi->fh, buf, size, offset);
-	if (res == -1)
-		res = -errno;
-
-	return res;
+	return xmp_write(NULL, buf, size, offset, fi->fh);
 }
 
 	/* Replication for this function is not handled yet.
-	static int xmp_write_buf(const char *path, struct fuse_bufvec *buf,
+	static int do_write_buf(const char *path, struct fuse_bufvec *buf,
 				 off_t offset, struct fuse_file_info *fi)
 	{
 		struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
@@ -320,15 +251,15 @@ op_message encode_fallocate(const char *path, int32_t mode, int64_t offset,
 	return msg;
 }
 
-static int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
-						 struct fuse_file_info *fi) {
-	if (send_op(encode_fallocate(path, mode, offset, length)) < 0)
-		;
-
+static int do_fallocate(const char *path, int mode, off_t offset, off_t length,
+						struct fuse_file_info *fi) {
 	if (mode)
 		return -EOPNOTSUPP;
 
-	return -posix_fallocate(fi->fh, offset, length);
+	if (send_op(encode_fallocate(path, mode, offset, length)) < 0)
+		;
+
+	return xmp_fallocate(NULL, mode, offset, length, fi->fh);
 }
 #endif
 
@@ -346,8 +277,8 @@ op_message encode_setxattr(const char *path, const char *name,
 }
 
 /* xattr operations are optional and can safely be left unimplemented */
-static int xmp_setxattr(const char *path, const char *name, const char *value,
-						size_t size, int flags) {
+static int do_setxattr(const char *path, const char *name, const char *value,
+					   size_t size, int flags) {
 
 	if (send_op(encode_setxattr(path, name, value, size, flags)) < 0)
 		;
@@ -355,11 +286,7 @@ static int xmp_setxattr(const char *path, const char *name, const char *value,
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	int res = lsetxattr(real_path, name, value, size, flags);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_setxattr(real_path, name, value, size, flags);
 }
 
 op_message encode_removexattr(const char *path, const char *name) {
@@ -369,7 +296,7 @@ op_message encode_removexattr(const char *path, const char *name) {
 	return msg;
 }
 
-static int xmp_removexattr(const char *path, const char *name) {
+static int do_removexattr(const char *path, const char *name) {
 
 	if (send_op(encode_removexattr(path, name)) < 0)
 		;
@@ -377,11 +304,7 @@ static int xmp_removexattr(const char *path, const char *name) {
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, options.real_path, path);
 
-	int res = lremovexattr(real_path, name);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return xmp_removexattr(real_path, name);
 }
 #endif
 
@@ -393,24 +316,18 @@ op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
 	return msg;
 }
 
-static int xmp_create(const char *path, mode_t mode,
-					  struct fuse_file_info *fi) {
-	int fd;
+static int do_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, options.real_path, path);
+
+	int res = xmp_create(real_path, mode, (int *)&fi->fh, fi->flags);
 
 	if (send_op(encode_create(path, mode, fi->flags)) < 0)
 		;
 
-	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
-
 	// printf("Create %s %d %d\n", real_path, mode, fi->flags);
 
-	fd = open(real_path, fi->flags, mode);
-	if (fd == -1)
-		return -errno;
-
-	fi->fh = fd;
-	return 0;
+	return res;
 }
 
 #ifdef HAVE_UTIMENSAT
@@ -422,50 +339,43 @@ op_message encode_utimens(const char *path, const struct timespec ts[2]) {
 	return msg;
 }
 
-int xmp_utimens(const char *path, const struct timespec ts[2],
-				struct fuse_file_info *fi) {
-	int res;
-
+int do_utimens(const char *path, const struct timespec ts[2],
+			   struct fuse_file_info *fi) {
 	if (send_op(encode_utimens(path, ts)) < 0)
 		;
 
 	/* don't use utime/utimes since they follow symlinks */
 	if (fi)
-		res = futimens(fi->fh, ts);
+		return xmp_utimens(NULL, ts, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
 		fake_root(real_path, options.real_path, path);
-		res = utimensat(0, real_path, ts, AT_SYMLINK_NOFOLLOW);
+		return xmp_utimens(real_path, ts, -1);
 	}
-
-	if (res == -1)
-		return -errno;
-
-	return 0;
 }
 #endif
 
-void gen_write_ops(struct fuse_operations *xmp_oper) {
-	xmp_oper->mknod = xmp_mknod;
-	xmp_oper->mkdir = xmp_mkdir;
-	xmp_oper->symlink = xmp_symlink;
-	xmp_oper->unlink = xmp_unlink;
-	xmp_oper->rmdir = xmp_rmdir;
-	xmp_oper->rename = xmp_rename;
-	xmp_oper->link = xmp_link;
-	xmp_oper->chmod = xmp_chmod;
-	xmp_oper->chown = xmp_chown;
-	xmp_oper->truncate = xmp_truncate;
+void gen_write_ops(struct fuse_operations *do_oper) {
+	do_oper->mknod = do_mknod;
+	do_oper->mkdir = do_mkdir;
+	do_oper->symlink = do_symlink;
+	do_oper->unlink = do_unlink;
+	do_oper->rmdir = do_rmdir;
+	do_oper->rename = do_rename;
+	do_oper->link = do_link;
+	do_oper->chmod = do_chmod;
+	do_oper->chown = do_chown;
+	do_oper->truncate = do_truncate;
 #ifdef HAVE_UTIMENSAT
-	xmp_oper->utimens = xmp_utimens;
+	do_oper->utimens = do_utimens;
 #endif
-	xmp_oper->create = xmp_create;
-	xmp_oper->write = xmp_write;
+	do_oper->create = do_create;
+	do_oper->write = do_write;
 #ifdef HAVE_POSIX_FALLOCATE
-	xmp_oper->fallocate = xmp_fallocate;
+	do_oper->fallocate = do_fallocate;
 #endif
 #ifdef HAVE_SETXATTR
-	xmp_oper->setxattr = xmp_setxattr;
-	xmp_oper->removexattr = xmp_removexattr;
+	do_oper->setxattr = do_setxattr;
+	do_oper->removexattr = do_removexattr;
 #endif
 }
