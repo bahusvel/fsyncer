@@ -130,7 +130,6 @@ fn main() {
         .about(
             "Serves the filesystem and replicates all changes to clients",
         )
-        .setting(AppSettings::TrailingVarArg)
         .arg(
             Arg::with_name("storage")
                 .short("s")
