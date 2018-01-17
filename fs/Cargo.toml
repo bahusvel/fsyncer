@@ -8,6 +8,7 @@ build = "build.rs"
 net2 = "0.2"
 lazy_static = "1.0.0"
 common = {path = "../common"}
+clap = "2.29.0"
 zstd = "0.4.14"
 
 [build-dependencies]

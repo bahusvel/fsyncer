@@ -4,3 +4,4 @@ test_path
 *.o
 build
 *target
+whatever

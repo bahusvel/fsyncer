@@ -19,7 +19,7 @@ static int do_mknod(const char *path, mode_t mode, dev_t rdev) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	return xmp_mknod(real_path, mode, rdev);
 }
@@ -36,7 +36,7 @@ static int do_mkdir(const char *path, mode_t mode) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	return xmp_mkdir(real_path, mode);
 }
@@ -52,7 +52,7 @@ static int do_unlink(const char *path) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	return xmp_unlink(real_path);
 }
@@ -68,7 +68,7 @@ static int do_rmdir(const char *path) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	return xmp_rmdir(real_path);
 }
@@ -86,10 +86,10 @@ static int do_symlink(const char *from, const char *to) {
 
 	char real_from[MAX_PATH_SIZE];
 	if (from[0] == '/')
-		fake_root(real_from, options.real_path, from);
+		fake_root(real_from, dst_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, options.real_path, to);
+	fake_root(real_to, dst_path, to);
 
 	return xmp_symlink(from[0] == '/' ? real_from : from, real_to);
 }
@@ -112,10 +112,10 @@ static int do_rename(const char *from, const char *to, unsigned int flags) {
 		;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, options.real_path, from);
+	fake_root(real_from, dst_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, options.real_path, to);
+	fake_root(real_to, dst_path, to);
 
 	return xmp_rename(real_from, real_to, flags);
 }
@@ -132,10 +132,10 @@ static int do_link(const char *from, const char *to) {
 		;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, options.real_path, from);
+	fake_root(real_from, dst_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, options.real_path, to);
+	fake_root(real_to, dst_path, to);
 
 	return xmp_link(real_from, real_to);
 }
@@ -155,7 +155,7 @@ static int do_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 		return xmp_chmod(NULL, mode, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, options.real_path, path);
+		fake_root(real_path, dst_path, path);
 		return xmp_chmod(real_path, mode, -1);
 	}
 }
@@ -177,7 +177,7 @@ static int do_chown(const char *path, uid_t uid, gid_t gid,
 		return xmp_chown(NULL, uid, gid, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, options.real_path, path);
+		fake_root(real_path, dst_path, path);
 		return xmp_chown(real_path, uid, gid, -1);
 	}
 }
@@ -198,7 +198,7 @@ static int do_truncate(const char *path, off_t size,
 		return xmp_truncate(NULL, size, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, options.real_path, path);
+		fake_root(real_path, dst_path, path);
 		return xmp_truncate(real_path, size, -1);
 	}
 }
@@ -222,21 +222,21 @@ static int do_write(const char *path, const char *buf, size_t size,
 	return xmp_write(NULL, buf, size, offset, fi->fh);
 }
 
-	/* Replication for this function is not handled yet.
-	static int do_write_buf(const char *path, struct fuse_bufvec *buf,
-				 off_t offset, struct fuse_file_info *fi)
-	{
-		struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
+/* Replication for this function is not handled yet.
+static int do_write_buf(const char *path, struct fuse_bufvec *buf,
+			 off_t offset, struct fuse_file_info *fi)
+{
+	struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
 
-		(void) path;
+	(void) path;
 
-		dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
-		dst.buf[0].fd = fi->fh;
-		dst.buf[0].pos = offset;
+	dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+	dst.buf[0].fd = fi->fh;
+	dst.buf[0].pos = offset;
 
-		return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
-	}
-	*/
+	return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
+}
+*/
 
 #ifdef HAVE_POSIX_FALLOCATE
 
@@ -284,7 +284,7 @@ static int do_setxattr(const char *path, const char *name, const char *value,
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	return xmp_setxattr(real_path, name, value, size, flags);
 }
@@ -302,7 +302,7 @@ static int do_removexattr(const char *path, const char *name) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	return xmp_removexattr(real_path, name);
 }
@@ -318,7 +318,7 @@ op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
 
 static int do_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	int res = xmp_create(real_path, mode, (int *)&fi->fh, fi->flags);
 
@@ -349,7 +349,7 @@ int do_utimens(const char *path, const struct timespec ts[2],
 		return xmp_utimens(NULL, ts, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, options.real_path, path);
+		fake_root(real_path, dst_path, path);
 		return xmp_utimens(real_path, ts, -1);
 	}
 }

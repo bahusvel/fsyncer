@@ -29,11 +29,9 @@
 #include <attr/xattr.h>
 
 struct options {
-	const char *real_path;
-	int port;
-	int consistent;
-	int dontcheck;
 	int show_help;
 } options;
+
+extern char *dst_path;
 
 #endif

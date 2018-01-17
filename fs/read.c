@@ -10,7 +10,7 @@ static int xmp_getattr(const char *path, struct stat *stbuf,
 		res = fstat(fi->fh, stbuf);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, options.real_path, path);
+		fake_root(real_path, dst_path, path);
 		res = lstat(real_path, stbuf);
 	}
 	if (res == -1)
@@ -23,7 +23,7 @@ static int xmp_access(const char *path, int mask) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = access(real_path, mask);
 	if (res == -1)
@@ -36,7 +36,7 @@ static int xmp_readlink(const char *path, char *buf, size_t size) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = readlink(real_path, buf, size - 1);
 	if (res == -1)
@@ -59,7 +59,7 @@ static int xmp_opendir(const char *path, struct fuse_file_info *fi) {
 		return -ENOMEM;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	d->dp = opendir(real_path);
 	if (d->dp == NULL) {
@@ -150,7 +150,7 @@ static int xmp_open(const char *path, struct fuse_file_info *fi) {
 	int fd;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	// printf("Open %s\n", real_path);
 
@@ -202,7 +202,7 @@ static int xmp_statfs(const char *path, struct statvfs *stbuf) {
 	int res;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	res = statvfs(real_path, stbuf);
 	if (res == -1)
@@ -257,7 +257,7 @@ static int xmp_fsync(const char *path, int isdatasync,
 int xmp_getxattr(const char *path, const char *name, char *value, size_t size) {
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	int res = lgetxattr(real_path, name, value, size);
 	if (res == -1)
@@ -268,7 +268,7 @@ int xmp_getxattr(const char *path, const char *name, char *value, size_t size) {
 int xmp_listxattr(const char *path, char *list, size_t size) {
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, options.real_path, path);
+	fake_root(real_path, dst_path, path);
 
 	int res = llistxattr(real_path, list, size);
 	if (res == -1)

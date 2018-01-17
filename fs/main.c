@@ -24,9 +24,10 @@ void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	   the cache of the associated inode - resulting in an
 	   incorrect st_nlink value being reported for any remaining
 	   hardlinks to this inode. */
-	cfg->entry_timeout = 0;
-	cfg->attr_timeout = 0;
-	cfg->negative_timeout = 0;
+	// cfg->entry_timeout = 0;
+	// cfg->attr_timeout = 0;
+	// cfg->negative_timeout = 0;
+	cfg->auto_cache = 1;
 	conn->max_write = 32 * 1024;
 
 	return NULL;
@@ -67,57 +68,9 @@ static void *control_loop(void *arg) {
 }
 */
 
-#define OPTION(t, p)                                                           \
-	{ t, offsetof(struct options, p), 1 }
-static const struct fuse_opt option_spec[] = {
-	OPTION("--path=%s", real_path),
-	OPTION("--port=%d", port),
-	OPTION("--consistent", consistent),
-	OPTION("--dont-check", dontcheck),
-	OPTION("-h", show_help),
-	OPTION("--help", show_help),
-	FUSE_OPT_END};
-
-struct options fsyncer_parse_opts(int argc, char **argv) {
-	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-
-	/* Set defaults -- we have to use strdup so that
-	   fuse_opt_parse can free the defaults if other
-	   values are specified */
-	options.real_path = strdup("/");
-	options.port = 2323;
-	options.consistent = 1;
-	options.dontcheck = 0;
-
-	/* Parse options */
-	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1) {
-		printf("Fuse is not happy with the options\n");
-		exit(1);
-	}
-
-	return options;
-}
-
 int fsyncer_fuse_main(int argc, char **argv) {
-	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-
-	/* Set defaults -- we have to use strdup so that
-	   fuse_opt_parse can free the defaults if other
-	   values are specified */
-	options.real_path = strdup("/");
-	options.port = 2323;
-	options.consistent = 1;
-	options.dontcheck = 0;
-
-	/* Parse options */
-	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1) {
-		printf("Fuse is not happy with the options\n");
-		exit(1);
-	}
-
 	struct fuse_operations xmp_oper = {0};
 	gen_read_ops(&xmp_oper);
 	gen_write_ops(&xmp_oper);
-
-	return fuse_main(args.argc, args.argv, &xmp_oper, NULL);
+	return fuse_main(argc, argv, &xmp_oper, NULL);
 }

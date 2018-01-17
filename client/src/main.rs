@@ -21,7 +21,7 @@ fn do_call_wrapper(message: *const c_void) -> i32 {
     //println!("Received call");
     let res = unsafe { do_call(message) };
     if res < 0 {
-        unsafe {perror(CString::new("Error in replay").unwrap().as_ptr())};
+        unsafe { perror(CString::new("Error in replay").unwrap().as_ptr()) };
     }
     res
 }
@@ -59,20 +59,15 @@ fn main() {
                 .required(true)
                 .takes_value(true),
         )
-        .arg(
-            Arg::with_name("sync")
-                .short("s")
-                .long("sync")
-                .help("Performs replication synchronously"),
-        )
+        .arg(Arg::with_name("sync").short("s").long("sync").help(
+            "Performs replication synchronously",
+        ))
         .get_matches();
 
     println!("Calculating destination hash...");
-    let dsthash = hash_mdata(
-        matches
-            .value_of("destination")
-            .expect("No destination specified"),
-    );
+    let dsthash = hash_mdata(matches.value_of("destination").expect(
+        "No destination specified",
+    ));
     println!("Destinaton hash is {:x}", dsthash);
 
     let mode = if matches.is_present("sync") {
@@ -81,8 +76,9 @@ fn main() {
         client_mode::MODE_ASYNC
     };
 
-    let c_dst = CString::new(matches.value_of("destination").expect("Destination not specified"));
-    println!("{:?}", c_dst);
+    let c_dst = CString::new(matches.value_of("destination").expect(
+        "Destination not specified",
+    ));
     unsafe {
         dst_path = c_dst.unwrap().into_raw();
     }
@@ -100,7 +96,10 @@ fn main() {
     ).expect("Failed to connect to fsyncer");
 
 
-    println!("Connected to {}", matches.value_of("host").expect("No host specified"));
+    println!(
+        "Connected to {}",
+        matches.value_of("host").expect("No host specified")
+    );
 
     client.process_ops().expect("Stopped processing ops!");
 }

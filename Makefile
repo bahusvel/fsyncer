@@ -19,7 +19,7 @@ clean:
 
 test_fs: dirs
 	fusermount3 -u -z test_src || true
-	cd fs && cargo run -- -o allow_other -f --path=`realpath ../test_path` ../test_src
+	cd fs && cargo run -- --storage=`realpath ../test_path` -- ../test_src -f
 
 build/common: common/fscompare.c common/uvarint.c
 	rm -rf build/common || true
