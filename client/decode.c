@@ -1,5 +1,6 @@
 #include "codec.h"
 #include "defs.h"
+#include "fdmap.h"
 #include "fsops.h"
 
 #include <errno.h>
@@ -11,6 +12,7 @@
 #include <unistd.h>
 
 extern char *dst_path;
+extern fdmap_t fdmap;
 
 static int do_mknod(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
@@ -213,6 +215,7 @@ static int do_create(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
 	int flags = DECODE_VALUE(int32_t, be32toh);
+	int server_fd = DECODE_VALUE(int32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, dst_path, path);
@@ -220,14 +223,13 @@ static int do_create(unsigned char *encoded) {
 	int fd = 0;
 	int res = xmp_create(real_path, mode, &fd, flags);
 
-	// Instead of this insert into fdmap
-	if (fd != -1)
-		close(fd);
+	fdmap_set(fdmap, server_fd, fd);
+
 	return res;
 }
 
 #ifdef HAVE_UTIMENSAT
-int do_utimens(unsigned char *encoded) {
+static int do_utimens(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 	const struct timespec *ts =
 		(const struct timespec *)DECODE_FIXED_SIZE(sizeof(struct timespec) * 2);
@@ -238,6 +240,32 @@ int do_utimens(unsigned char *encoded) {
 	return xmp_utimens(real_path, ts, -1);
 }
 #endif
+
+static int do_open(unsigned char *encoded) {
+	const char *path = DECODE_STRING();
+	int server_fd = DECODE_VALUE(int32_t, be32toh);
+	int flags = DECODE_VALUE(int32_t, be32toh);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, dst_path, path);
+
+	int fd = 0;
+	int res = xmp_open(real_path, &fd, flags);
+
+	fdmap_set(fdmap, server_fd, fd);
+
+	return res;
+}
+
+static int do_release(unsigned char *encoded) {
+	int server_fd = DECODE_VALUE(int32_t, be32toh);
+
+	close(fdmap_get(fdmap, server_fd));
+
+	fdmap_remove(server_fd);
+
+	return 0;
+}
 
 int do_call(op_message message) {
 	switch (message->op_type) {
@@ -279,6 +307,10 @@ int do_call(op_message message) {
 	case UTIMENS:
 		return do_utimens(message->data);
 #endif
+	case OPEN:
+		return do_open(message->data);
+	case RELEASE:
+		return do_release(message->data);
 	default: {
 		printf("Unknown vfs call %d!\n", message->op_type);
 		exit(-1);

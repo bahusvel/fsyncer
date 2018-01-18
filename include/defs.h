@@ -26,6 +26,8 @@ enum op_type {
 	REMOVEXATTR,
 	CREATE,
 	UTIMENS,
+	OPEN,
+	RELEASE
 };
 
 enum client_mode { MODE_ASYNC, MODE_SYNC, MODE_CONTROL };

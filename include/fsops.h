@@ -39,5 +39,5 @@ int xmp_create(const char *path, mode_t mode, int *fd, int flags);
 #ifdef HAVE_UTIMENSAT
 int xmp_utimens(const char *path, const struct timespec ts[2], int fd);
 #endif
-
+int xmp_open(const char *path, int *fd, int flags);
 #endif

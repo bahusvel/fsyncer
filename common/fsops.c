@@ -193,3 +193,14 @@ int xmp_utimens(const char *path, const struct timespec ts[2], int fd) {
 	return 0;
 }
 #endif
+
+int xmp_open(const char *path, int *fd, int flags) {
+
+	// printf("Open %s\n", real_path);
+
+	*fd = open(path, flags);
+	if (*fd == -1)
+		return -errno;
+
+	return 0;
+}

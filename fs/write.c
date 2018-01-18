@@ -222,21 +222,21 @@ static int do_write(const char *path, const char *buf, size_t size,
 	return xmp_write(NULL, buf, size, offset, fi->fh);
 }
 
-/* Replication for this function is not handled yet.
-static int do_write_buf(const char *path, struct fuse_bufvec *buf,
-			 off_t offset, struct fuse_file_info *fi)
-{
-	struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
+	/* Replication for this function is not handled yet.
+	static int do_write_buf(const char *path, struct fuse_bufvec *buf,
+				 off_t offset, struct fuse_file_info *fi)
+	{
+		struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
 
-	(void) path;
+		(void) path;
 
-	dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
-	dst.buf[0].fd = fi->fh;
-	dst.buf[0].pos = offset;
+		dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+		dst.buf[0].fd = fi->fh;
+		dst.buf[0].pos = offset;
 
-	return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
-}
-*/
+		return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
+	}
+	*/
 
 #ifdef HAVE_POSIX_FALLOCATE
 
@@ -308,11 +308,13 @@ static int do_removexattr(const char *path, const char *name) {
 }
 #endif
 
-op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
+op_message encode_create(const char *path, uint32_t mode, int32_t flags,
+						 int32_t fd) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(flags), CREATE);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
 	ENCODE_VALUE(htobe32(flags));
+	ENCODE_VALUE(htobe32(fd));
 	return msg;
 }
 
@@ -322,7 +324,7 @@ static int do_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 
 	int res = xmp_create(real_path, mode, (int *)&fi->fh, fi->flags);
 
-	if (send_op(encode_create(path, mode, fi->flags)) < 0)
+	if (send_op(encode_create(path, mode, fi->flags, fi->fh)) < 0)
 		;
 
 	// printf("Create %s %d %d\n", real_path, mode, fi->flags);
@@ -339,8 +341,8 @@ op_message encode_utimens(const char *path, const struct timespec ts[2]) {
 	return msg;
 }
 
-int do_utimens(const char *path, const struct timespec ts[2],
-			   struct fuse_file_info *fi) {
+static int do_utimens(const char *path, const struct timespec ts[2],
+					  struct fuse_file_info *fi) {
 	if (send_op(encode_utimens(path, ts)) < 0)
 		;
 
@@ -354,6 +356,45 @@ int do_utimens(const char *path, const struct timespec ts[2],
 	}
 }
 #endif
+
+op_message encode_open(const char *path, int32_t fd, int32_t flags) {
+	NEW_MSG(strlen(path) + 1 + sizeof(fd) + sizeof(flags), OPEN);
+	ENCODE_STRING(path);
+	ENCODE_VALUE(htobe32(fd));
+	ENCODE_VALUE(htobe32(flags));
+	return msg;
+}
+
+static int do_open(const char *path, struct fuse_file_info *fi) {
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, dst_path, path);
+
+	int res = xmp_open(real_path, (int *)&fi->fh, fi->flags);
+
+	if (send_op(encode_open(path, fi->fh, fi->flags)) < 0)
+		;
+
+	// printf("Open %s %d %d\n", real_path, mode, fi->flags);
+
+	return res;
+}
+
+op_message encode_release(int32_t fd) {
+	NEW_MSG(sizeof(fd), RELEASE);
+	ENCODE_VALUE(htobe32(fd));
+	return msg;
+}
+
+static int do_release(const char *path, struct fuse_file_info *fi) {
+	(void)path;
+
+	if (send_op(encode_release(fi->fh)) < 0)
+		;
+
+	close(fi->fh);
+	return 0;
+}
 
 void gen_write_ops(struct fuse_operations *do_oper) {
 	do_oper->mknod = do_mknod;
@@ -378,4 +419,6 @@ void gen_write_ops(struct fuse_operations *do_oper) {
 	do_oper->setxattr = do_setxattr;
 	do_oper->removexattr = do_removexattr;
 #endif
+	do_oper->open = do_open;
+	do_oper->release = do_release;
 }

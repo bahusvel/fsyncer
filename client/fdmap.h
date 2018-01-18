@@ -7,5 +7,6 @@ fdmap_t fdmap_new();
 void fdmap_free(fdmap_t map);
 void fdmap_set(fdmap_t map, int key, int value);
 int fdmap_get(fdmap_t map, int key);
+void fdmap_remove(int key);
 
 #endif

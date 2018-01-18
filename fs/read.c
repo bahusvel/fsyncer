@@ -146,22 +146,6 @@ static int xmp_releasedir(const char *path, struct fuse_file_info *fi) {
 	return 0;
 }
 
-static int xmp_open(const char *path, struct fuse_file_info *fi) {
-	int fd;
-
-	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
-
-	// printf("Open %s\n", real_path);
-
-	fd = open(real_path, fi->flags);
-	if (fd == -1)
-		return -errno;
-
-	fi->fh = fd;
-	return 0;
-}
-
 static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 					struct fuse_file_info *fi) {
 	int res;
@@ -227,13 +211,6 @@ static int xmp_flush(const char *path, struct fuse_file_info *fi) {
 	return 0;
 }
 
-static int xmp_release(const char *path, struct fuse_file_info *fi) {
-	(void)path;
-	close(fi->fh);
-
-	return 0;
-}
-
 static int xmp_fsync(const char *path, int isdatasync,
 					 struct fuse_file_info *fi) {
 	int res;
@@ -287,12 +264,10 @@ void gen_read_ops(struct fuse_operations *xmp_oper) {
 	xmp_oper->opendir = xmp_opendir;
 	xmp_oper->readdir = xmp_readdir;
 	xmp_oper->releasedir = xmp_releasedir;
-	xmp_oper->open = xmp_open;
 	xmp_oper->read = xmp_read;
 	xmp_oper->read_buf = xmp_read_buf;
 	xmp_oper->statfs = xmp_statfs;
 	xmp_oper->flush = xmp_flush;
-	xmp_oper->release = xmp_release;
 	xmp_oper->fsync = xmp_fsync;
 #ifdef HAVE_SETXATTR
 	xmp_oper->getxattr = xmp_getxattr;
