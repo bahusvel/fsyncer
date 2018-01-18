@@ -1,13 +1,3 @@
-#![feature(libc)]
-
-extern crate common;
-#[macro_use]
-extern crate lazy_static;
-extern crate libc;
-extern crate net2;
-extern crate zstd;
-extern crate clap;
-
 use libc::{c_char, c_void, free};
 use std::ffi::CString;
 use std::net::{TcpListener, TcpStream};
@@ -19,9 +9,11 @@ use std::thread;
 use std::sync::Mutex;
 use std::slice;
 use std::ops::DerefMut;
-use common::*;
-use clap::{App, Arg, AppSettings};
+use clap::ArgMatches;
 use std::ptr::null;
+use common::*;
+use zstd;
+use std;
 
 struct Client {
     write: Box<Write + Send>,
@@ -38,24 +30,11 @@ extern "C" {
         sop: extern "C" fn(*const c_void) -> i32,
     ) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
-    fn do_call(message: *const c_void) -> i32;
 }
 
 #[no_mangle]
 #[allow(non_upper_case_globals)]
 pub static mut server_path: *const c_char = null();
-#[no_mangle]
-#[allow(non_upper_case_globals)]
-pub static mut client_path: *const c_char = null();
-
-fn do_call_wrapper(message: *const c_void) -> i32 {
-    //println!("Received call");
-    let res = unsafe { do_call(message) };
-    if res < 0 {
-        unsafe { perror(CString::new("Error in replay").unwrap().as_ptr()) };
-    }
-    res
-}
 
 lazy_static!{
     static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());
@@ -67,7 +46,7 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
     stream.read_exact(&mut init_buf)?;
 
     println!("Calculating source hash...");
-    let srchash = unsafe { hash_metadata(dst_path) };
+    let srchash = unsafe { hash_metadata(server_path) };
     println!("Source hash is {:x}", srchash);
 
     let init = unsafe { transmute::<[u8; size_of::<init_msg>()], init_msg>(init_buf) };
@@ -136,37 +115,10 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
     0
 }
 
-fn main() {
-    let matches = App::new("Fsyncer MirrorFS Server")
-        .version("0.0")
-        .author("Denis Lavrov <bahus.vel@gmail.com>")
-        .about(
-            "Serves the filesystem and replicates all changes to clients",
-        )
-        .arg(
-            Arg::with_name("storage")
-                .short("s")
-                .long("storage")
-                .help("Fsyncer host to connection to")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("port")
-                .short("p")
-                .long("port")
-                .default_value("2323")
-                .help("Port the fsyncer is running on")
-                .takes_value(true),
-        )
-        .arg(Arg::with_name("dont-check").long("dont-check").help(
-            "Disables comparison of the source and destination",
-        ))
-        .get_matches_from(std::env::args().take_while(|v| v != "--"));
-
-    let c_dst = CString::new(matches.value_of("storage").expect("Storage not specified"));
+pub fn server_main(matches: ArgMatches) {
+    let c_dst = CString::new(matches.value_of("source").expect("Storage not specified"));
     unsafe {
-        dst_path = c_dst.unwrap().into_raw();
+        server_path = c_dst.unwrap().into_raw();
     }
 
     // FIXME use net2::TcpBuilder to set SO_REUSEADDR

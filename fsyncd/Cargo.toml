@@ -1,5 +1,5 @@
 [package]
-name = "fs"
+name = "fsyncd"
 version = "0.1.0"
 authors = ["Denis Lavrov <bahus.vel@gmail.com>"]
 build = "build.rs"
