@@ -1,7 +1,7 @@
-#ifndef _UVARINT_H_
-#define _UVARINT_H_
-#include "defs.h"
+#ifndef _FSOPS_H_
+#define _FSOPS_H_
 
+#include "config.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>

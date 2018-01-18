@@ -3,10 +3,6 @@
 
 #define FUSE_USE_VERSION 31
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
 #ifdef linux
 /* For pread()/pwrite()/utimensat() */
 #define _XOPEN_SOURCE 700

@@ -11,38 +11,41 @@ mod server;
 mod client;
 mod common;
 
-use clap::{App, Arg};
-use server::server_main;
+use std::process::exit;
+
+use clap::{App, Arg, ArgGroup, ErrorKind};
+use server::{server_main, display_fuse_help};
 use client::client_main;
+
+pub use client::client_path;
+pub use server::{server_path, send_op};
 
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
-        .version("0.0")
+        .version("0.1")
         .author("Denis Lavrov <bahus.vel@gmail.com>")
         .about("Filesystem replication daemon")
+        .group(ArgGroup::with_name("mode").required(true))
         .arg(
-            Arg::with_name("destination")
-                .short("d")
-                .long("destination")
-                .help("Destination to replicate to")
+            Arg::with_name("mount-path")
+                .help("Mount path for the daemon")
                 .required(true)
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("source")
-                .short("s")
-                .long("source")
-                .help("Underlying storage to use by fs")
-                .takes_value(true)
-                .required(true),
+            Arg::with_name("client")
+                .short("c")
+                .long("client")
+                .default_value("127.0.0.1:2323")
+                .help("This daemon will act as a client and connect to this host")
+                .group("mode")
+                .takes_value(true),
         )
         .arg(
-            Arg::with_name("host")
-                .short("h")
-                .long("host")
-                .default_value("127.0.0.1")
-                .help("Fsyncer host to connect to")
-                .takes_value(true),
+            Arg::with_name("server")
+                .long("server")
+                .help("This daemon acts as a server")
+                .group("mode"),
         )
         .arg(
             Arg::with_name("port")
@@ -58,5 +61,19 @@ fn main() {
         .arg(Arg::with_name("sync").short("s").long("sync").help(
             "Performs replication synchronously",
         ))
-        .get_matches_from(std::env::args().take_while(|v| v != "--"));
+        .get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
+        .unwrap_or_else(|e| match e.kind {
+            ErrorKind::HelpDisplayed => {
+                eprintln!("{}", e);
+                display_fuse_help();
+                exit(1);
+            }
+            _ => e.exit(),
+        });
+
+    if matches.is_present("client") {
+        client_main(matches);
+    } else {
+        server_main(matches);
+    }
 }

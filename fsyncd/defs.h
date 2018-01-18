@@ -1,13 +1,9 @@
 #ifndef _FSYNCER_DEFS_
 #define _FSYNCER_DEFS_
 
+#include "config.h"
 #include <stdint.h>
 #include <string.h>
-
-#define HAVE_UTIMENSAT 1
-#define HAVE_SETXATTR 1
-#define HAVE_POSIX_FALLOCATE 1
-#define HAVE_FSTATAT 1
 
 enum op_type {
 	MKNOD,
@@ -27,7 +23,6 @@ enum op_type {
 	CREATE,
 	UTIMENS,
 };
-
 struct op_msg {
 	uint32_t op_length;
 	enum op_type op_type;

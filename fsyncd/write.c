@@ -1,8 +1,9 @@
 #include "codec.h"
 #include "defs.h"
-#include "fsops.h"
 #include "fsyncer.h"
 #include <stdlib.h>
+
+#include "fsops.h"
 
 int send_op(op_message message);
 

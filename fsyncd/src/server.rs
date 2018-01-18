@@ -115,6 +115,21 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
     0
 }
 
+pub fn display_fuse_help() {
+    println!("Fuse options, specify after --:");
+    let args = vec!["fsyncd", "--help"]
+        .into_iter()
+        .map(|arg| CString::new(arg).unwrap())
+        .collect::<Vec<CString>>();
+    // convert the strings to raw pointers
+    let c_args = args.iter()
+        .map(|arg| arg.as_ptr())
+        .collect::<Vec<*const c_char>>();
+
+    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr(), send_op) };
+
+}
+
 pub fn server_main(matches: ArgMatches) {
     let c_dst = CString::new(matches.value_of("source").expect("Storage not specified"));
     unsafe {

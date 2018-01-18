@@ -1,3 +1,5 @@
+ #![allow(dead_code)]
+
 #[repr(C)]
 #[derive(PartialEq, Clone, Copy)]
 pub enum op_type {

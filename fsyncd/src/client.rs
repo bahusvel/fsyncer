@@ -7,12 +7,10 @@ use libc::{c_void, c_char};
 use std::ffi::CString;
 use clap::ArgMatches;
 use std::ptr::null;
-use libc::{perror, puts};
+use libc::perror;
 use common::*;
 use zstd;
 
-#[link(name = "fsyncer", kind = "static")]
-#[link(name = "fuse3")]
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
@@ -21,8 +19,6 @@ extern "C" {
 #[no_mangle]
 #[allow(non_upper_case_globals)]
 pub static mut client_path: *const c_char = null();
-
-
 
 pub struct Client {
     write: Box<Write + Send>,
