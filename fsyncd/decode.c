@@ -10,7 +10,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-extern char *dst_path;
+extern char *client_path;
 
 static int do_mknod(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
@@ -18,7 +18,7 @@ static int do_mknod(unsigned char *encoded) {
 	dev_t rdev = DECODE_VALUE(uint32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_mknod(real_path, mode, rdev);
 }
@@ -28,7 +28,7 @@ static int do_mkdir(unsigned char *encoded) {
 	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_mkdir(real_path, mode);
 }
@@ -37,7 +37,7 @@ static int do_unlink(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_unlink(real_path);
 }
@@ -46,7 +46,7 @@ static int do_rmdir(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_rmdir(real_path);
 }
@@ -57,10 +57,10 @@ static int do_symlink(unsigned char *encoded) {
 
 	char real_from[MAX_PATH_SIZE];
 	if (from[0] == '/')
-		fake_root(real_from, dst_path, from);
+		fake_root(real_from, client_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, dst_path, to);
+	fake_root(real_to, client_path, to);
 
 	return xmp_symlink(from[0] == '/' ? real_from : from, real_to);
 }
@@ -71,10 +71,10 @@ static int do_rename(unsigned char *encoded) {
 	unsigned int flags = DECODE_VALUE(uint32_t, be32toh);
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, dst_path, from);
+	fake_root(real_from, client_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, dst_path, to);
+	fake_root(real_to, client_path, to);
 
 	return xmp_rename(real_from, real_to, flags);
 }
@@ -84,10 +84,10 @@ static int do_link(unsigned char *encoded) {
 	const char *to = DECODE_STRING();
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, dst_path, from);
+	fake_root(real_from, client_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, dst_path, to);
+	fake_root(real_to, client_path, to);
 
 	return xmp_link(real_from, real_to);
 }
@@ -97,7 +97,7 @@ static int do_chmod(unsigned char *encoded) {
 	mode_t mode = DECODE_VALUE(uint32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_chmod(real_path, mode, -1);
 }
@@ -108,7 +108,7 @@ static int do_chown(unsigned char *encoded) {
 	gid_t gid = DECODE_VALUE(uint32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_chown(real_path, uid, gid, -1);
 }
@@ -118,7 +118,7 @@ static int do_truncate(unsigned char *encoded) {
 	off_t size = DECODE_VALUE(int64_t, be64toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_truncate(real_path, size, -1);
 }
@@ -131,7 +131,7 @@ static int dec_write(const char *path, const char *buf, size_t size,
 	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	fd = open(real_path, O_WRONLY);
 	if (fd == -1)
@@ -162,7 +162,7 @@ static int dec_fallocate(const char *path, int mode, off_t offset,
 		return -EOPNOTSUPP;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	fd = open(real_path, O_WRONLY);
 	if (fd == -1)
@@ -193,7 +193,7 @@ static int do_setxattr(unsigned char *encoded) {
 	int flags = DECODE_VALUE(int32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_setxattr(real_path, name, value, size, flags);
 }
@@ -203,7 +203,7 @@ static int do_removexattr(unsigned char *encoded) {
 	const char *name = DECODE_STRING();
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_removexattr(real_path, name);
 }
@@ -215,7 +215,7 @@ static int do_create(unsigned char *encoded) {
 	int flags = DECODE_VALUE(int32_t, be32toh);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	int fd = 0;
 	int res = xmp_create(real_path, mode, &fd, flags);
@@ -233,7 +233,7 @@ int do_utimens(unsigned char *encoded) {
 		(const struct timespec *)DECODE_FIXED_SIZE(sizeof(struct timespec) * 2);
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, client_path, path);
 
 	return xmp_utimens(real_path, ts, -1);
 }

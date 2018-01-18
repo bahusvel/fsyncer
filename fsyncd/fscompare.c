@@ -1,5 +1,4 @@
 #define _XOPEN_SOURCE 500
-#include "fscompare.h"
 #include <ftw.h>
 #include <stdint.h>
 #include <stdio.h>

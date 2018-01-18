@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "defs.h"
-#include "fscompare.h"
 #include "fsyncer.h"
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {

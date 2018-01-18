@@ -11,7 +11,9 @@ fn main() {
         .stdout;
 
     cc::Build::new()
-        .flag(&from_utf8(&iflags[..iflags.len() - 1]).expect("Non utf output"))
+        .flag(&from_utf8(&iflags[..iflags.len() - 1]).expect(
+            "Non utf output",
+        ))
         .include("../include")
         .define("_FILE_OFFSET_BITS", "64")
         .warnings(false)
@@ -19,7 +21,8 @@ fn main() {
         .file("main.c")
         .file("read.c")
         .file("write.c")
-        .file("../common/fscompare.c")
-        .file("../common/fsops.c")
+        .file("decode.c")
+        .file("fscompare.c")
+        .file("fsops.c")
         .compile("fsyncer");
 }

@@ -28,22 +28,6 @@ enum op_type {
 	UTIMENS,
 };
 
-enum client_mode { MODE_ASYNC, MODE_SYNC, MODE_CONTROL };
-enum command { CMD_CORK, CMD_UNCORK };
-
-struct command_msg {
-	enum command cmd;
-};
-
-struct init_msg {
-	enum client_mode mode;
-	uint64_t dsthash;
-};
-
-struct ack_msg {
-	int retcode;
-};
-
 struct op_msg {
 	uint32_t op_length;
 	enum op_type op_type;

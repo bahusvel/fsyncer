@@ -6,7 +6,7 @@
 
 int send_op(op_message message);
 
-op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
+static op_message encode_mknod(const char *path, uint32_t mode, uint32_t rdev) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(rdev), MKNOD);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
@@ -19,12 +19,12 @@ static int do_mknod(const char *path, mode_t mode, dev_t rdev) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	return xmp_mknod(real_path, mode, rdev);
 }
 
-op_message encode_mkdir(const char *path, uint32_t mode) {
+static op_message encode_mkdir(const char *path, uint32_t mode) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode), MKDIR);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
@@ -36,12 +36,12 @@ static int do_mkdir(const char *path, mode_t mode) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	return xmp_mkdir(real_path, mode);
 }
 
-op_message encode_unlink(const char *path) {
+static op_message encode_unlink(const char *path) {
 	NEW_MSG(strlen(path) + 1, UNLINK);
 	ENCODE_STRING(path);
 	return msg;
@@ -52,12 +52,12 @@ static int do_unlink(const char *path) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	return xmp_unlink(real_path);
 }
 
-op_message encode_rmdir(const char *path) {
+static op_message encode_rmdir(const char *path) {
 	NEW_MSG(strlen(path) + 1, RMDIR);
 	ENCODE_STRING(path);
 	return msg;
@@ -68,12 +68,12 @@ static int do_rmdir(const char *path) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	return xmp_rmdir(real_path);
 }
 
-op_message encode_symlink(const char *from, const char *to) {
+static op_message encode_symlink(const char *from, const char *to) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1, SYMLINK);
 	ENCODE_STRING(from);
 	ENCODE_STRING(to);
@@ -86,15 +86,16 @@ static int do_symlink(const char *from, const char *to) {
 
 	char real_from[MAX_PATH_SIZE];
 	if (from[0] == '/')
-		fake_root(real_from, dst_path, from);
+		fake_root(real_from, server_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, dst_path, to);
+	fake_root(real_to, server_path, to);
 
 	return xmp_symlink(from[0] == '/' ? real_from : from, real_to);
 }
 
-op_message encode_rename(const char *from, const char *to, uint32_t flags) {
+static op_message encode_rename(const char *from, const char *to,
+								uint32_t flags) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1 + sizeof(flags), RENAME);
 	ENCODE_STRING(from);
 	ENCODE_STRING(to);
@@ -112,15 +113,15 @@ static int do_rename(const char *from, const char *to, unsigned int flags) {
 		;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, dst_path, from);
+	fake_root(real_from, server_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, dst_path, to);
+	fake_root(real_to, server_path, to);
 
 	return xmp_rename(real_from, real_to, flags);
 }
 
-op_message encode_link(const char *from, const char *to) {
+static op_message encode_link(const char *from, const char *to) {
 	NEW_MSG(strlen(from) + 1 + strlen(to) + 1, LINK);
 	ENCODE_STRING(from);
 	ENCODE_STRING(to);
@@ -132,15 +133,15 @@ static int do_link(const char *from, const char *to) {
 		;
 
 	char real_from[MAX_PATH_SIZE];
-	fake_root(real_from, dst_path, from);
+	fake_root(real_from, server_path, from);
 
 	char real_to[MAX_PATH_SIZE];
-	fake_root(real_to, dst_path, to);
+	fake_root(real_to, server_path, to);
 
 	return xmp_link(real_from, real_to);
 }
 
-op_message encode_chmod(const char *path, uint32_t mode) {
+static op_message encode_chmod(const char *path, uint32_t mode) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode), CHMOD);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
@@ -155,12 +156,12 @@ static int do_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 		return xmp_chmod(NULL, mode, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, dst_path, path);
+		fake_root(real_path, server_path, path);
 		return xmp_chmod(real_path, mode, -1);
 	}
 }
 
-op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
+static op_message encode_chown(const char *path, uint32_t uid, uint32_t gid) {
 	NEW_MSG(strlen(path) + 1 + sizeof(uid) + sizeof(gid), CHOWN);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(uid));
@@ -177,12 +178,12 @@ static int do_chown(const char *path, uid_t uid, gid_t gid,
 		return xmp_chown(NULL, uid, gid, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, dst_path, path);
+		fake_root(real_path, server_path, path);
 		return xmp_chown(real_path, uid, gid, -1);
 	}
 }
 
-op_message encode_truncate(const char *path, int64_t size) {
+static op_message encode_truncate(const char *path, int64_t size) {
 	NEW_MSG(strlen(path) + 1 + sizeof(size), TRUNCATE);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe64(size));
@@ -198,13 +199,13 @@ static int do_truncate(const char *path, off_t size,
 		return xmp_truncate(NULL, size, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, dst_path, path);
+		fake_root(real_path, server_path, path);
 		return xmp_truncate(real_path, size, -1);
 	}
 }
 
-op_message encode_write(const char *path, const char *buf, uint32_t size,
-						int64_t offset) {
+static op_message encode_write(const char *path, const char *buf, uint32_t size,
+							   int64_t offset) {
 	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
 	ENCODE_STRING(path);
 	ENCODE_OPAQUE(size, buf);
@@ -222,26 +223,26 @@ static int do_write(const char *path, const char *buf, size_t size,
 	return xmp_write(NULL, buf, size, offset, fi->fh);
 }
 
-/* Replication for this function is not handled yet.
-static int do_write_buf(const char *path, struct fuse_bufvec *buf,
-			 off_t offset, struct fuse_file_info *fi)
-{
-	struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
+	/* Replication for this function is not handled yet.
+	static int do_write_buf(const char *path, struct fuse_bufvec *buf,
+				 off_t offset, struct fuse_file_info *fi)
+	{
+		struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
 
-	(void) path;
+		(void) path;
 
-	dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
-	dst.buf[0].fd = fi->fh;
-	dst.buf[0].pos = offset;
+		dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+		dst.buf[0].fd = fi->fh;
+		dst.buf[0].pos = offset;
 
-	return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
-}
-*/
+		return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
+	}
+	*/
 
 #ifdef HAVE_POSIX_FALLOCATE
 
-op_message encode_fallocate(const char *path, int32_t mode, int64_t offset,
-							int64_t length) {
+static op_message encode_fallocate(const char *path, int32_t mode,
+								   int64_t offset, int64_t length) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(offset) + sizeof(length),
 			FALLOCATE);
 	ENCODE_STRING(path);
@@ -264,8 +265,9 @@ static int do_fallocate(const char *path, int mode, off_t offset, off_t length,
 #endif
 
 #ifdef HAVE_SETXATTR
-op_message encode_setxattr(const char *path, const char *name,
-						   const char *value, uint32_t size, int32_t flags) {
+static op_message encode_setxattr(const char *path, const char *name,
+								  const char *value, uint32_t size,
+								  int32_t flags) {
 	NEW_MSG(strlen(path) + 1 + strlen(name) + 1 + size + sizeof(uint32_t) +
 				sizeof(flags),
 			SETXATTR);
@@ -284,12 +286,12 @@ static int do_setxattr(const char *path, const char *name, const char *value,
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	return xmp_setxattr(real_path, name, value, size, flags);
 }
 
-op_message encode_removexattr(const char *path, const char *name) {
+static op_message encode_removexattr(const char *path, const char *name) {
 	NEW_MSG(strlen(path) + 1 + strlen(name) + 1, REMOVEXATTR);
 	ENCODE_STRING(path);
 	ENCODE_STRING(name);
@@ -302,13 +304,14 @@ static int do_removexattr(const char *path, const char *name) {
 		;
 
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	return xmp_removexattr(real_path, name);
 }
 #endif
 
-op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
+static op_message encode_create(const char *path, uint32_t mode,
+								int32_t flags) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(flags), CREATE);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));
@@ -318,7 +321,7 @@ op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
 
 static int do_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, dst_path, path);
+	fake_root(real_path, server_path, path);
 
 	int res = xmp_create(real_path, mode, (int *)&fi->fh, fi->flags);
 
@@ -331,7 +334,8 @@ static int do_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 }
 
 #ifdef HAVE_UTIMENSAT
-op_message encode_utimens(const char *path, const struct timespec ts[2]) {
+static op_message encode_utimens(const char *path,
+								 const struct timespec ts[2]) {
 	NEW_MSG(strlen(path) + 1 + (sizeof(struct timespec) * 2), UTIMENS);
 	ENCODE_STRING(path);
 	// FIXME this is not endian safe, I know.
@@ -339,8 +343,8 @@ op_message encode_utimens(const char *path, const struct timespec ts[2]) {
 	return msg;
 }
 
-int do_utimens(const char *path, const struct timespec ts[2],
-			   struct fuse_file_info *fi) {
+static int do_utimens(const char *path, const struct timespec ts[2],
+					  struct fuse_file_info *fi) {
 	if (send_op(encode_utimens(path, ts)) < 0)
 		;
 
@@ -349,7 +353,7 @@ int do_utimens(const char *path, const struct timespec ts[2],
 		return xmp_utimens(NULL, ts, fi->fh);
 	else {
 		char real_path[MAX_PATH_SIZE];
-		fake_root(real_path, dst_path, path);
+		fake_root(real_path, server_path, path);
 		return xmp_utimens(real_path, ts, -1);
 	}
 }

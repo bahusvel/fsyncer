@@ -38,11 +38,24 @@ extern "C" {
         sop: extern "C" fn(*const c_void) -> i32,
     ) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
+    fn do_call(message: *const c_void) -> i32;
 }
 
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub static mut dst_path: *const c_char = null();
+pub static mut server_path: *const c_char = null();
+#[no_mangle]
+#[allow(non_upper_case_globals)]
+pub static mut client_path: *const c_char = null();
+
+fn do_call_wrapper(message: *const c_void) -> i32 {
+    //println!("Received call");
+    let res = unsafe { do_call(message) };
+    if res < 0 {
+        unsafe { perror(CString::new("Error in replay").unwrap().as_ptr()) };
+    }
+    res
+}
 
 lazy_static!{
     static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());

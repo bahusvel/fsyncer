@@ -1,16 +1,15 @@
 #![feature(libc)]
 extern crate libc;
 extern crate zstd;
-extern crate common;
 extern crate net2;
 
-pub use common::*;
 use std::net::TcpStream;
 use net2::TcpStreamExt;
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
-use libc::c_void;
+use libc::{c_void, c_char};
+use std::ffi::CString;
 
 pub struct Client {
     write: Box<Write + Send>,
@@ -30,7 +29,7 @@ impl Client {
     ) -> Result<Self, io::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
 
-        stream.set_recv_buffer_size(1024*1024)?;
+        stream.set_recv_buffer_size(1024 * 1024)?;
 
         if mode == client_mode::MODE_SYNC {
             stream.set_nodelay(true)?;
@@ -46,7 +45,7 @@ impl Client {
 
         stream.write_all(&init)?;
 
-        let reader = if compress && mode == client_mode::MODE_ASYNC{
+        let reader = if compress && mode == client_mode::MODE_ASYNC {
             Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
         } else {
             Box::new(stream.try_clone()?) as Box<Read + Send>
@@ -68,8 +67,10 @@ impl Client {
             self.read.read_exact(&mut header_buf)?;
             let msg = unsafe { transmute::<[u8; size_of::<op_msg>()], op_msg>(header_buf) };
             rcv_buf[..size_of::<op_msg>()].copy_from_slice(&header_buf);
-            self.read
-                .read_exact(&mut rcv_buf[size_of::<op_msg>()..msg.op_length as usize])?;
+            self.read.read_exact(
+                &mut rcv_buf[size_of::<op_msg>()..
+                                 msg.op_length as usize],
+            )?;
 
             let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
             if self.mode == client_mode::MODE_SYNC {
@@ -80,4 +81,64 @@ impl Client {
             }
         }
     }
+}
+
+
+
+#[repr(C)]
+#[derive(PartialEq, Clone, Copy)]
+pub enum op_type {
+    MKNOD,
+    MKDIR,
+    UNLINK,
+    RMDIR,
+    SYMLINK,
+    RENAME,
+    LINK,
+    CHMOD,
+    CHOWN,
+    TRUNCATE,
+    WRITE,
+    FALLOCATE,
+    SETXATTR,
+    REMOVEXATTR,
+    CREATE,
+    UTIMENS,
+}
+
+#[repr(C)]
+#[derive(PartialEq, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum client_mode {
+    MODE_ASYNC,
+    MODE_SYNC,
+    MODE_CONTROL,
+}
+
+#[repr(C)]
+pub struct op_msg {
+    pub op_length: u32,
+    pub op_type: op_type,
+}
+
+#[repr(C)]
+pub struct init_msg {
+    pub mode: client_mode,
+    pub dsthash: u64,
+    pub compress: bool,
+}
+
+#[repr(C)]
+pub struct ack_msg {
+    pub retcode: i32,
+}
+
+#[link(name = "fsyncer_common", kind = "static")]
+extern "C" {
+    fn hash_metadata(path: *const c_char) -> u64;
+}
+
+pub fn hash_mdata(path: &str) -> u64 {
+    let s = CString::new(path).unwrap();
+    unsafe { hash_metadata(s.as_ptr()) }
 }

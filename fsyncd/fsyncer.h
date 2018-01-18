@@ -28,10 +28,6 @@
 
 #include <attr/xattr.h>
 
-struct options {
-	int show_help;
-} options;
-
-extern char *dst_path;
+extern char *server_path;
 
 #endif
