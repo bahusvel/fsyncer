@@ -10,6 +10,8 @@ use std::ptr::null;
 use libc::perror;
 use common::*;
 use zstd;
+use dssc::Compressor;
+use dssc::chunked::ChunkedCompressor;
 
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
@@ -24,6 +26,7 @@ pub struct Client {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
     mode: client_mode,
+    rt_comp: Option<Box<Compressor>>,
     op_callback: fn(msg: *const c_void) -> i32,
 }
 
@@ -60,11 +63,17 @@ impl Client {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
 
+        let rt_comp: Option<Box<Compressor>> = if compress && mode == client_mode::MODE_ASYNC {
+            Some(Box::new(ChunkedCompressor::new(0.5)))
+        } else {
+            None
+        };
 
         Ok(Client {
             write: Box::new(stream),
             read: reader,
             mode,
+            rt_comp: rt_comp,
             op_callback,
         })
     }
@@ -74,14 +83,26 @@ impl Client {
         let mut rcv_buf = [0; 33 * 1024];
         loop {
             self.read.read_exact(&mut header_buf)?;
-            let msg = unsafe { transmute::<[u8; size_of::<op_msg>()], op_msg>(header_buf) };
+            let msg = unsafe { &mut *(rcv_buf.as_ptr() as *mut op_msg) };
             rcv_buf[..size_of::<op_msg>()].copy_from_slice(&header_buf);
             self.read.read_exact(
                 &mut rcv_buf[size_of::<op_msg>()..
                                  msg.op_length as usize],
             )?;
 
+            if let Some(ref mut rt_comp) = self.rt_comp {
+                //FIXME also inefficient
+                let dbuf = rt_comp.decode(
+                    &rcv_buf[size_of::<op_msg>()..
+                                 msg.op_length as usize - size_of::<op_msg>()],
+                );
+                rcv_buf[size_of::<op_msg>()..size_of::<op_msg>() + dbuf.len()]
+                    .copy_from_slice(&dbuf);
+                msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
+            }
+
             let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
+
             if self.mode == client_mode::MODE_SYNC {
                 let ack = unsafe {
                     transmute::<ack_msg, [u8; size_of::<ack_msg>()]>(ack_msg { retcode: res })

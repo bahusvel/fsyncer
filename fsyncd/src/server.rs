@@ -17,11 +17,14 @@ use std::thread;
 use zstd;
 use std::path::{Path, PathBuf};
 use std::fs;
+use dssc::Compressor;
+use dssc::chunked::ChunkedCompressor;
 
 struct Client {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
     mode: client_mode,
+    rt_comp: Option<Box<Compressor>>,
 }
 
 #[link(name = "fsyncer", kind = "static")]
@@ -30,7 +33,7 @@ extern "C" {
     fn fsyncer_fuse_main(
         argc: i32,
         argv: *const *const c_char,
-        sop: extern "C" fn(*const c_void) -> i32,
+        sop: extern "C" fn(*mut c_void) -> i32,
     ) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
 }
@@ -75,11 +78,19 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
         Box::new(stream.try_clone()?) as Box<Write + Send>
     };
 
+    let rt_comp: Option<Box<Compressor>> =
+        if init.compress && init.mode == client_mode::MODE_ASYNC {
+            Some(Box::new(ChunkedCompressor::new(0.5)))
+        } else {
+            None
+        };
+
     SYNC_LIST.lock().expect("Failed to lock SYNC_LIST").push(
         Client {
             write: writer,
             read: Box::new(stream),
             mode: init.mode,
+            rt_comp: rt_comp,
         },
     );
 
@@ -89,14 +100,25 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
 }
 
 #[no_mangle]
-pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
-    let msg = unsafe { &*(msg_data as *const op_msg) };
+pub extern "C" fn send_op(msg_data: *mut c_void) -> i32 {
+    let msg = unsafe { &mut *(msg_data as *mut op_msg) };
     let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
     let list = res.deref_mut();
     let mut delete = Vec::new();
     for (i, ref mut client) in list.into_iter().enumerate() {
         let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
-        if client.write.write_all(&buf).is_err() {
+        let res = if let Some(ref mut rt_comp) = client.rt_comp {
+            let encoded = rt_comp.encode(&buf[size_of::<op_msg>()..]);
+            // FIXME this is extremely inefficient, I need to change compressor
+            msg.op_length = (encoded.len() + size_of::<op_msg>()) as u32;
+            let mut nbuf = Vec::new();
+            nbuf.extend_from_slice(&buf[..size_of::<op_msg>()]);
+            nbuf.extend_from_slice(&encoded);
+            client.write.write_all(&nbuf)
+        } else {
+            client.write.write_all(&buf)
+        };
+        if res.is_err() {
             println!("Failed sending op to client");
             delete.push(i);
             continue;

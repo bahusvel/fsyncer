@@ -6,6 +6,7 @@ extern crate clap;
 extern crate libc;
 extern crate zstd;
 extern crate net2;
+extern crate dssc;
 
 mod server;
 mod client;
@@ -60,6 +61,29 @@ fn main() {
                 .long("port")
                 .default_value("2323")
                 .help("Port the fsyncer is running on")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("buffer")
+                .long("buffer")
+                .default_value("32")
+                .help("TX/RX Buffer size in megabytes")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("rt-compressor")
+                .long("rt-compressor")
+                .possible_values(&["default", "none"])
+                .default_value("default")
+                .help("Discrete compression method to use")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("stream-compressor")
+                .long("stream-compressor")
+                .possible_values(&["default", "none"])
+                .default_value("default")
+                .help("Stream compression method to use")
                 .takes_value(true),
         )
         .arg(Arg::with_name("dont-check").long("dont-check").help(
