@@ -13,26 +13,13 @@ test_ll: dirs ll_passthrough
 	./ll_passthrough -f test_src
 
 clean:
-	cd fs && cargo clean
-	cd common && cargo clean
-	cd client && cargo clean
+	cd fsyncd && cargo clean
 
 test_fs: dirs
 	fusermount3 -u -z test_src || true
-	cd fs && cargo run -- --storage=`realpath ../test_path` -- ../test_src -f
-
-build/common: common/fscompare.c common/uvarint.c
-	rm -rf build/common || true
-	mkdir -p build/common
-	gcc -c common/fscompare.c -o build/common/fscompare.o $(CLFAGS) -Iinclude
-	gcc -c common/uvarint.c -o build/common/uvarint.o $(CLFAGS) -Iinclude
-
-fscompare:
-	rm -rf build/fscompare || true
-	mkdir -p build/fscompare
-	gcc common/fscompare_main.c common/fscompare.c -o build/fscompare/fscompare
+	cd fsyncd && cargo run -- --server `realpath ../test_path` -- -f
 
 test_client:
 	rm -rf test_dst || true
 	cp -rax test_path test_dst
-	cd client && cargo run -- -d `realpath ../test_dst`
+	cd client && cargo run -- --client 127.0.0.1:2323 `realpath ../test_dst`

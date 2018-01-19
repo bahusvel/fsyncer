@@ -44,8 +44,18 @@ fn main() {
         .arg(
             Arg::with_name("server")
                 .long("server")
+                .short("s")
                 .help("This daemon acts as a server")
                 .group("mode"),
+        )
+        .arg(
+            Arg::with_name("backing-store")
+                .short("b")
+                .long("backing-store")
+                .help(
+                    "Explicitly specifies which directory server should use to store files",
+                )
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("port")
@@ -74,6 +84,6 @@ fn main() {
     if matches.is_present("client") {
         client_main(matches);
     } else {
-        server_main(matches);
+        server_main(matches).expect("Server error");
     }
 }

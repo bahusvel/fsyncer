@@ -1,19 +1,22 @@
+use clap::ArgMatches;
+use common::*;
 use libc::{c_char, c_void, free};
-use std::ffi::CString;
-use std::net::{TcpListener, TcpStream};
 use net2::TcpStreamExt;
+use std;
+use std::ffi::CString;
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
-use std::thread;
-use std::sync::Mutex;
-use std::slice;
+use std::net::{TcpListener, TcpStream};
 use std::ops::DerefMut;
-use clap::ArgMatches;
+use std::process::Command;
 use std::ptr::null;
-use common::*;
+use std::slice;
+use std::sync::Mutex;
+use std::thread;
 use zstd;
-use std;
+use std::path::{Path, PathBuf};
+use std::fs;
 
 struct Client {
     write: Box<Write + Send>,
@@ -116,7 +119,7 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
 }
 
 pub fn display_fuse_help() {
-    println!("Fuse options, specify after --:");
+    println!("Fuse options, specify at the end, after --:");
     let args = vec!["fsyncd", "--help"]
         .into_iter()
         .map(|arg| CString::new(arg).unwrap())
@@ -130,10 +133,82 @@ pub fn display_fuse_help() {
 
 }
 
-pub fn server_main(matches: ArgMatches) {
-    let c_dst = CString::new(matches.value_of("source").expect("Storage not specified"));
+fn check_mount(path: &str) -> Result<bool, io::Error> {
+    Ok(
+        Command::new("mountpoint")
+            .arg(path)
+            .spawn()?
+            .wait()?
+            .success(),
+    )
+}
+
+fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Error> {
+    let mount_path = Path::new(matches.value_of("mount-path").unwrap())
+        .canonicalize()?;
+    if matches.is_present("backing-store") &&
+        !Path::new(matches.value_of("backing-store").unwrap()).exists()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Backing path does not exist",
+        ));
+    }
+
+    let backing_store = if matches.is_present("backing-store") {
+        PathBuf::from(matches.value_of("backing-store").unwrap())
+            .canonicalize()?
+    } else {
+        mount_path.with_file_name(format!(
+            ".fsyncer.{}",
+            mount_path
+                .file_name()
+                .expect("You specified a weird file path")
+                .to_str()
+                .unwrap()
+        ))
+    };
+
+    if !backing_store.exists() && mount_path.exists() {
+        if check_mount(mount_path.to_str().unwrap())? {
+            let new_path = "";
+            let res = Command::new("mount")
+                .arg("--move")
+                .arg(matches.value_of("mount-path").unwrap())
+                .arg(new_path)
+                .spawn()?
+                .wait()?;
+            if !res.success() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Failed to move old mountpoint",
+                ));
+            }
+        } else {
+            fs::rename(&mount_path, &backing_store)?;
+        }
+    }
+
+    if backing_store.exists() && !mount_path.exists() {
+        fs::create_dir_all(&mount_path)?;
+    } else if !backing_store.exists() && !mount_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Mount path does not exist",
+        ));
+    }
+
+    Ok((mount_path, backing_store))
+}
+
+pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
+    let (mount_path, backing_store) = figure_out_paths(&matches)?;
+    println!("{:?}, {:?}", mount_path, backing_store);
+
+
+    let c_dst = CString::new(backing_store.to_str().unwrap()).unwrap();
     unsafe {
-        server_path = c_dst.unwrap().into_raw();
+        server_path = c_dst.into_raw();
     }
 
     // FIXME use net2::TcpBuilder to set SO_REUSEADDR
@@ -143,7 +218,7 @@ pub fn server_main(matches: ArgMatches) {
             .value_of("port")
             .map(|v| v.parse::<i32>().expect("Invalid format for port"))
             .unwrap()
-    )).expect("Could not create server socket");
+    ))?;
 
     let dont_check = matches.is_present("dont-check");
 
@@ -151,8 +226,10 @@ pub fn server_main(matches: ArgMatches) {
         handle_client(stream.expect("Failed client connection"), dont_check);
     });
 
-    let args = std::env::args()
-        .take(1)
+    let args = vec![
+        "fsyncd".to_string(),
+        matches.value_of("mount-path").unwrap().to_string(),
+    ].into_iter()
         .chain(std::env::args().skip_while(|v| v != "--").skip(1))
         .map(|arg| CString::new(arg).unwrap())
         .collect::<Vec<CString>>();
@@ -162,4 +239,6 @@ pub fn server_main(matches: ArgMatches) {
         .collect::<Vec<*const c_char>>();
 
     unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr(), send_op) };
+
+    Ok(())
 }
