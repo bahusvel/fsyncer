@@ -103,7 +103,7 @@ fn do_call_wrapper(message: *const c_void) -> i32 {
 
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");
-    let dsthash = hash_mdata(matches.value_of("destination").expect(
+    let dsthash = hash_mdata(matches.value_of("mount-path").expect(
         "No destination specified",
     ));
     println!("Destinaton hash is {:x}", dsthash);
@@ -114,15 +114,15 @@ pub fn client_main(matches: ArgMatches) {
         client_mode::MODE_ASYNC
     };
 
-    let c_dst = CString::new(matches.value_of("destination").expect(
+    let c_dst = CString::new(matches.value_of("mount-path").expect(
         "Destination not specified",
-    ));
+    )).unwrap();
     unsafe {
-        client_path = c_dst.unwrap().into_raw();
+        client_path = c_dst.into_raw();
     }
 
     let mut client = Client::new(
-        matches.value_of("host").expect("No host specified"),
+        matches.value_of("client").expect("No host specified"),
         matches
             .value_of("port")
             .map(|v| v.parse().expect("Invalid format for port"))
@@ -136,7 +136,7 @@ pub fn client_main(matches: ArgMatches) {
 
     println!(
         "Connected to {}",
-        matches.value_of("host").expect("No host specified")
+        matches.value_of("client").expect("No host specified")
     );
 
     client.process_ops().expect("Stopped processing ops!");

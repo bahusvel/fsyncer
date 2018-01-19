@@ -34,9 +34,7 @@ fn main() {
         )
         .arg(
             Arg::with_name("client")
-                .short("c")
                 .long("client")
-                .default_value("127.0.0.1:2323")
                 .help("This daemon will act as a client and connect to this host")
                 .group("mode")
                 .takes_value(true),
@@ -44,7 +42,6 @@ fn main() {
         .arg(
             Arg::with_name("server")
                 .long("server")
-                .short("s")
                 .help("This daemon acts as a server")
                 .group("mode"),
         )

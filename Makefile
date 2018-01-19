@@ -17,9 +17,9 @@ clean:
 
 test_fs: dirs
 	fusermount3 -u -z test_src || true
-	cd fsyncd && cargo run -- --server `realpath ../test_path` -- -f
+	cd fsyncd && cargo run -- ../test_src --server -- -f
 
 test_client:
 	rm -rf test_dst || true
-	cp -rax test_path test_dst
-	cd client && cargo run -- --client 127.0.0.1:2323 `realpath ../test_dst`
+	cp -rax test_src test_dst
+	cd fsyncd && cargo run -- `realpath ../test_dst` --client 127.0.0.1

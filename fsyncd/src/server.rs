@@ -160,7 +160,7 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
             .canonicalize()?
     } else {
         mount_path.with_file_name(format!(
-            ".fsyncer.{}",
+            ".fsyncer-{}",
             mount_path
                 .file_name()
                 .expect("You specified a weird file path")
