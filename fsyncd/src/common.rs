@@ -31,6 +31,7 @@ pub enum client_mode {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct op_msg {
     pub op_length: u32,
     pub op_type: op_type,

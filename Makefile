@@ -22,4 +22,4 @@ test_fs: dirs
 test_client:
 	rm -rf test_dst || true
 	cp -rax test_src test_dst
-	cd fsyncd && cargo run -- `realpath ../test_dst` --client 127.0.0.1
+	cd fsyncd && cargo run -- `realpath ../test_dst` -s --client 127.0.0.1

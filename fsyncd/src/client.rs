@@ -11,7 +11,7 @@ use libc::perror;
 use common::*;
 use zstd;
 use dssc::Compressor;
-use dssc::chunked::ChunkedCompressor;
+use dssc::flate::FlateCompressor;
 
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
@@ -64,7 +64,7 @@ impl Client {
         };
 
         let rt_comp: Option<Box<Compressor>> = if compress && mode == client_mode::MODE_ASYNC {
-            Some(Box::new(ChunkedCompressor::new(0.5)))
+            Some(Box::new(FlateCompressor::default()))
         } else {
             None
         };
