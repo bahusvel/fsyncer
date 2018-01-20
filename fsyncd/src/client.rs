@@ -63,7 +63,7 @@ impl Client {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
 
-        let rt_comp: Option<Box<Compressor>> = if compress && mode == client_mode::MODE_ASYNC {
+        let rt_comp: Option<Box<Compressor>> = if compress && mode == client_mode::MODE_SYNC {
             Some(Box::new(FlateCompressor::default()))
         } else {
             None
@@ -94,11 +94,11 @@ impl Client {
                 //FIXME also inefficient
                 let dbuf = rt_comp.decode(
                     &rcv_buf[size_of::<op_msg>()..
-                                 msg.op_length as usize - size_of::<op_msg>()],
+                                 msg.op_length as usize],
                 );
                 rcv_buf[size_of::<op_msg>()..size_of::<op_msg>() + dbuf.len()]
                     .copy_from_slice(&dbuf);
-                msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
+                //msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
             }
 
             let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
@@ -150,7 +150,7 @@ pub fn client_main(matches: ArgMatches) {
             .unwrap(),
         mode,
         dsthash,
-        true,
+        matches.value_of("rt-compressor").map(|v| v == "default").unwrap_or(false),
         do_call_wrapper,
     ).expect("Failed to connect to fsyncer");
 

@@ -79,7 +79,7 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
     };
 
     let rt_comp: Option<Box<Compressor>> =
-        if init.compress && init.mode == client_mode::MODE_ASYNC {
+        if init.compress && init.mode == client_mode::MODE_SYNC {
             Some(Box::new(FlateCompressor::default()))
         } else {
             None
