@@ -1,0 +1,3 @@
+[submodule "dssc"]
+	path = dssc
+	url = https://github.com/bahusvel/dssc
