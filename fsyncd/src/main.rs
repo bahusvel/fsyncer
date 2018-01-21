@@ -53,7 +53,8 @@ fn main() {
                 .help(
                     "Explicitly specifies which directory server should use to store files",
                 )
-                .takes_value(true),
+                .takes_value(true)
+                .requires("server"),
         )
         .arg(
             Arg::with_name("port")
@@ -76,22 +77,25 @@ fn main() {
                 .possible_values(&["default", "none"])
                 .default_value("default")
                 .help("Discrete compression method to use")
-                .takes_value(true),
+                .takes_value(true)
+                .requires("client"),
         )
         .arg(
             Arg::with_name("stream-compressor")
                 .long("stream-compressor")
                 .possible_values(&["default", "none"])
                 .default_value("default")
+                .default_value_if("sync", None, "none")
                 .help("Stream compression method to use")
-                .takes_value(true),
+                .takes_value(true)
+                .requires("client"),
         )
         .arg(Arg::with_name("dont-check").long("dont-check").help(
             "Disables comparison of the source and destination",
-        ))
+        ).requires("server"))
         .arg(Arg::with_name("sync").short("s").long("sync").help(
             "Performs replication synchronously",
-        ))
+        ).requires("client"))
         .get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
         .unwrap_or_else(|e| match e.kind {
             ErrorKind::HelpDisplayed => {

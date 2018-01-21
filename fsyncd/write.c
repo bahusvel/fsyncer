@@ -205,8 +205,8 @@ static int do_truncate(const char *path, off_t size,
 	}
 }
 
-static op_message encode_write(const char *path, const char *buf, uint32_t size,
-							   int64_t offset) {
+op_message encode_write(const char *path, const char *buf, uint32_t size,
+						int64_t offset) {
 	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
 	ENCODE_STRING(path);
 	ENCODE_OPAQUE(size, buf);
@@ -311,8 +311,7 @@ static int do_removexattr(const char *path, const char *name) {
 }
 #endif
 
-static op_message encode_create(const char *path, uint32_t mode,
-								int32_t flags) {
+op_message encode_create(const char *path, uint32_t mode, int32_t flags) {
 	NEW_MSG(strlen(path) + 1 + sizeof(mode) + sizeof(flags), CREATE);
 	ENCODE_STRING(path);
 	ENCODE_VALUE(htobe32(mode));

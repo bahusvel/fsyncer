@@ -12,7 +12,7 @@ use std::ops::DerefMut;
 use std::process::Command;
 use std::ptr::null;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::{Mutex, Condvar};
 use std::thread;
 use zstd;
 use std::path::{Path, PathBuf};
@@ -36,6 +36,8 @@ extern "C" {
         sop: extern "C" fn(*const c_void) -> i32,
     ) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
+    fn encode_write(path: *const c_char, buf :*const c_void, size: u32, offset:i64) -> *const c_void;
+    fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
 }
 
 #[no_mangle]
@@ -44,6 +46,8 @@ pub static mut server_path: *const c_char = null();
 
 lazy_static!{
     static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());
+    static ref CORK_VAR: Condvar = Condvar::new();
+    static ref CORK: Mutex<bool> = Mutex::new(false);
 }
 
 fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error> {
@@ -99,7 +103,9 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
     Ok(())
 }
 
-fn send_to_client(client: &mut Client, buf: &[u8]) -> Result<(), io::Error> {
+fn send_to_client(client: &mut Client, msg_data: *const c_void) -> Result<(), io::Error> {
+    let msg = unsafe { &mut *(msg_data as *mut op_msg) };
+    let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
     if let Some(ref mut rt_comp) = client.rt_comp {
         let mut msg = unsafe { *(buf.as_ptr() as *const op_msg) };
 
@@ -124,23 +130,33 @@ fn send_to_client(client: &mut Client, buf: &[u8]) -> Result<(), io::Error> {
     Ok(())
 }
 
+
+
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
 
     let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
+    // once here I'm the only one writing. So it is technically sufficient for cork to keep this lock. Everyone else is either finished or is waiting.
+
+    let mut corked = CORK.lock().unwrap();
+    if *corked {
+
+    }
+    while *corked {
+        corked = CORK_VAR.wait(corked).unwrap();
+    }
+
     let list = res.deref_mut();
     let mut delete = Vec::new();
 
-    let msg = unsafe { &mut *(msg_data as *mut op_msg) };
-    let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
-
     for (i, ref mut client) in list.into_iter().enumerate() {
-        if send_to_client(client, &buf).is_err()  {
+        if send_to_client(client, msg_data).is_err()  {
             println!("Failed sending op to client");
             delete.push(i);
             continue;
         }
     }
+
     for i in delete {
         list.remove(i);
     }
