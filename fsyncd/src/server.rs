@@ -35,7 +35,7 @@ struct Client {
 }
 
 impl Client {
-    fn send_msg(&mut self, msg_data: *const c_void) -> Result<(), io::Error> {
+    fn send_msg(&mut self, msg_data: *const c_void) -> Result<Option<i32>, io::Error> {
         let msg = unsafe { &mut *(msg_data as *mut op_msg) };
         let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
         if let Some(ref mut rt_comp) = self.rt_comp {
@@ -54,26 +54,29 @@ impl Client {
         } else {
             self.write.write_all(&buf)?;
         }
+
         if self.mode == client_mode::MODE_SYNC {
             let mut ack_buf = [0; size_of::<ack_msg>()];
             self.read.read_exact(&mut ack_buf)?;
+            let ack = unsafe { transmute::<[u8; size_of::<ack_msg>()], ack_msg>(ack_buf) };
+            return Ok(Some(ack.retcode));
         }
 
-        Ok(())
+        Ok(None)
     }
 
     fn cork(&mut self) -> Result<(), io::Error> {
         let msg = unsafe { encode_create(CORK_FILE.as_ptr(), 0o755, 0) };
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
-        ret
+        ret.map(|_| ())
     }
 
     fn uncork(&mut self) -> Result<(), io::Error> {
         let msg = unsafe { encode_unlink(CORK_FILE.as_ptr()) };
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
-        ret
+        ret.map(|_| ())
     }
 }
 
@@ -84,7 +87,7 @@ extern "C" {
     fn fsyncer_fuse_main(
         argc: i32,
         argv: *const *const c_char,
-        sop: extern "C" fn(*const c_void) -> i32,
+        sop: extern "C" fn(*const c_void, i32) -> i32,
     ) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
     fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
@@ -160,12 +163,17 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
 
 
 #[no_mangle]
-pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
+pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
 
     let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
-    // once here I'm the only one writing. So it is technically sufficient for cork to keep this lock. Everyone else is either finished or is waiting.
-
     let list = res.deref_mut();
+
+    for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+        if client.send_msg(msg_data).is_err() {
+            println!("Failed sending op to client");
+            client.status = ClientStatus::DEAD;
+        }
+    }
 
     let mut corked = CORK.lock().unwrap();
     if *corked {
@@ -188,18 +196,10 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
         }
     }
 
-    for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
-        if client.send_msg(msg_data).is_err() {
-            println!("Failed sending op to client");
-            client.status = ClientStatus::DEAD;
-        }
-    }
-
     list.retain(|c| c.status != ClientStatus::DEAD);
 
     unsafe { free(msg_data as *mut c_void) };
-    drop(corked); // this is to ensure that cork lock lasts atleast as long
-    0
+    ret_code
 }
 
 pub fn display_fuse_help() {
