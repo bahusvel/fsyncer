@@ -20,12 +20,63 @@ use std::fs;
 use dssc::Compressor;
 use dssc::flate::FlateCompressor;
 
+#[derive(PartialEq)]
+enum ClientStatus {
+    DEAD,
+    ALIVE,
+}
+
 struct Client {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
     mode: client_mode,
     rt_comp: Option<Box<Compressor>>,
+    status: ClientStatus,
 }
+
+impl Client {
+    fn send_msg(&mut self, msg_data: *const c_void) -> Result<(), io::Error> {
+        let msg = unsafe { &mut *(msg_data as *mut op_msg) };
+        let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
+        if let Some(ref mut rt_comp) = self.rt_comp {
+            let mut msg = unsafe { *(buf.as_ptr() as *const op_msg) };
+
+            let encoded = rt_comp.encode(&buf[size_of::<op_msg>()..]);
+            // FIXME this is extremely inefficient, I need to change compressor
+            msg.op_length = (encoded.len() + size_of::<op_msg>()) as u32;
+
+            let header_buf = unsafe { transmute::<op_msg, [u8; size_of::<op_msg>()]>(msg) };
+            let mut nbuf = Vec::new();
+            nbuf.extend_from_slice(&header_buf[..]);
+            nbuf.extend_from_slice(&encoded);
+
+            self.write.write_all(&nbuf)?;
+        } else {
+            self.write.write_all(&buf)?;
+        }
+        if self.mode == client_mode::MODE_SYNC {
+            let mut ack_buf = [0; size_of::<ack_msg>()];
+            self.read.read_exact(&mut ack_buf)?;
+        }
+
+        Ok(())
+    }
+
+    fn cork(&mut self) -> Result<(), io::Error> {
+        let msg = unsafe { encode_create(CORK_FILE.as_ptr(), 0o755, 0) };
+        let ret = self.send_msg(msg);
+        unsafe { free(msg as *mut c_void) };
+        ret
+    }
+
+    fn uncork(&mut self) -> Result<(), io::Error> {
+        let msg = unsafe { encode_unlink(CORK_FILE.as_ptr()) };
+        let ret = self.send_msg(msg);
+        unsafe { free(msg as *mut c_void) };
+        ret
+    }
+}
+
 
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
@@ -36,8 +87,8 @@ extern "C" {
         sop: extern "C" fn(*const c_void) -> i32,
     ) -> i32;
     fn hash_metadata(path: *const c_char) -> u64;
-    fn encode_write(path: *const c_char, buf :*const c_void, size: u32, offset:i64) -> *const c_void;
     fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
+    fn encode_unlink(path: *const c_char) -> *const c_void;
 }
 
 #[no_mangle]
@@ -48,6 +99,8 @@ lazy_static!{
     static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());
     static ref CORK_VAR: Condvar = Condvar::new();
     static ref CORK: Mutex<bool> = Mutex::new(false);
+
+    static ref CORK_FILE: CString = CString::new(".fsyncer-corked").unwrap();
 }
 
 fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error> {
@@ -95,37 +148,11 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
             read: Box::new(stream),
             mode: init.mode,
             rt_comp: rt_comp,
+            status: ClientStatus::ALIVE,
         },
     );
 
     println!("Client connected!");
-
-    Ok(())
-}
-
-fn send_to_client(client: &mut Client, msg_data: *const c_void) -> Result<(), io::Error> {
-    let msg = unsafe { &mut *(msg_data as *mut op_msg) };
-    let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
-    if let Some(ref mut rt_comp) = client.rt_comp {
-        let mut msg = unsafe { *(buf.as_ptr() as *const op_msg) };
-
-        let encoded = rt_comp.encode(&buf[size_of::<op_msg>()..]);
-        // FIXME this is extremely inefficient, I need to change compressor
-        msg.op_length = (encoded.len() + size_of::<op_msg>()) as u32;
-
-        let header_buf = unsafe {transmute::<op_msg, [u8; size_of::<op_msg>()]>(msg)};
-        let mut nbuf = Vec::new();
-        nbuf.extend_from_slice(&header_buf[..]);
-        nbuf.extend_from_slice(&encoded);
-
-        client.write.write_all(&nbuf)?;
-    } else {
-        client.write.write_all(&buf)?;
-    }
-    if client.mode == client_mode::MODE_SYNC {
-        let mut ack_buf = [0; size_of::<ack_msg>()];
-        client.read.read_exact(&mut ack_buf)?;
-    }
 
     Ok(())
 }
@@ -138,29 +165,40 @@ pub extern "C" fn send_op(msg_data: *const c_void) -> i32 {
     let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
     // once here I'm the only one writing. So it is technically sufficient for cork to keep this lock. Everyone else is either finished or is waiting.
 
+    let list = res.deref_mut();
+
     let mut corked = CORK.lock().unwrap();
     if *corked {
+        for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+            if client.cork().is_err() || client.write.flush().is_err() {
+                println!("Failed corking client");
+                client.status = ClientStatus::DEAD;
+            }
+        }
 
-    }
-    while *corked {
-        corked = CORK_VAR.wait(corked).unwrap();
-    }
+        while *corked {
+            corked = CORK_VAR.wait(corked).unwrap();
+        }
 
-    let list = res.deref_mut();
-    let mut delete = Vec::new();
-
-    for (i, ref mut client) in list.into_iter().enumerate() {
-        if send_to_client(client, msg_data).is_err()  {
-            println!("Failed sending op to client");
-            delete.push(i);
-            continue;
+        for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+            if client.uncork().is_err() {
+                println!("Failed uncorking client");
+                client.status = ClientStatus::DEAD;
+            }
         }
     }
 
-    for i in delete {
-        list.remove(i);
+    for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+        if client.send_msg(msg_data).is_err() {
+            println!("Failed sending op to client");
+            client.status = ClientStatus::DEAD;
+        }
     }
+
+    list.retain(|c| c.status != ClientStatus::DEAD);
+
     unsafe { free(msg_data as *mut c_void) };
+    drop(corked); // this is to ensure that cork lock lasts atleast as long
     0
 }
 

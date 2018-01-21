@@ -42,7 +42,7 @@ static int do_mkdir(const char *path, mode_t mode) {
 	return xmp_mkdir(real_path, mode);
 }
 
-static op_message encode_unlink(const char *path) {
+op_message encode_unlink(const char *path) {
 	NEW_MSG(strlen(path) + 1, UNLINK);
 	ENCODE_STRING(path);
 	return msg;
@@ -205,8 +205,8 @@ static int do_truncate(const char *path, off_t size,
 	}
 }
 
-op_message encode_write(const char *path, const char *buf, uint32_t size,
-						int64_t offset) {
+static op_message encode_write(const char *path, const char *buf, uint32_t size,
+							   int64_t offset) {
 	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
 	ENCODE_STRING(path);
 	ENCODE_OPAQUE(size, buf);
