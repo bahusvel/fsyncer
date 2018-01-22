@@ -15,7 +15,6 @@ use dssc::flate::FlateCompressor;
 
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
-    fn hash_metadata(path: *const c_char) -> u64;
 }
 
 #[no_mangle]
@@ -121,9 +120,9 @@ fn do_call_wrapper(message: *const c_void) -> i32 {
 
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");
-    let dsthash = hash_mdata(matches.value_of("mount-path").expect(
+    let dsthash = hash_metadata(matches.value_of("mount-path").expect(
         "No destination specified",
-    ));
+    )).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
 
     let mode = if matches.is_present("sync") {
@@ -138,11 +137,6 @@ pub fn client_main(matches: ArgMatches) {
     unsafe {
         client_path = c_dst.into_raw();
     }
-
-    let rt_comp: Option<Box<Compressor>> = match matches.value_of("rt-compressor").unwrap() {
-        "default" => Some(Box::new(FlateCompressor::default())),
-        _ => None,
-    };
 
     let mut comp = CompMode::empty();
 
@@ -181,9 +175,4 @@ pub fn client_main(matches: ArgMatches) {
     );
 
     client.process_ops().expect("Stopped processing ops!");
-}
-
-pub fn hash_mdata(path: &str) -> u64 {
-    let s = CString::new(path).unwrap();
-    unsafe { hash_metadata(s.as_ptr()) }
 }

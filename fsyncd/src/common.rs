@@ -1,7 +1,14 @@
-
+use walkdir::WalkDir;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hasher, Hash};
+use std::io;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 
 #[repr(C)]
 #[derive(PartialEq, Clone, Copy)]
+#[allow(dead_code)]
 pub enum op_type {
     MKNOD,
     MKDIR,
@@ -55,4 +62,25 @@ bitflags! {
         const RT_DSSC_CHUNKED = 0b010;
         const STREAM_ZSTD = 0b100;
     }
+}
+
+pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
+    let mut hasher = DefaultHasher::new();
+    let empty = Path::new("");
+    for entry in WalkDir::new(path) {
+        let e = entry?;
+        let path = e.path().strip_prefix(path).unwrap();
+        if path == empty {
+            continue;
+        }
+        path.hash(&mut hasher);
+        e.file_type().hash(&mut hasher);
+        let stat = e.metadata()?;
+        stat.permissions().mode().hash(&mut hasher);
+        stat.len().hash(&mut hasher);
+        stat.modified()?.hash(&mut hasher);
+        stat.uid().hash(&mut hasher);
+        stat.gid().hash(&mut hasher);
+    }
+    Ok(hasher.finish())
 }

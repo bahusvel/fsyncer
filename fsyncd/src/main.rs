@@ -1,15 +1,15 @@
 #![feature(libc)]
 
 #[macro_use]
+extern crate bitflags;
+#[macro_use]
 extern crate lazy_static;
 extern crate clap;
 extern crate libc;
 extern crate zstd;
 extern crate net2;
 extern crate dssc;
-
-#[macro_use]
-extern crate bitflags;
+extern crate walkdir;
 
 mod server;
 mod client;
@@ -88,8 +88,8 @@ fn main() {
             Arg::with_name("stream-compressor")
                 .long("stream-compressor")
                 .possible_values(&["default", "none"])
-                .default_value_if("client", None, "default")
                 .default_value_if("sync", None, "none")
+                .default_value_if("client", None, "default")
                 .help("Stream compression method to use")
                 .takes_value(true)
                 .requires("client"),

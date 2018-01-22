@@ -22,7 +22,6 @@ fn main() {
         .file("read.c")
         .file("write.c")
         .file("decode.c")
-        .file("fscompare.c")
         .file("fsops.c")
         .compile("fsyncer");
 }

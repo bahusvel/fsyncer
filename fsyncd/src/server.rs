@@ -28,7 +28,6 @@ extern "C" {
         argv: *const *const c_char,
         sop: extern "C" fn(*const c_void, i32) -> i32,
     ) -> i32;
-    fn hash_metadata(path: *const c_char) -> u64;
     fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
     fn encode_unlink(path: *const c_char) -> *const c_void;
 }
@@ -106,18 +105,22 @@ impl Client {
     }
 }
 
-fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error> {
+fn handle_client(
+    mut stream: TcpStream,
+    storage_path: PathBuf,
+    dontcheck: bool,
+) -> Result<(), io::Error> {
     stream.set_send_buffer_size(1024 * 1024)?;
     let mut init_buf = [0; size_of::<init_msg>()];
     stream.read_exact(&mut init_buf)?;
 
     println!("Calculating source hash...");
-    let srchash = unsafe { hash_metadata(server_path) };
+    let srchash = hash_metadata(storage_path.to_str().unwrap()).expect("Hash check failed");
     println!("Source hash is {:x}", srchash);
 
     let init = unsafe { transmute::<[u8; size_of::<init_msg>()], init_msg>(init_buf) };
 
-    if dontcheck && init.dsthash != srchash {
+    if (!dontcheck) && init.dsthash != srchash {
         println!(
             "%{:x} != {:x} client's hash does not match!",
             init.dsthash,
@@ -306,7 +309,11 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let dont_check = matches.is_present("dont-check");
 
     thread::spawn(move || for stream in listener.incoming() {
-        handle_client(stream.expect("Failed client connection"), dont_check);
+        handle_client(
+            stream.expect("Failed client connection"),
+            backing_store.clone(),
+            dont_check,
+        );
     });
 
     let args = vec![
