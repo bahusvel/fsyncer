@@ -147,9 +147,9 @@ static int dec_write(const char *path, const char *buf, size_t size,
 
 static int do_write(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
+	off_t offset = DECODE_VALUE(int64_t, be64toh);
 	size_t size = DECODE_OPAQUE_SIZE();
 	const char *buf = DECODE_OPAQUE();
-	off_t offset = DECODE_VALUE(int64_t, be64toh);
 	return dec_write(path, buf, size, offset);
 }
 

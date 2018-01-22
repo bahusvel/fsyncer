@@ -202,34 +202,42 @@ static op_message encode_write(const char *path, const char *buf, uint32_t size,
 							   int64_t offset) {
 	NEW_MSG(strlen(path) + 1 + size + sizeof(size) + sizeof(offset), WRITE);
 	ENCODE_STRING(path);
-	ENCODE_OPAQUE(size, buf);
 	ENCODE_VALUE(htobe64(offset));
+	if (buf != NULL) {
+		ENCODE_OPAQUE(size, buf);
+	} else {
+		ENCODE_VALUE(htobe32(size));
+	}
 	return msg;
 }
 
 static int do_write(const char *path, const char *buf, size_t size,
 					off_t offset, struct fuse_file_info *fi) {
-	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
+	printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
 	int ret = xmp_write(NULL, buf, size, offset, fi->fh);
 	return send_op(encode_write(path, buf, size, offset), ret);
 }
 
-	/* Replication for this function is not handled yet.
-	static int do_write_buf(const char *path, struct fuse_bufvec *buf,
-				 off_t offset, struct fuse_file_info *fi)
-	{
-		struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
+// Replication for this function is not handled yet.
+static int do_write_buf(const char *path, struct fuse_bufvec *buf, off_t offset,
+						struct fuse_file_info *fi) {
+	struct fuse_bufvec dst = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
 
-		(void) path;
+	dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+	dst.buf[0].fd = fi->fh;
+	dst.buf[0].pos = offset;
 
-		dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
-		dst.buf[0].fd = fi->fh;
-		dst.buf[0].pos = offset;
+	op_message msg = encode_write(path, NULL, fuse_buf_size(buf), offset);
+	struct fuse_bufvec msgvec = FUSE_BUFVEC_INIT(fuse_buf_size(buf));
+	msgvec.buf[0].mem =
+		((void *)msg) + strlen(path) + 1 + sizeof(uint32_t) + sizeof(offset);
+	fuse_buf_copy(&msgvec, buf, FUSE_BUF_SPLICE_NONBLOCK);
 
-		return fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
-	}
-	*/
+	int ret = fuse_buf_copy(&dst, &msgvec, FUSE_BUF_SPLICE_NONBLOCK);
+
+	return send_op(msg, ret);
+}
 
 #ifdef HAVE_POSIX_FALLOCATE
 
@@ -359,6 +367,7 @@ void gen_write_ops(struct fuse_operations *do_oper) {
 #endif
 	do_oper->create = do_create;
 	do_oper->write = do_write;
+	do_oper->write_buf = do_write_buf;
 #ifdef HAVE_POSIX_FALLOCATE
 	do_oper->fallocate = do_fallocate;
 #endif

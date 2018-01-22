@@ -35,37 +35,6 @@ void gen_read_ops(struct fuse_operations *xmp_oper);
 
 void gen_write_ops(struct fuse_operations *xmp_oper);
 
-/*
-static void *control_loop(void *arg) {
-	int client_fd = (int)arg;
-	struct command_msg cmd;
-	struct ack_msg ack = {0};
-	while (1) {
-		ack.retcode = 0;
-		if (recv(client_fd, &cmd, sizeof(cmd), MSG_WAITALL) != sizeof(cmd)) {
-			perror("Failed receiving command_msg");
-			return NULL;
-		}
-		switch (cmd.cmd) {
-		case CMD_CORK:
-			ack.retcode = do_cork();
-			break;
-		case CMD_UNCORK:
-			ack.retcode = do_uncork();
-			break;
-		default:
-			ack.retcode = -1;
-			break;
-		}
-
-		if (send(client_fd, &ack, sizeof(ack), 0) < 0) {
-			perror("Unable to ack");
-			return NULL;
-		}
-	}
-}
-*/
-
 int fsyncer_fuse_main(int argc, char **argv) {
 	struct fuse_operations xmp_oper = {0};
 	gen_read_ops(&xmp_oper);
