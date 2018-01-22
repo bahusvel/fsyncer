@@ -8,6 +8,9 @@ extern crate zstd;
 extern crate net2;
 extern crate dssc;
 
+#[macro_use]
+extern crate bitflags;
+
 mod server;
 mod client;
 mod common;
@@ -75,6 +78,7 @@ fn main() {
             Arg::with_name("rt-compressor")
                 .long("rt-compressor")
                 .possible_values(&["default", "none"])
+                .default_value_if("client", None, "none")
                 .default_value_if("stream-compressor", Some("none"), "default")
                 .help("Discrete compression method to use")
                 .takes_value(true)

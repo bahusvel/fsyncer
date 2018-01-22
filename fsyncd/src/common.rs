@@ -1,4 +1,4 @@
- #![allow(dead_code)]
+
 
 #[repr(C)]
 #[derive(PartialEq, Clone, Copy)]
@@ -41,10 +41,18 @@ pub struct op_msg {
 pub struct init_msg {
     pub mode: client_mode,
     pub dsthash: u64,
-    pub compress: bool,
+    pub compress: CompMode,
 }
 
 #[repr(C)]
 pub struct ack_msg {
     pub retcode: i32,
+}
+
+bitflags! {
+    pub struct CompMode: u32 {
+        const RT_DSSC_ZLIB = 0b001;
+        const RT_DSSC_CHUNKED = 0b010;
+        const STREAM_ZSTD = 0b100;
+    }
 }

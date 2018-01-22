@@ -132,18 +132,17 @@ fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error
         stream.set_nodelay(true)?;
     }
 
-    let writer = if init.compress && init.mode == client_mode::MODE_ASYNC {
+    let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
         Box::new(zstd::stream::Encoder::new(stream.try_clone()?, 0)?) as Box<Write + Send>
     } else {
         Box::new(stream.try_clone()?) as Box<Write + Send>
     };
 
-    let rt_comp: Option<Box<Compressor>> =
-        if init.compress && init.mode == client_mode::MODE_SYNC {
-            Some(Box::new(FlateCompressor::default()))
-        } else {
-            None
-        };
+    let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_ZLIB) {
+        Some(Box::new(FlateCompressor::default()))
+    } else {
+        None
+    };
 
     SYNC_LIST.lock().expect("Failed to lock SYNC_LIST").push(
         Client {
@@ -255,11 +254,11 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
 
     if !backing_store.exists() && mount_path.exists() {
         if check_mount(mount_path.to_str().unwrap())? {
-            let new_path = "";
+            fs::create_dir_all(&mount_path)?;
             let res = Command::new("mount")
                 .arg("--move")
                 .arg(matches.value_of("mount-path").unwrap())
-                .arg(new_path)
+                .arg(backing_store.to_str().unwrap())
                 .spawn()?
                 .wait()?;
             if !res.success() {

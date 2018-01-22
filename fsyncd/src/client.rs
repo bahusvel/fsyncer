@@ -36,7 +36,7 @@ impl Client {
         port: i32,
         mode: client_mode,
         dsthash: u64,
-        compress: bool,
+        compress: CompMode,
         op_callback: fn(msg: *const c_void) -> i32,
     ) -> Result<Self, io::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
@@ -57,13 +57,13 @@ impl Client {
 
         stream.write_all(&init)?;
 
-        let reader = if compress && mode == client_mode::MODE_ASYNC {
+        let reader = if compress.contains(CompMode::STREAM_ZSTD) {
             Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
         } else {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
 
-        let rt_comp: Option<Box<Compressor>> = if compress && mode == client_mode::MODE_SYNC {
+        let rt_comp: Option<Box<Compressor>> = if compress.contains(CompMode::RT_DSSC_ZLIB) {
             Some(Box::new(FlateCompressor::default()))
         } else {
             None
@@ -139,6 +139,29 @@ pub fn client_main(matches: ArgMatches) {
         client_path = c_dst.into_raw();
     }
 
+    let rt_comp: Option<Box<Compressor>> = match matches.value_of("rt-compressor").unwrap() {
+        "default" => Some(Box::new(FlateCompressor::default())),
+        _ => None,
+    };
+
+    let mut comp = CompMode::empty();
+
+    match matches.value_of("stream-compressor").unwrap() {
+        "default" => {
+            println!("Using a ZSTD stream compressor");
+            comp.insert(CompMode::STREAM_ZSTD)
+        }
+        _ => (),
+    }
+
+    match matches.value_of("rt-compressor").unwrap() {
+        "default" => {
+            println!("Using a DSSC_ZLIB realtime compressor");
+            comp.insert(CompMode::RT_DSSC_ZLIB)
+        }
+        _ => (),
+    }
+
     let mut client = Client::new(
         matches.value_of("client").expect("No host specified"),
         matches
@@ -147,10 +170,7 @@ pub fn client_main(matches: ArgMatches) {
             .unwrap(),
         mode,
         dsthash,
-        matches
-            .value_of("rt-compressor")
-            .map(|v| v == "default")
-            .unwrap_or(false),
+        comp,
         do_call_wrapper,
     ).expect("Failed to connect to fsyncer");
 
