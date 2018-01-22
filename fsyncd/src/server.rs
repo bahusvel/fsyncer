@@ -20,6 +20,32 @@ use std::fs;
 use dssc::Compressor;
 use dssc::flate::FlateCompressor;
 
+#[link(name = "fsyncer", kind = "static")]
+#[link(name = "fuse3")]
+extern "C" {
+    fn fsyncer_fuse_main(
+        argc: i32,
+        argv: *const *const c_char,
+        sop: extern "C" fn(*const c_void, i32) -> i32,
+    ) -> i32;
+    fn hash_metadata(path: *const c_char) -> u64;
+    fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
+    fn encode_unlink(path: *const c_char) -> *const c_void;
+}
+
+#[no_mangle]
+#[allow(non_upper_case_globals)]
+pub static mut server_path: *const c_char = null();
+
+lazy_static!{
+    static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());
+    static ref CORK_VAR: Condvar = Condvar::new();
+    static ref CORK: Mutex<bool> = Mutex::new(false);
+
+    static ref CORK_FILE: CString = CString::new(".fsyncer-corked").unwrap();
+}
+
+
 #[derive(PartialEq)]
 enum ClientStatus {
     DEAD,
@@ -78,32 +104,6 @@ impl Client {
         unsafe { free(msg as *mut c_void) };
         ret.map(|_| ())
     }
-}
-
-
-#[link(name = "fsyncer", kind = "static")]
-#[link(name = "fuse3")]
-extern "C" {
-    fn fsyncer_fuse_main(
-        argc: i32,
-        argv: *const *const c_char,
-        sop: extern "C" fn(*const c_void, i32) -> i32,
-    ) -> i32;
-    fn hash_metadata(path: *const c_char) -> u64;
-    fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
-    fn encode_unlink(path: *const c_char) -> *const c_void;
-}
-
-#[no_mangle]
-#[allow(non_upper_case_globals)]
-pub static mut server_path: *const c_char = null();
-
-lazy_static!{
-    static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());
-    static ref CORK_VAR: Condvar = Condvar::new();
-    static ref CORK: Mutex<bool> = Mutex::new(false);
-
-    static ref CORK_FILE: CString = CString::new(".fsyncer-corked").unwrap();
 }
 
 fn handle_client(mut stream: TcpStream, dontcheck: bool) -> Result<(), io::Error> {
@@ -168,7 +168,7 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
     let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
     let list = res.deref_mut();
 
-    for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+    for client in list.into_iter().filter(|c| c.status != ClientStatus::DEAD) {
         if client.send_msg(msg_data).is_err() {
             println!("Failed sending op to client");
             client.status = ClientStatus::DEAD;
@@ -177,7 +177,7 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
 
     let mut corked = CORK.lock().unwrap();
     if *corked {
-        for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+        for client in list.into_iter().filter(|c| c.status != ClientStatus::DEAD) {
             if client.cork().is_err() || client.write.flush().is_err() {
                 println!("Failed corking client");
                 client.status = ClientStatus::DEAD;
@@ -188,7 +188,7 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
             corked = CORK_VAR.wait(corked).unwrap();
         }
 
-        for client in list.into_iter().filter(|c| c.status == ClientStatus::DEAD) {
+        for client in list.into_iter().filter(|c| c.status != ClientStatus::DEAD) {
             if client.uncork().is_err() {
                 println!("Failed uncorking client");
                 client.status = ClientStatus::DEAD;

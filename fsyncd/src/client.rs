@@ -92,10 +92,7 @@ impl Client {
 
             if let Some(ref mut rt_comp) = self.rt_comp {
                 //FIXME also inefficient
-                let dbuf = rt_comp.decode(
-                    &rcv_buf[size_of::<op_msg>()..
-                                 msg.op_length as usize],
-                );
+                let dbuf = rt_comp.decode(&rcv_buf[size_of::<op_msg>()..msg.op_length as usize]);
                 rcv_buf[size_of::<op_msg>()..size_of::<op_msg>() + dbuf.len()]
                     .copy_from_slice(&dbuf);
                 //msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
@@ -150,7 +147,10 @@ pub fn client_main(matches: ArgMatches) {
             .unwrap(),
         mode,
         dsthash,
-        matches.value_of("rt-compressor").map(|v| v == "default").unwrap_or(false),
+        matches
+            .value_of("rt-compressor")
+            .map(|v| v == "default")
+            .unwrap_or(false),
         do_call_wrapper,
     ).expect("Failed to connect to fsyncer");
 
