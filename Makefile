@@ -17,9 +17,9 @@ clean:
 
 test_fs: dirs
 	fusermount3 -u -z test_src || true
-	cd fsyncd && cargo run -- ../test_src --server -- -f
+	cd fsyncd && RUST_BACKTRACE=1 cargo run -- ../test_src --server -- -f
 
 test_client:
 	rm -rf test_dst || true
-	cp -rax test_src test_dst
-	cd fsyncd && cargo run -- `realpath ../test_dst` -s --rt-compressor=default --client 127.0.0.1
+	cp -rax .fsyncer-test_src test_dst
+	cd fsyncd && RUST_BACKTRACE=1 cargo run -- `realpath ../test_dst` -s --rt-compressor=default --client 127.0.0.1

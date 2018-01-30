@@ -11,7 +11,7 @@ use libc::perror;
 use common::*;
 use zstd;
 use dssc::Compressor;
-use dssc::flate::FlateCompressor;
+use dssc::chunkmap::ChunkMap;
 
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
@@ -63,7 +63,7 @@ impl Client {
         };
 
         let rt_comp: Option<Box<Compressor>> = if compress.contains(CompMode::RT_DSSC_ZLIB) {
-            Some(Box::new(FlateCompressor::default()))
+            Some(Box::new(ChunkMap::new(0.5)))
         } else {
             None
         };
@@ -91,7 +91,11 @@ impl Client {
 
             if let Some(ref mut rt_comp) = self.rt_comp {
                 //FIXME also inefficient
-                let dbuf = rt_comp.decode(&rcv_buf[size_of::<op_msg>()..msg.op_length as usize]);
+                let mut dbuf = Vec::new();
+                rt_comp.decode(
+                    &rcv_buf[size_of::<op_msg>()..msg.op_length as usize],
+                    &mut dbuf,
+                );
                 rcv_buf[size_of::<op_msg>()..size_of::<op_msg>() + dbuf.len()]
                     .copy_from_slice(&dbuf);
                 //msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;

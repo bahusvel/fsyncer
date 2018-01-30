@@ -18,7 +18,7 @@ use zstd;
 use std::path::{Path, PathBuf};
 use std::fs;
 use dssc::Compressor;
-use dssc::flate::FlateCompressor;
+use dssc::chunkmap::ChunkMap;
 
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
@@ -61,20 +61,14 @@ struct Client {
 
 impl Client {
     fn send_msg(&mut self, msg_data: *const c_void) -> Result<Option<i32>, io::Error> {
-        let msg = unsafe { &mut *(msg_data as *mut op_msg) };
+        let msg = unsafe { &*(msg_data as *const op_msg) };
         let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
         if let Some(ref mut rt_comp) = self.rt_comp {
-            let mut msg = unsafe { *(buf.as_ptr() as *const op_msg) };
-
-            let encoded = rt_comp.encode(&buf[size_of::<op_msg>()..]);
-            // FIXME this is extremely inefficient, I need to change compressor
-            msg.op_length = (encoded.len() + size_of::<op_msg>()) as u32;
-
-            let header_buf = unsafe { transmute::<op_msg, [u8; size_of::<op_msg>()]>(msg) };
             let mut nbuf = Vec::new();
-            nbuf.extend_from_slice(&header_buf[..]);
-            nbuf.extend_from_slice(&encoded);
-
+            nbuf.extend_from_slice(&buf[..size_of::<op_msg>()]);
+            rt_comp.encode(&buf[size_of::<op_msg>()..], &mut nbuf);
+            let m = unsafe { &mut *(nbuf.as_mut_ptr() as *mut op_msg) };
+            m.op_length = nbuf.len() as u32;
             self.write.write_all(&nbuf)?;
         } else {
             self.write.write_all(&buf)?;
@@ -142,7 +136,7 @@ fn handle_client(
     };
 
     let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_ZLIB) {
-        Some(Box::new(FlateCompressor::default()))
+        Some(Box::new(ChunkMap::new(0.5)))
     } else {
         None
     };
@@ -197,8 +191,6 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
             }
         }
     }
-
-    list.retain(|c| c.status != ClientStatus::DEAD);
 
     unsafe { free(msg_data as *mut c_void) };
     ret_code
