@@ -14,6 +14,7 @@ use std::ptr::null;
 use std::slice;
 use std::sync::{Mutex, Condvar};
 use std::thread;
+use std::time::Duration;
 use zstd;
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -74,7 +75,7 @@ impl Client {
             self.write.write_all(&buf)?;
         }
 
-        if self.mode == client_mode::MODE_SYNC {
+        if self.mode == client_mode::MODE_SYNC || self.mode == client_mode::MODE_SEMISYNC {
             let mut ack_buf = [0; size_of::<ack_msg>()];
             self.read.read_exact(&mut ack_buf)?;
             let ack = unsafe { transmute::<[u8; size_of::<ack_msg>()], ack_msg>(ack_buf) };
@@ -103,8 +104,9 @@ fn handle_client(
     mut stream: TcpStream,
     storage_path: PathBuf,
     dontcheck: bool,
+    buffer_size: usize,
 ) -> Result<(), io::Error> {
-    stream.set_send_buffer_size(1024 * 1024)?;
+    stream.set_send_buffer_size(buffer_size * 1024 * 1024)?;
     let mut init_buf = [0; size_of::<init_msg>()];
     stream.read_exact(&mut init_buf)?;
 
@@ -125,7 +127,7 @@ fn handle_client(
         return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
     }
 
-    if init.mode == client_mode::MODE_SYNC {
+    if init.mode == client_mode::MODE_SYNC || init.mode == client_mode::MODE_SEMISYNC {
         stream.set_nodelay(true)?;
     }
 
@@ -156,7 +158,23 @@ fn handle_client(
     Ok(())
 }
 
+fn flush_thread() {
+    loop {
+        {
+            let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
+            let list = res.deref_mut();
 
+            for client in list.into_iter().filter(
+                |c| c.mode == client_mode::MODE_ASYNC,
+            )
+            {
+                client.write.flush();
+            }
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+
+}
 
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
@@ -299,14 +317,21 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     ))?;
 
     let dont_check = matches.is_present("dont-check");
+    let buffer_size = matches
+        .value_of("buffer")
+        .and_then(|b| b.parse().ok())
+        .expect("Buffer format incorrect");
 
     thread::spawn(move || for stream in listener.incoming() {
         handle_client(
             stream.expect("Failed client connection"),
             backing_store.clone(),
             dont_check,
+            buffer_size,
         );
     });
+
+    thread::spawn(flush_thread);
 
     let args = vec![
         "fsyncd".to_string(),

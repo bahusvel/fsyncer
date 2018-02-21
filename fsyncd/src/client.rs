@@ -36,13 +36,14 @@ impl Client {
         mode: client_mode,
         dsthash: u64,
         compress: CompMode,
+        buffer_size: usize,
         op_callback: fn(msg: *const c_void) -> i32,
     ) -> Result<Self, io::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
 
-        stream.set_recv_buffer_size(1024 * 1024)?;
+        stream.set_recv_buffer_size(buffer_size * 1024 * 1024)?;
 
-        if mode == client_mode::MODE_SYNC {
+        if mode == client_mode::MODE_SYNC || mode == client_mode::MODE_SEMISYNC {
             stream.set_nodelay(true)?;
         }
 
@@ -77,6 +78,12 @@ impl Client {
         })
     }
 
+    fn write_ack(&mut self, res: i32) -> Result<(), io::Error> {
+        let ack =
+            unsafe { transmute::<ack_msg, [u8; size_of::<ack_msg>()]>(ack_msg { retcode: res }) };
+        self.write.write_all(&ack)
+    }
+
     pub fn process_ops(&mut self) -> Result<(), io::Error> {
         let mut header_buf = [0; size_of::<op_msg>()];
         let mut rcv_buf = [0; 33 * 1024];
@@ -101,13 +108,14 @@ impl Client {
                 //msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
             }
 
+            if self.mode == client_mode::MODE_SEMISYNC {
+                self.write_ack(0)?;
+            }
+
             let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
 
             if self.mode == client_mode::MODE_SYNC {
-                let ack = unsafe {
-                    transmute::<ack_msg, [u8; size_of::<ack_msg>()]>(ack_msg { retcode: res })
-                };
-                self.write.write_all(&ack)?;
+                self.write_ack(res)?;
             }
         }
     }
@@ -129,11 +137,17 @@ pub fn client_main(matches: ArgMatches) {
     )).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
 
-    let mode = if matches.is_present("sync") {
-        client_mode::MODE_SYNC
-    } else {
-        client_mode::MODE_ASYNC
+    let mode = match matches.value_of("sync").unwrap() {
+        "sync" => client_mode::MODE_SYNC,
+        "async" => client_mode::MODE_ASYNC,
+        "semisync" => client_mode::MODE_SEMISYNC,
+        _ => panic!("That is not possible"),
     };
+
+    let buffer_size = matches
+        .value_of("buffer")
+        .and_then(|b| b.parse().ok())
+        .expect("Buffer format incorrect");
 
     let c_dst = CString::new(matches.value_of("mount-path").expect(
         "Destination not specified",
@@ -169,6 +183,7 @@ pub fn client_main(matches: ArgMatches) {
         mode,
         dsthash,
         comp,
+        buffer_size,
         do_call_wrapper,
     ).expect("Failed to connect to fsyncer");
 
