@@ -77,7 +77,7 @@ fn main() {
         .arg(
             Arg::with_name("rt-compressor")
                 .long("rt-compressor")
-                .possible_values(&["default", "none"])
+                .possible_values(&["default", "chunked", "zstd", "none"])
                 .default_value_if("client", None, "none")
                 .default_value_if("stream-compressor", Some("none"), "default")
                 .help("Discrete compression method to use")

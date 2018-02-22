@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use dssc::Compressor;
 use dssc::chunkmap::ChunkMap;
+use dssc::other::ZstdBlock;
 
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
@@ -137,8 +138,10 @@ fn handle_client(
         Box::new(stream.try_clone()?) as Box<Write + Send>
     };
 
-    let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_ZLIB) {
+    let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_CHUNKED) {
         Some(Box::new(ChunkMap::new(0.5)))
+    } else if init.compress.contains(CompMode::RT_DSSC_ZSTD) {
+        Some(Box::new(ZstdBlock::default()))
     } else {
         None
     };
@@ -160,6 +163,7 @@ fn handle_client(
 
 fn flush_thread() {
     loop {
+        //println!("Flushed!");
         {
             let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
             let list = res.deref_mut();
@@ -168,7 +172,9 @@ fn flush_thread() {
                 |c| c.mode == client_mode::MODE_ASYNC,
             )
             {
-                client.write.flush();
+                if client.write.flush().is_err() {
+                    client.status = ClientStatus::DEAD;
+                }
             }
         }
         thread::sleep(Duration::from_secs(1));
@@ -330,9 +336,9 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
             buffer_size,
         );
     });
-
+    /*
     thread::spawn(flush_thread);
-
+    */
     let args = vec![
         "fsyncd".to_string(),
         matches.value_of("mount-path").unwrap().to_string(),

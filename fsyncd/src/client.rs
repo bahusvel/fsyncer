@@ -12,6 +12,7 @@ use common::*;
 use zstd;
 use dssc::Compressor;
 use dssc::chunkmap::ChunkMap;
+use dssc::other::ZstdBlock;
 
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
@@ -63,8 +64,10 @@ impl Client {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
 
-        let rt_comp: Option<Box<Compressor>> = if compress.contains(CompMode::RT_DSSC_ZLIB) {
+        let rt_comp: Option<Box<Compressor>> = if compress.contains(CompMode::RT_DSSC_CHUNKED) {
             Some(Box::new(ChunkMap::new(0.5)))
+        } else if compress.contains(CompMode::RT_DSSC_ZSTD) {
+            Some(Box::new(ZstdBlock::default()))
         } else {
             None
         };
@@ -167,11 +170,15 @@ pub fn client_main(matches: ArgMatches) {
     }
 
     match matches.value_of("rt-compressor").unwrap() {
-        "default" => {
-            println!("Using a DSSC_ZLIB realtime compressor");
-            comp.insert(CompMode::RT_DSSC_ZLIB)
+        "default" | "zstd" => {
+            println!("Using a RT_DSSC_ZSTD realtime compressor");
+            comp.insert(CompMode::RT_DSSC_ZSTD)
         }
-        _ => (),
+        "chunked" => {
+            println!("Using a RT_DSSC_CHUNKED realtime compressor");
+            comp.insert(CompMode::RT_DSSC_CHUNKED)
+        }
+        "none" | _ => (),
     }
 
     let mut client = Client::new(

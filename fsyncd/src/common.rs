@@ -35,6 +35,7 @@ pub enum client_mode {
     MODE_SYNC,
     MODE_SEMISYNC,
     MODE_CONTROL,
+    MODE_LISTENER,
 }
 
 #[repr(C)]
@@ -56,9 +57,10 @@ pub struct ack_msg {
 
 bitflags! {
     pub struct CompMode: u32 {
-        const RT_DSSC_ZLIB = 0b001;
-        const RT_DSSC_CHUNKED = 0b010;
-        const STREAM_ZSTD = 0b100;
+        const RT_DSSC_ZLIB = 0b0001;
+        const RT_DSSC_CHUNKED = 0b0010;
+        const RT_DSSC_ZSTD = 0b0100;
+        const STREAM_ZSTD = 0b1000;
     }
 }
 
