@@ -1,18 +1,23 @@
+extern crate futures;
+
 use clap::ArgMatches;
 use common::*;
 use libc::{c_char, c_void, free};
 use net2::TcpStreamExt;
 use std;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
 use std::net::{TcpListener, TcpStream};
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Deref};
 use std::process::Command;
 use std::ptr::null;
+use std::ptr;
+use std::hash::{Hasher, Hash};
 use std::slice;
-use std::sync::{Mutex, Condvar};
+use std::sync::{Mutex, Condvar, Arc};
 use std::thread;
 use std::time::Duration;
 use zstd;
@@ -21,6 +26,22 @@ use std::fs;
 use dssc::Compressor;
 use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
+use self::futures::Future;
+
+struct NoHash(u64);
+
+impl Hasher for NoHash {
+    fn write(&mut self, bytes: &[u8]) {
+        if bytes.len() > 8 {
+            panic!("Input too big");
+        }
+        unsafe { ptr::copy(bytes.as_ptr(), &mut self.0 as *mut u64 as *mut u8, 0) }
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
 
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
@@ -55,13 +76,20 @@ enum ClientStatus {
 
 struct Client {
     write: Box<Write + Send>,
-    read: Box<Read + Send>,
     mode: client_mode,
     rt_comp: Option<Box<Compressor>>,
     status: ClientStatus,
+    parked: Arc<Mutex<HashMap<u64, thread::Thread>>>,
+}
+
+struct Msg {
+    tid: thread::Thread,
+    op_type: op_type,
+    data: Vec<u8>,
 }
 
 impl Client {
+    /*
     fn send_msg(&mut self, msg_data: *const c_void) -> Result<Option<i32>, io::Error> {
         let msg = unsafe { &*(msg_data as *const op_msg) };
         let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
@@ -85,6 +113,7 @@ impl Client {
 
         Ok(None)
     }
+    */
 
     fn cork(&mut self) -> Result<(), io::Error> {
         let msg = unsafe { encode_create(CORK_FILE.as_ptr(), 0o755, 0) };
@@ -98,6 +127,62 @@ impl Client {
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
         ret.map(|_| ())
+    }
+
+    fn reader<R: Read>(mut read: R, parked: Arc<Mutex<HashMap<u64, thread::Thread>>>) {
+        let mut ack_buf = [0; size_of::<ack_msg>()];
+        let parked = parked.deref();
+        loop {
+            read.read_exact(&mut ack_buf);
+            let ack = unsafe { transmute::<[u8; size_of::<ack_msg>()], ack_msg>(ack_buf) };
+            parked
+                .lock()
+                .unwrap()
+                .get(&ack.tid)
+                .expect("Invalid TID")
+                .unpark()
+        }
+
+
+    }
+
+    fn send_msg(&mut self, msg_data: *const c_void) -> Result<(), io::Error> {
+        let mut header = unsafe { *(msg_data as *const op_msg) };
+        let mut nbuf = Vec::with_capacity(0);
+        let mut buf =
+            unsafe { slice::from_raw_parts(msg_data as *const u8, header.op_length as usize) };
+        buf = &buf[size_of::<op_msg>()..];
+        let current_thread = thread::current();
+
+        header.tid =
+            if self.mode == client_mode::MODE_SEMISYNC || self.mode == client_mode::MODE_SYNC {
+                unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) }
+            } else {
+                0
+            };
+
+        if let Some(ref mut rt_comp) = self.rt_comp {
+            rt_comp.encode(buf, &mut nbuf);
+            header.op_length = (size_of::<op_msg>() + nbuf.len()) as u32;
+            buf = &nbuf[..];
+        }
+
+        let hbuf = unsafe {
+            slice::from_raw_parts(&header as *const op_msg as *const u8, size_of::<op_msg>())
+        };
+        self.write.write_all(&hbuf);
+        self.write.write_all(&buf)?;
+
+        if self.mode == client_mode::MODE_SEMISYNC || self.mode == client_mode::MODE_SYNC {
+            let current_thread = thread::current();
+            self.parked.lock().unwrap().insert(
+                header.tid,
+                current_thread,
+            );
+            thread::park();
+            self.parked.lock().unwrap().remove(&header.tid);
+        }
+        Ok(())
     }
 }
 
@@ -146,15 +231,18 @@ fn handle_client(
         None
     };
 
-    SYNC_LIST.lock().expect("Failed to lock SYNC_LIST").push(
-        Client {
-            write: writer,
-            read: Box::new(stream),
-            mode: init.mode,
-            rt_comp: rt_comp,
-            status: ClientStatus::ALIVE,
-        },
-    );
+    let park_list = Arc::new(Mutex::new(HashMap::new()));
+    let park_clone = park_list.clone();
+
+    thread::spawn(move || Client::reader(stream, park_clone));
+
+    SYNC_LIST.lock().unwrap().push(Client {
+        write: writer,
+        mode: init.mode,
+        rt_comp: rt_comp,
+        status: ClientStatus::ALIVE,
+        parked: park_list,
+    });
 
     println!("Client connected!");
 

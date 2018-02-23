@@ -43,6 +43,7 @@ pub enum client_mode {
 pub struct op_msg {
     pub op_length: u32,
     pub op_type: op_type,
+    pub tid: u64,
 }
 
 pub struct init_msg {
@@ -53,6 +54,7 @@ pub struct init_msg {
 
 pub struct ack_msg {
     pub retcode: i32,
+    pub tid: u64,
 }
 
 bitflags! {

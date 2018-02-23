@@ -26,6 +26,7 @@ enum op_type {
 struct op_msg {
 	uint32_t op_length;
 	enum op_type op_type;
+	uint64_t tid;
 	unsigned char data[];
 };
 

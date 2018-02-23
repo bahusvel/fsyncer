@@ -81,9 +81,9 @@ impl Client {
         })
     }
 
-    fn write_ack(&mut self, res: i32) -> Result<(), io::Error> {
+    fn write_ack(&mut self, retcode: i32, tid: u64) -> Result<(), io::Error> {
         let ack =
-            unsafe { transmute::<ack_msg, [u8; size_of::<ack_msg>()]>(ack_msg { retcode: res }) };
+            unsafe { transmute::<ack_msg, [u8; size_of::<ack_msg>()]>(ack_msg { retcode, tid }) };
         self.write.write_all(&ack)
     }
 
@@ -112,13 +112,13 @@ impl Client {
             }
 
             if self.mode == client_mode::MODE_SEMISYNC {
-                self.write_ack(0)?;
+                self.write_ack(0, msg.tid)?;
             }
 
             let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
 
             if self.mode == client_mode::MODE_SYNC {
-                self.write_ack(res)?;
+                self.write_ack(res, msg.tid)?;
             }
         }
     }
