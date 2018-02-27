@@ -22,4 +22,4 @@ test_fs: dirs
 test_client:
 	rm -rf test_dst || true
 	cp -rax .fsyncer-test_src test_dst
-	cd fsyncd && RUST_BACKTRACE=1 cargo run -- `realpath ../test_dst` --sync=async --client 127.0.0.1
+	cd fsyncd && RUST_BACKTRACE=1 cargo run -- `realpath ../test_dst` --sync=semisync --client 127.0.0.1

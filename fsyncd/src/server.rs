@@ -17,7 +17,7 @@ use std::ptr::null;
 use std::ptr;
 use std::hash::{Hasher, Hash};
 use std::slice;
-use std::sync::{Mutex, Condvar, Arc};
+use std::sync::{Mutex, Condvar, Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 use zstd;
@@ -60,7 +60,7 @@ extern "C" {
 pub static mut server_path: *const c_char = null();
 
 lazy_static!{
-    static ref SYNC_LIST: Mutex<Vec<Client>> = Mutex::new(Vec::new());
+    static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
     static ref CORK_VAR: Condvar = Condvar::new();
     static ref CORK: Mutex<bool> = Mutex::new(false);
 
@@ -74,12 +74,17 @@ enum ClientStatus {
     ALIVE,
 }
 
-struct Client {
+struct ClientNetwork {
     write: Box<Write + Send>,
-    mode: client_mode,
     rt_comp: Option<Box<Compressor>>,
+    parked: HashMap<u64, thread::Thread>,
     status: ClientStatus,
-    parked: Arc<Mutex<HashMap<u64, thread::Thread>>>,
+}
+
+struct Client {
+    id: String,
+    mode: client_mode,
+    net: Arc<Mutex<ClientNetwork>>,
 }
 
 struct Msg {
@@ -119,34 +124,30 @@ impl Client {
         let msg = unsafe { encode_create(CORK_FILE.as_ptr(), 0o755, 0) };
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
-        ret.map(|_| ())
+        Ok(())
     }
 
     fn uncork(&mut self) -> Result<(), io::Error> {
         let msg = unsafe { encode_unlink(CORK_FILE.as_ptr()) };
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
-        ret.map(|_| ())
+        Ok(())
     }
 
-    fn reader<R: Read>(mut read: R, parked: Arc<Mutex<HashMap<u64, thread::Thread>>>) {
+    fn reader<R: Read>(mut read: R, net: Arc<Mutex<ClientNetwork>>) {
         let mut ack_buf = [0; size_of::<ack_msg>()];
-        let parked = parked.deref();
+        let net = net.deref();
         loop {
             read.read_exact(&mut ack_buf);
             let ack = unsafe { transmute::<[u8; size_of::<ack_msg>()], ack_msg>(ack_buf) };
-            parked
-                .lock()
-                .unwrap()
-                .get(&ack.tid)
-                .expect("Invalid TID")
-                .unpark()
+            let mut netlock = net.lock().unwrap();
+            netlock.parked.remove(&ack.tid).map(|t| t.unpark());
         }
 
 
     }
 
-    fn send_msg(&mut self, msg_data: *const c_void) -> Result<(), io::Error> {
+    fn send_msg(&self, msg_data: *const c_void) -> Result<(), io::Error> {
         let mut header = unsafe { *(msg_data as *const op_msg) };
         let mut nbuf = Vec::with_capacity(0);
         let mut buf =
@@ -161,7 +162,9 @@ impl Client {
                 0
             };
 
-        if let Some(ref mut rt_comp) = self.rt_comp {
+        let mut net = self.net.lock().unwrap();
+
+        if let Some(ref mut rt_comp) = net.rt_comp {
             rt_comp.encode(buf, &mut nbuf);
             header.op_length = (size_of::<op_msg>() + nbuf.len()) as u32;
             buf = &nbuf[..];
@@ -170,17 +173,15 @@ impl Client {
         let hbuf = unsafe {
             slice::from_raw_parts(&header as *const op_msg as *const u8, size_of::<op_msg>())
         };
-        self.write.write_all(&hbuf);
-        self.write.write_all(&buf)?;
+
+        net.write.write_all(&hbuf)?;
+        net.write.write_all(&buf)?;
 
         if self.mode == client_mode::MODE_SEMISYNC || self.mode == client_mode::MODE_SYNC {
             let current_thread = thread::current();
-            self.parked.lock().unwrap().insert(
-                header.tid,
-                current_thread,
-            );
+            net.parked.insert(header.tid, current_thread);
+            drop(net);
             thread::park();
-            self.parked.lock().unwrap().remove(&header.tid);
         }
         Ok(())
     }
@@ -231,17 +232,20 @@ fn handle_client(
         None
     };
 
-    let park_list = Arc::new(Mutex::new(HashMap::new()));
-    let park_clone = park_list.clone();
-
-    thread::spawn(move || Client::reader(stream, park_clone));
-
-    SYNC_LIST.lock().unwrap().push(Client {
+    let net = Arc::new(Mutex::new(ClientNetwork {
         write: writer,
-        mode: init.mode,
         rt_comp: rt_comp,
+        parked: HashMap::new(),
         status: ClientStatus::ALIVE,
-        parked: park_list,
+    }));
+    let net_clone = net.clone();
+
+    thread::spawn(move || Client::reader(stream, net_clone));
+
+    SYNC_LIST.write().unwrap().push(Client {
+        id: "".to_string(),
+        mode: init.mode,
+        net: net,
     });
 
     println!("Client connected!");
@@ -249,6 +253,7 @@ fn handle_client(
     Ok(())
 }
 
+/*
 fn flush_thread() {
     loop {
         //println!("Flushed!");
@@ -269,23 +274,25 @@ fn flush_thread() {
     }
 
 }
+*/
 
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
 
-    let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
-    let list = res.deref_mut();
+    let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
+    //let mut errors = Vec::with_capacity(0);
 
-    for client in list.into_iter().filter(|c| c.status != ClientStatus::DEAD) {
-        if client.send_msg(msg_data).is_err() {
-            println!("Failed sending op to client");
-            client.status = ClientStatus::DEAD;
+
+    for client in list.deref() {
+        if (client.send_msg(msg_data).is_err()) {
+            println!("Failed sending message to client");
         }
-    }
 
+    }
+    /*
     let mut corked = CORK.lock().unwrap();
     if *corked {
-        for client in list.into_iter().filter(|c| c.status != ClientStatus::DEAD) {
+        for client in list.into_iter() {
             if client.cork().is_err() || client.write.flush().is_err() {
                 println!("Failed corking client");
                 client.status = ClientStatus::DEAD;
@@ -303,6 +310,7 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
             }
         }
     }
+    */
 
     unsafe { free(msg_data as *mut c_void) };
     ret_code
