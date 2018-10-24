@@ -12,7 +12,7 @@
 #include <sys/xattr.h>
 #include <unistd.h>
 
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev);
 int xmp_mkdir(const char *path, mode_t mode);

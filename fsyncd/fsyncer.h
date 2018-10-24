@@ -22,7 +22,7 @@
 #include <sys/xattr.h>
 #include <unistd.h>
 
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 
 extern char *server_path;
 

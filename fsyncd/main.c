@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include "fsyncer.h"
 
 void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {

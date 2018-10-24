@@ -55,14 +55,10 @@ static int do_symlink(unsigned char *encoded) {
 	const char *from = DECODE_STRING();
 	const char *to = DECODE_STRING();
 
-	char real_from[MAX_PATH_SIZE];
-	if (from[0] == '/')
-		fake_root(real_from, client_path, from);
-
 	char real_to[MAX_PATH_SIZE];
 	fake_root(real_to, client_path, to);
 
-	return xmp_symlink(from[0] == '/' ? real_from : from, real_to);
+	return xmp_symlink(from, real_to);
 }
 
 static int do_rename(unsigned char *encoded) {

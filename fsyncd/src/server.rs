@@ -1,32 +1,32 @@
 extern crate futures;
 
+use self::futures::Future;
 use clap::ArgMatches;
 use common::*;
+use dssc::chunkmap::ChunkMap;
+use dssc::other::ZstdBlock;
+use dssc::Compressor;
 use libc::{c_char, c_void, free};
 use net2::TcpStreamExt;
 use std;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
 use std::net::{TcpListener, TcpStream};
-use std::ops::{DerefMut, Deref};
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::ptr::null;
 use std::ptr;
-use std::hash::{Hasher, Hash};
+use std::ptr::null;
 use std::slice;
-use std::sync::{Mutex, Condvar, Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use zstd;
-use std::path::{Path, PathBuf};
-use std::fs;
-use dssc::Compressor;
-use dssc::chunkmap::ChunkMap;
-use dssc::other::ZstdBlock;
-use self::futures::Future;
 
 struct NoHash(u64);
 
@@ -59,14 +59,12 @@ extern "C" {
 #[allow(non_upper_case_globals)]
 pub static mut server_path: *const c_char = null();
 
-lazy_static!{
+lazy_static! {
     static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
     static ref CORK_VAR: Condvar = Condvar::new();
     static ref CORK: Mutex<bool> = Mutex::new(false);
-
     static ref CORK_FILE: CString = CString::new(".fsyncer-corked").unwrap();
 }
-
 
 #[derive(PartialEq)]
 enum ClientStatus {
@@ -143,8 +141,6 @@ impl Client {
             let mut netlock = net.lock().unwrap();
             netlock.parked.remove(&ack.tid).map(|t| t.unpark());
         }
-
-
     }
 
     fn send_msg(&self, msg_data: *const c_void) -> Result<(), io::Error> {
@@ -205,9 +201,8 @@ fn handle_client(
 
     if (!dontcheck) && init.dsthash != srchash {
         println!(
-            "%{:x} != {:x} client's hash does not match!",
-            init.dsthash,
-            srchash
+            "{:x} != {:x} client's hash does not match!",
+            init.dsthash, srchash
         );
         println!("Dropping this client!");
         drop(stream);
@@ -278,16 +273,13 @@ fn flush_thread() {
 
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
-
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     //let mut errors = Vec::with_capacity(0);
-
 
     for client in list.deref() {
         if (client.send_msg(msg_data).is_err()) {
             println!("Failed sending message to client");
         }
-
     }
     /*
     let mut corked = CORK.lock().unwrap();
@@ -323,29 +315,26 @@ pub fn display_fuse_help() {
         .map(|arg| CString::new(arg).unwrap())
         .collect::<Vec<CString>>();
     // convert the strings to raw pointers
-    let c_args = args.iter()
+    let c_args = args
+        .iter()
         .map(|arg| arg.as_ptr())
         .collect::<Vec<*const c_char>>();
 
     unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr(), send_op) };
-
 }
 
 fn check_mount(path: &str) -> Result<bool, io::Error> {
-    Ok(
-        Command::new("mountpoint")
-            .arg(path)
-            .spawn()?
-            .wait()?
-            .success(),
-    )
+    Ok(Command::new("mountpoint")
+        .arg(path)
+        .spawn()?
+        .wait()?
+        .success())
 }
 
 fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Error> {
-    let mount_path = Path::new(matches.value_of("mount-path").unwrap())
-        .canonicalize()?;
-    if matches.is_present("backing-store") &&
-        !Path::new(matches.value_of("backing-store").unwrap()).exists()
+    let mount_path = Path::new(matches.value_of("mount-path").unwrap()).canonicalize()?;
+    if matches.is_present("backing-store")
+        && !Path::new(matches.value_of("backing-store").unwrap()).exists()
     {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -354,8 +343,7 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     }
 
     let backing_store = if matches.is_present("backing-store") {
-        PathBuf::from(matches.value_of("backing-store").unwrap())
-            .canonicalize()?
+        PathBuf::from(matches.value_of("backing-store").unwrap()).canonicalize()?
     } else {
         mount_path.with_file_name(format!(
             ".fsyncer-{}",
@@ -403,7 +391,6 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let (mount_path, backing_store) = figure_out_paths(&matches)?;
     println!("{:?}, {:?}", mount_path, backing_store);
 
-
     let c_dst = CString::new(backing_store.to_str().unwrap()).unwrap();
     unsafe {
         server_path = c_dst.into_raw();
@@ -424,13 +411,15 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         .and_then(|b| b.parse().ok())
         .expect("Buffer format incorrect");
 
-    thread::spawn(move || for stream in listener.incoming() {
-        handle_client(
-            stream.expect("Failed client connection"),
-            backing_store.clone(),
-            dont_check,
-            buffer_size,
-        );
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            handle_client(
+                stream.expect("Failed client connection"),
+                backing_store.clone(),
+                dont_check,
+                buffer_size,
+            );
+        }
     });
     /*
     thread::spawn(flush_thread);
@@ -439,11 +428,12 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         "fsyncd".to_string(),
         matches.value_of("mount-path").unwrap().to_string(),
     ].into_iter()
-        .chain(std::env::args().skip_while(|v| v != "--").skip(1))
-        .map(|arg| CString::new(arg).unwrap())
-        .collect::<Vec<CString>>();
+    .chain(std::env::args().skip_while(|v| v != "--").skip(1))
+    .map(|arg| CString::new(arg).unwrap())
+    .collect::<Vec<CString>>();
     // convert the strings to raw pointers
-    let c_args = args.iter()
+    let c_args = args
+        .iter()
         .map(|arg| arg.as_ptr())
         .collect::<Vec<*const c_char>>();
 

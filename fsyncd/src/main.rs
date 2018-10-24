@@ -6,24 +6,24 @@ extern crate bitflags;
 #[macro_use]
 extern crate lazy_static;
 extern crate clap;
-extern crate libc;
-extern crate zstd;
-extern crate net2;
 extern crate dssc;
+extern crate libc;
+extern crate net2;
 extern crate walkdir;
+extern crate zstd;
 
-mod server;
 mod client;
 mod common;
+mod server;
 
 use std::process::exit;
 
 use clap::{App, Arg, ArgGroup, ErrorKind};
-use server::{server_main, display_fuse_help};
 use client::client_main;
+use server::{display_fuse_help, server_main};
 
 pub use client::client_path;
-pub use server::{server_path, send_op};
+pub use server::{send_op, server_path};
 
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
@@ -36,46 +36,43 @@ fn main() {
                 .help("Mount path for the daemon")
                 .required(true)
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("client")
                 .long("client")
                 .help("This daemon will act as a client and connect to this host")
                 .group("mode")
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("server")
                 .long("server")
                 .help("This daemon acts as a server")
                 .group("mode"),
-        )
-        .arg(
+        ).arg(
+            Arg::with_name("checksum")
+                .long("checksum")
+                .help("This daemon acts as a server")
+                .group("mode"),
+        ).arg(
             Arg::with_name("backing-store")
                 .short("b")
                 .long("backing-store")
-                .help(
-                    "Explicitly specifies which directory server should use to store files",
-                )
+                .help("Explicitly specifies which directory server should use to store files")
                 .takes_value(true)
                 .requires("server"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("port")
                 .short("p")
                 .long("port")
                 .default_value("2323")
                 .help("Port the fsyncer is running on")
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("buffer")
                 .long("buffer")
                 .default_value("32")
                 .help("TX/RX Buffer size in megabytes")
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("rt-compressor")
                 .long("rt-compressor")
                 .possible_values(&["default", "chunked", "zstd", "none"])
@@ -84,8 +81,7 @@ fn main() {
                 .help("Discrete compression method to use")
                 .takes_value(true)
                 .requires("client"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("stream-compressor")
                 .long("stream-compressor")
                 .possible_values(&["default", "none"])
@@ -95,14 +91,12 @@ fn main() {
                 .help("Stream compression method to use")
                 .takes_value(true)
                 .requires("client"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("dont-check")
                 .long("dont-check")
                 .help("Disables comparison of the source and destination")
                 .requires("server"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("sync")
                 .short("s")
                 .long("sync")
@@ -110,8 +104,7 @@ fn main() {
                 .default_value_if("client", None, "async")
                 .help("Selects replication mode")
                 .requires("client"),
-        )
-        .get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
+        ).get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
         .unwrap_or_else(|e| match e.kind {
             ErrorKind::HelpDisplayed => {
                 eprintln!("{}", e);
@@ -123,7 +116,17 @@ fn main() {
 
     if matches.is_present("client") {
         client_main(matches);
-    } else {
+    } else if matches.is_present("server") {
         server_main(matches).expect("Server error");
+    } else if matches.is_present("checksum") {
+        use common::hash_metadata;
+        let hash = hash_metadata(
+            matches
+                .value_of("mount-path")
+                .expect("No destination specified"),
+        ).expect("Hash failed");
+        println!("{:x}", hash);
+    } else {
+        unreachable!();
     }
 }

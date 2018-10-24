@@ -76,14 +76,10 @@ static op_message encode_symlink(const char *from, const char *to) {
 }
 
 static int do_symlink(const char *from, const char *to) {
-	char real_from[MAX_PATH_SIZE];
-	if (from[0] == '/')
-		fake_root(real_from, server_path, from);
-
 	char real_to[MAX_PATH_SIZE];
 	fake_root(real_to, server_path, to);
 
-	int ret = xmp_symlink(from[0] == '/' ? real_from : from, real_to);
+	int ret = xmp_symlink(from, real_to);
 
 	return send_op(encode_symlink(from, to), ret);
 }

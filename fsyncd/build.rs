@@ -3,17 +3,20 @@ use std::process::Command;
 use std::str::from_utf8;
 
 fn main() {
-    let iflags = Command::new("pkg-config")
+    let fuse_flags_out = Command::new("pkg-config")
         .arg("fuse3")
         .arg("--cflags")
         .output()
-        .expect("failed to execute process")
-        .stdout;
+        .expect("failed to execute process");
+
+    if !fuse_flags_out.status.success() {
+        println!("Could not find fuse3 using 'pkg-config fuse3 --cflags'");
+    }
+
+    let iflags = fuse_flags_out.stdout;
 
     cc::Build::new()
-        .flag(&from_utf8(&iflags[..iflags.len() - 1]).expect(
-            "Non utf output",
-        ))
+        .flag(&from_utf8(&iflags[..iflags.len() - 2]).expect("Non utf output"))
         .include("../include")
         .define("_FILE_OFFSET_BITS", "64")
         .warnings(false)
