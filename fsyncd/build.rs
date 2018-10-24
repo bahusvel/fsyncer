@@ -10,7 +10,7 @@ fn main() {
         .expect("failed to execute process");
 
     if !fuse_flags_out.status.success() {
-        println!("Could not find fuse3 using 'pkg-config fuse3 --cflags'");
+        panic!("Could not find fuse3 using 'pkg-config fuse3 --cflags'");
     }
 
     let iflags = fuse_flags_out.stdout;
