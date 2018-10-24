@@ -16,8 +16,11 @@ fn main() {
     let iflags = fuse_flags_out.stdout;
 
     cc::Build::new()
-        .flag(&from_utf8(&iflags[..iflags.len() - 2]).expect("Non utf output"))
-        .include("../include")
+        .flag(
+            &from_utf8(&iflags[..iflags.len() - 1])
+                .expect("Non utf output")
+                .trim(),
+        ).include("../include")
         .define("_FILE_OFFSET_BITS", "64")
         .warnings(false)
         .flag("-Wall")
