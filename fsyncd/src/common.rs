@@ -81,7 +81,9 @@ pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
         e.file_type().hash(&mut hasher);
         let stat = e.metadata()?;
         stat.permissions().mode().hash(&mut hasher);
-        stat.len().hash(&mut hasher);
+        if !stat.is_dir() {
+            stat.len().hash(&mut hasher);
+        }
         stat.modified()?.hash(&mut hasher);
         stat.uid().hash(&mut hasher);
         stat.gid().hash(&mut hasher);
