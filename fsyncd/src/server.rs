@@ -7,6 +7,7 @@ use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
 use dssc::Compressor;
 use libc::{c_char, c_void, free};
+use lz4;
 use net2::TcpStreamExt;
 use std;
 use std::collections::HashMap;
@@ -170,6 +171,8 @@ impl Client {
             slice::from_raw_parts(&header as *const op_msg as *const u8, size_of::<op_msg>())
         };
 
+        //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
+
         net.write.write_all(&hbuf)?;
         net.write.write_all(&buf)?;
 
@@ -215,6 +218,8 @@ fn handle_client(
 
     let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
         Box::new(zstd::stream::Encoder::new(stream.try_clone()?, 0)?) as Box<Write + Send>
+    } else if init.compress.contains(CompMode::STREAM_LZ4) {
+        Box::new(lz4::EncoderBuilder::new().build(stream.try_clone()?)?) as Box<Write + Send>
     } else {
         Box::new(stream.try_clone()?) as Box<Write + Send>
     };
@@ -248,28 +253,31 @@ fn handle_client(
     Ok(())
 }
 
-/*
-fn flush_thread() {
-    loop {
-        //println!("Flushed!");
-        {
-            let mut res = SYNC_LIST.lock().expect("Failed to lock SYNC_LIST");
-            let list = res.deref_mut();
 
-            for client in list.into_iter().filter(
+fn flush_thread() {
+    let nop_msg = op_msg{op_type: op_type::NOP, op_length: size_of::<op_msg>() as u32, tid: 0};
+    loop {
+        {
+            let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
+
+            for client in list.iter().filter(
                 |c| c.mode == client_mode::MODE_ASYNC,
             )
             {
-                if client.write.flush().is_err() {
-                    client.status = ClientStatus::DEAD;
+                if client.send_msg(&nop_msg as *const op_msg as *const c_void).is_err() {
+                    println!("Failed to flush to client");
                 }
+                if client.net.lock().unwrap().write.flush().is_err() {
+                    println!("Failed to flush to client"); 
+                }
+                
             }
         }
         thread::sleep(Duration::from_secs(1));
     }
 
 }
-*/
+
 
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
@@ -277,7 +285,7 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
     //let mut errors = Vec::with_capacity(0);
 
     for client in list.deref() {
-        if (client.send_msg(msg_data).is_err()) {
+        if client.send_msg(msg_data).is_err() {
             println!("Failed sending message to client");
         }
     }
@@ -421,9 +429,9 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
             );
         }
     });
-    /*
+    
     thread::spawn(flush_thread);
-    */
+    
     let args = vec![
         "fsyncd".to_string(),
         matches.value_of("mount-path").unwrap().to_string(),

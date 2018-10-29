@@ -275,6 +275,8 @@ int do_call(op_message message) {
 	case UTIMENS:
 		return do_utimens(message->data);
 #endif
+	case NOP:
+	return 0;
 	default: {
 		printf("Unknown vfs call %d!\n", message->op_type);
 		exit(-1);

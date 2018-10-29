@@ -1,10 +1,10 @@
-use walkdir::WalkDir;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hasher, Hash};
+use std::hash::{Hash, Hasher};
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use walkdir::WalkDir;
 
 #[repr(C)]
 #[derive(PartialEq, Clone, Copy)]
@@ -26,6 +26,7 @@ pub enum op_type {
     REMOVEXATTR,
     CREATE,
     UTIMENS,
+    NOP,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -59,10 +60,11 @@ pub struct ack_msg {
 
 bitflags! {
     pub struct CompMode: u32 {
-        const RT_DSSC_ZLIB = 0b0001;
-        const RT_DSSC_CHUNKED = 0b0010;
-        const RT_DSSC_ZSTD = 0b0100;
-        const STREAM_ZSTD = 0b1000;
+        const RT_DSSC_ZLIB      = 0b00001;
+        const RT_DSSC_CHUNKED   = 0b00010;
+        const RT_DSSC_ZSTD      = 0b00100;
+        const STREAM_ZSTD       = 0b01000;
+        const STREAM_LZ4        = 0b10000;
     }
 }
 

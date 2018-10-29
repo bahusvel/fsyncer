@@ -8,6 +8,7 @@ extern crate lazy_static;
 extern crate clap;
 extern crate dssc;
 extern crate libc;
+extern crate lz4;
 extern crate net2;
 extern crate walkdir;
 extern crate zstd;
@@ -84,7 +85,7 @@ fn main() {
         ).arg(
             Arg::with_name("stream-compressor")
                 .long("stream-compressor")
-                .possible_values(&["default", "none"])
+                .possible_values(&["default", "zstd", "lz4", "none"])
                 .default_value_if("sync", Some("sync"), "none")
                 .default_value_if("sync", Some("semisync"), "none")
                 .default_value_if("client", None, "default")

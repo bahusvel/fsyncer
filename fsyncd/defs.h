@@ -22,6 +22,7 @@ enum op_type {
 	REMOVEXATTR,
 	CREATE,
 	UTIMENS,
+	NOP,
 };
 struct op_msg {
 	uint32_t op_length;

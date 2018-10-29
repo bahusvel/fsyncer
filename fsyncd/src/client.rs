@@ -1,18 +1,19 @@
-use std::net::TcpStream;
+use clap::ArgMatches;
+use common::*;
+use dssc::chunkmap::ChunkMap;
+use dssc::other::ZstdBlock;
+use dssc::Compressor;
+use libc::perror;
+use libc::{c_char, c_void};
+use lz4;
 use net2::TcpStreamExt;
+use std::ffi::CString;
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
-use libc::{c_void, c_char};
-use std::ffi::CString;
-use clap::ArgMatches;
+use std::net::TcpStream;
 use std::ptr::null;
-use libc::perror;
-use common::*;
 use zstd;
-use dssc::Compressor;
-use dssc::chunkmap::ChunkMap;
-use dssc::other::ZstdBlock;
 
 extern "C" {
     fn do_call(message: *const c_void) -> i32;
@@ -60,6 +61,8 @@ impl Client {
 
         let reader = if compress.contains(CompMode::STREAM_ZSTD) {
             Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
+        } else if compress.contains(CompMode::STREAM_LZ4) {
+            Box::new(lz4::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
         } else {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
@@ -91,13 +94,10 @@ impl Client {
         let mut header_buf = [0; size_of::<op_msg>()];
         let mut rcv_buf = [0; 33 * 1024];
         loop {
-            self.read.read_exact(&mut header_buf)?;
+            self.read.read_exact(&mut rcv_buf[..size_of::<op_msg>()])?;
             let msg = unsafe { &mut *(rcv_buf.as_ptr() as *mut op_msg) };
-            rcv_buf[..size_of::<op_msg>()].copy_from_slice(&header_buf);
-            self.read.read_exact(
-                &mut rcv_buf[size_of::<op_msg>()..
-                                 msg.op_length as usize],
-            )?;
+            self.read
+                .read_exact(&mut rcv_buf[size_of::<op_msg>()..msg.op_length as usize])?;
 
             if let Some(ref mut rt_comp) = self.rt_comp {
                 //FIXME also inefficient
@@ -135,9 +135,11 @@ fn do_call_wrapper(message: *const c_void) -> i32 {
 
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");
-    let dsthash = hash_metadata(matches.value_of("mount-path").expect(
-        "No destination specified",
-    )).expect("Hash failed");
+    let dsthash = hash_metadata(
+        matches
+            .value_of("mount-path")
+            .expect("No destination specified"),
+    ).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
 
     let mode = match matches.value_of("sync").unwrap() {
@@ -152,9 +154,11 @@ pub fn client_main(matches: ArgMatches) {
         .and_then(|b| b.parse().ok())
         .expect("Buffer format incorrect");
 
-    let c_dst = CString::new(matches.value_of("mount-path").expect(
-        "Destination not specified",
-    )).unwrap();
+    let c_dst = CString::new(
+        matches
+            .value_of("mount-path")
+            .expect("Destination not specified"),
+    ).unwrap();
     unsafe {
         client_path = c_dst.into_raw();
     }
@@ -162,7 +166,11 @@ pub fn client_main(matches: ArgMatches) {
     let mut comp = CompMode::empty();
 
     match matches.value_of("stream-compressor").unwrap() {
-        "default" => {
+        "default" | "lz4" => {
+            println!("Using a LZ4 stream compressor");
+            comp.insert(CompMode::STREAM_LZ4)
+        }
+        "zstd" => {
             println!("Using a ZSTD stream compressor");
             comp.insert(CompMode::STREAM_ZSTD)
         }
@@ -193,7 +201,6 @@ pub fn client_main(matches: ArgMatches) {
         buffer_size,
         do_call_wrapper,
     ).expect("Failed to connect to fsyncer");
-
 
     println!(
         "Connected to {}",
