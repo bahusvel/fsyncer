@@ -119,62 +119,29 @@ static int do_truncate(unsigned char *encoded) {
 	return xmp_truncate(real_path, size, -1);
 }
 
-static int dec_write(const char *path, const char *buf, size_t size,
-					 off_t offset) {
-	int fd;
-	int res;
-
-	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
-
-	char real_path[MAX_PATH_SIZE];
-	fake_root(real_path, client_path, path);
-
-	fd = open(real_path, O_WRONLY);
-	if (fd == -1)
-		return -errno;
-
-	res = pwrite(fd, buf, size, offset);
-	if (res == -1)
-		res = -errno;
-
-	close(fd);
-	return res;
-}
-
 static int do_write(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 	off_t offset = DECODE_VALUE(int64_t, be64toh);
 	size_t size = DECODE_OPAQUE_SIZE();
 	const char *buf = DECODE_OPAQUE();
-	return dec_write(path, buf, size, offset);
-}
-
-#ifdef HAVE_POSIX_FALLOCATE
-static int dec_fallocate(const char *path, int mode, off_t offset,
-						 off_t length) {
-	int fd;
-	int res;
-	if (mode)
-		return -EOPNOTSUPP;
 
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, client_path, path);
 
-	fd = open(real_path, O_WRONLY);
-	if (fd == -1)
-		return -errno;
-
-	res = -posix_fallocate(fd, offset, length);
-
-	close(fd);
-	return res;
+	return xmp_write(real_path, buf, size, offset, -1);
 }
+
+#ifdef HAVE_POSIX_FALLOCATE
 static int do_fallocate(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 	int mode = DECODE_VALUE(int32_t, be32toh);
 	off_t offset = DECODE_VALUE(int64_t, be64toh);
 	off_t length = DECODE_VALUE(int64_t, be64toh);
-	return dec_fallocate(path, mode, offset, length);
+
+	char real_path[MAX_PATH_SIZE];
+	fake_root(real_path, client_path, path);
+
+	return xmp_fallocate(real_path, mode, offset, length, -1);
 }
 #endif
 
@@ -227,7 +194,6 @@ int do_utimens(unsigned char *encoded) {
 	const char *path = DECODE_STRING();
 	const struct timespec *ts =
 		(const struct timespec *)DECODE_FIXED_SIZE(sizeof(struct timespec) * 2);
-
 	char real_path[MAX_PATH_SIZE];
 	fake_root(real_path, client_path, path);
 

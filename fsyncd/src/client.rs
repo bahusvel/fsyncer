@@ -26,7 +26,7 @@ pub static mut client_path: *const c_char = null();
 pub struct Client {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
-    mode: client_mode,
+    mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
     op_callback: fn(msg: *const c_void) -> i32,
 }
@@ -35,7 +35,7 @@ impl Client {
     pub fn new(
         host: &str,
         port: i32,
-        mode: client_mode,
+        mode: ClientMode,
         dsthash: u64,
         compress: CompMode,
         buffer_size: usize,
@@ -45,12 +45,12 @@ impl Client {
 
         stream.set_recv_buffer_size(buffer_size * 1024 * 1024)?;
 
-        if mode == client_mode::MODE_SYNC || mode == client_mode::MODE_SEMISYNC {
+        if mode == ClientMode::MODE_SYNC || mode == ClientMode::MODE_SEMISYNC {
             stream.set_nodelay(true)?;
         }
 
         let init = unsafe {
-            transmute::<init_msg, [u8; size_of::<init_msg>()]>(init_msg {
+            transmute::<InitMsg, [u8; size_of::<InitMsg>()]>(InitMsg {
                 mode,
                 dsthash,
                 compress,
@@ -86,12 +86,11 @@ impl Client {
 
     fn write_ack(&mut self, retcode: i32, tid: u64) -> Result<(), io::Error> {
         let ack =
-            unsafe { transmute::<ack_msg, [u8; size_of::<ack_msg>()]>(ack_msg { retcode, tid }) };
+            unsafe { transmute::<AckMsg, [u8; size_of::<AckMsg>()]>(AckMsg { retcode, tid }) };
         self.write.write_all(&ack)
     }
 
     pub fn process_ops(&mut self) -> Result<(), io::Error> {
-        let mut header_buf = [0; size_of::<op_msg>()];
         let mut rcv_buf = [0; 33 * 1024];
         loop {
             self.read.read_exact(&mut rcv_buf[..size_of::<op_msg>()])?;
@@ -111,13 +110,13 @@ impl Client {
                 //msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
             }
 
-            if self.mode == client_mode::MODE_SEMISYNC {
+            if self.mode == ClientMode::MODE_SEMISYNC {
                 self.write_ack(0, msg.tid)?;
             }
 
             let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
 
-            if self.mode == client_mode::MODE_SYNC {
+            if self.mode == ClientMode::MODE_SYNC {
                 self.write_ack(res, msg.tid)?;
             }
         }
@@ -143,9 +142,9 @@ pub fn client_main(matches: ArgMatches) {
     println!("Destinaton hash is {:x}", dsthash);
 
     let mode = match matches.value_of("sync").unwrap() {
-        "sync" => client_mode::MODE_SYNC,
-        "async" => client_mode::MODE_ASYNC,
-        "semisync" => client_mode::MODE_SEMISYNC,
+        "sync" => ClientMode::MODE_SYNC,
+        "async" => ClientMode::MODE_ASYNC,
+        "semisync" => ClientMode::MODE_SEMISYNC,
         _ => panic!("That is not possible"),
     };
 

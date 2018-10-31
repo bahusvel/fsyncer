@@ -31,7 +31,7 @@ pub enum op_type {
 
 #[derive(PartialEq, Clone, Copy)]
 #[allow(non_camel_case_types)]
-pub enum client_mode {
+pub enum ClientMode {
     MODE_ASYNC,
     MODE_SYNC,
     MODE_SEMISYNC,
@@ -47,13 +47,13 @@ pub struct op_msg {
     pub tid: u64,
 }
 
-pub struct init_msg {
-    pub mode: client_mode,
+pub struct InitMsg {
+    pub mode: ClientMode,
     pub dsthash: u64,
     pub compress: CompMode,
 }
 
-pub struct ack_msg {
+pub struct AckMsg {
     pub retcode: i32,
     pub tid: u64,
 }

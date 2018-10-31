@@ -51,7 +51,7 @@
 	encoded += be32toh(*(uint32_t *)encoded) + sizeof(uint32_t)
 
 #define DECODE_FIXED_SIZE(size)                                                \
-	(encoded);                                                                 \
+	(void*)(encoded);                                                          \
 	encoded += size;
 
 #endif

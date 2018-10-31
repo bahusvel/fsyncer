@@ -1,10 +1,11 @@
 #![feature(libc)]
-#![feature(conservative_impl_trait)]
 
 #[macro_use]
 extern crate bitflags;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate serde_derive;
 extern crate clap;
 extern crate dssc;
 extern crate libc;
@@ -15,6 +16,8 @@ extern crate zstd;
 
 mod client;
 mod common;
+mod dispatch;
+mod encoded;
 mod server;
 
 use std::process::exit;

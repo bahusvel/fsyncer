@@ -1,6 +1,5 @@
 extern crate futures;
 
-use self::futures::Future;
 use clap::ArgMatches;
 use common::*;
 use dssc::chunkmap::ChunkMap;
@@ -13,15 +12,13 @@ use std;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
 use std::net::{TcpListener, TcpStream};
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::ptr;
 use std::ptr::null;
 use std::slice;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -29,20 +26,11 @@ use std::thread;
 use std::time::Duration;
 use zstd;
 
-struct NoHash(u64);
-
-impl Hasher for NoHash {
-    fn write(&mut self, bytes: &[u8]) {
-        if bytes.len() > 8 {
-            panic!("Input too big");
-        }
-        unsafe { ptr::copy(bytes.as_ptr(), &mut self.0 as *mut u64 as *mut u8, 0) }
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
+const NOP_MSG: op_msg = op_msg {
+    op_type: op_type::NOP,
+    op_length: size_of::<op_msg>() as u32,
+    tid: 0,
+};
 
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
@@ -82,7 +70,7 @@ struct ClientNetwork {
 
 struct Client {
     id: String,
-    mode: client_mode,
+    mode: ClientMode,
     net: Arc<Mutex<ClientNetwork>>,
 }
 
@@ -93,55 +81,36 @@ struct Msg {
 }
 
 impl Client {
-    /*
-    fn send_msg(&mut self, msg_data: *const c_void) -> Result<Option<i32>, io::Error> {
-        let msg = unsafe { &*(msg_data as *const op_msg) };
-        let buf = unsafe { slice::from_raw_parts(msg_data as *const u8, msg.op_length as usize) };
-        if let Some(ref mut rt_comp) = self.rt_comp {
-            let mut nbuf = Vec::new();
-            nbuf.extend_from_slice(&buf[..size_of::<op_msg>()]);
-            rt_comp.encode(&buf[size_of::<op_msg>()..], &mut nbuf);
-            let m = unsafe { &mut *(nbuf.as_mut_ptr() as *mut op_msg) };
-            m.op_length = nbuf.len() as u32;
-            self.write.write_all(&nbuf)?;
-        } else {
-            self.write.write_all(&buf)?;
-        }
-
-        if self.mode == client_mode::MODE_SYNC || self.mode == client_mode::MODE_SEMISYNC {
-            let mut ack_buf = [0; size_of::<ack_msg>()];
-            self.read.read_exact(&mut ack_buf)?;
-            let ack = unsafe { transmute::<[u8; size_of::<ack_msg>()], ack_msg>(ack_buf) };
-            return Ok(Some(ack.retcode));
-        }
-
-        Ok(None)
-    }
-    */
-
     fn cork(&mut self) -> Result<(), io::Error> {
         let msg = unsafe { encode_create(CORK_FILE.as_ptr(), 0o755, 0) };
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
-        Ok(())
+        self.flush()
     }
 
     fn uncork(&mut self) -> Result<(), io::Error> {
         let msg = unsafe { encode_unlink(CORK_FILE.as_ptr()) };
         let ret = self.send_msg(msg);
         unsafe { free(msg as *mut c_void) };
-        Ok(())
+        self.flush()
     }
 
     fn reader<R: Read>(mut read: R, net: Arc<Mutex<ClientNetwork>>) {
-        let mut ack_buf = [0; size_of::<ack_msg>()];
+        let mut ack_buf = [0; size_of::<AckMsg>()];
         let net = net.deref();
         loop {
-            read.read_exact(&mut ack_buf);
-            let ack = unsafe { transmute::<[u8; size_of::<ack_msg>()], ack_msg>(ack_buf) };
+            read.read_exact(&mut ack_buf)
+                .expect("Failed to read message from client");
+            let ack = unsafe { transmute::<[u8; size_of::<AckMsg>()], AckMsg>(ack_buf) };
             let mut netlock = net.lock().unwrap();
             netlock.parked.remove(&ack.tid).map(|t| t.unpark());
         }
+    }
+
+    fn flush(&self) -> Result<(), io::Error> {
+        //HACK: Without the nop message compression algorithms dont flush immediately.
+        self.send_msg(&NOP_MSG as *const op_msg as *const c_void)?;
+        self.net.lock().unwrap().write.flush()
     }
 
     fn send_msg(&self, msg_data: *const c_void) -> Result<(), io::Error> {
@@ -152,12 +121,12 @@ impl Client {
         buf = &buf[size_of::<op_msg>()..];
         let current_thread = thread::current();
 
-        header.tid =
-            if self.mode == client_mode::MODE_SEMISYNC || self.mode == client_mode::MODE_SYNC {
-                unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) }
-            } else {
-                0
-            };
+        header.tid = if self.mode == ClientMode::MODE_SEMISYNC || self.mode == ClientMode::MODE_SYNC
+        {
+            unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) }
+        } else {
+            0
+        };
 
         let mut net = self.net.lock().unwrap();
 
@@ -176,7 +145,7 @@ impl Client {
         net.write.write_all(&hbuf)?;
         net.write.write_all(&buf)?;
 
-        if self.mode == client_mode::MODE_SEMISYNC || self.mode == client_mode::MODE_SYNC {
+        if self.mode == ClientMode::MODE_SEMISYNC || self.mode == ClientMode::MODE_SYNC {
             let current_thread = thread::current();
             net.parked.insert(header.tid, current_thread);
             drop(net);
@@ -193,14 +162,14 @@ fn handle_client(
     buffer_size: usize,
 ) -> Result<(), io::Error> {
     stream.set_send_buffer_size(buffer_size * 1024 * 1024)?;
-    let mut init_buf = [0; size_of::<init_msg>()];
+    let mut init_buf = [0; size_of::<InitMsg>()];
     stream.read_exact(&mut init_buf)?;
 
     println!("Calculating source hash...");
     let srchash = hash_metadata(storage_path.to_str().unwrap()).expect("Hash check failed");
     println!("Source hash is {:x}", srchash);
 
-    let init = unsafe { transmute::<[u8; size_of::<init_msg>()], init_msg>(init_buf) };
+    let init = unsafe { transmute::<[u8; size_of::<InitMsg>()], InitMsg>(init_buf) };
 
     if (!dontcheck) && init.dsthash != srchash {
         println!(
@@ -212,7 +181,7 @@ fn handle_client(
         return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
     }
 
-    if init.mode == client_mode::MODE_SYNC || init.mode == client_mode::MODE_SEMISYNC {
+    if init.mode == ClientMode::MODE_SYNC || init.mode == ClientMode::MODE_SEMISYNC {
         stream.set_nodelay(true)?;
     }
 
@@ -253,31 +222,18 @@ fn handle_client(
     Ok(())
 }
 
-
 fn flush_thread() {
-    let nop_msg = op_msg{op_type: op_type::NOP, op_length: size_of::<op_msg>() as u32, tid: 0};
     loop {
-        {
-            let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
-
-            for client in list.iter().filter(
-                |c| c.mode == client_mode::MODE_ASYNC,
-            )
-            {
-                if client.send_msg(&nop_msg as *const op_msg as *const c_void).is_err() {
-                    println!("Failed to flush to client");
-                }
-                if client.net.lock().unwrap().write.flush().is_err() {
-                    println!("Failed to flush to client"); 
-                }
-                
+        let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
+        for client in list.iter().filter(|c| c.mode == ClientMode::MODE_ASYNC) {
+            if client.flush().is_err() {
+                println!("Failed to flush to client");
             }
         }
+        drop(list);
         thread::sleep(Duration::from_secs(1));
     }
-
 }
-
 
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
@@ -426,12 +382,12 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 backing_store.clone(),
                 dont_check,
                 buffer_size,
-            );
+            ).expect("Failed handling client");
         }
     });
-    
+
     thread::spawn(flush_thread);
-    
+
     let args = vec![
         "fsyncd".to_string(),
         matches.value_of("mount-path").unwrap().to_string(),

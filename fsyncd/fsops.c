@@ -122,9 +122,17 @@ int xmp_truncate(const char *path, off_t size, int fd) {
 	return 0;
 }
 
-int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
+int xmp_write(const char *path, const unsigned char *buf, size_t size, off_t offset,
 			  int fd) {
 	int res;
+	int opened = 0;
+
+	if (fd == -1) {
+		fd = open(path, O_WRONLY);
+		if (fd == -1)
+			return -errno;
+		opened = 1;
+	}
 
 	// printf("Write %.*s @ %lu to %s\n", (int)size, buf, offset, path);
 
@@ -132,21 +140,41 @@ int xmp_write(const char *path, const char *buf, size_t size, off_t offset,
 	if (res == -1)
 		res = -errno;
 
+	if (opened == 1) {
+		close(fd);
+	}
+
 	return res;
 }
 
 #ifdef HAVE_POSIX_FALLOCATE
 int xmp_fallocate(const char *path, int mode, off_t offset, off_t length,
 				  int fd) {
+
+	int opened = 0;
+	
 	if (mode)
 		return -EOPNOTSUPP;
 
-	return -posix_fallocate(fd, offset, length);
+	if (fd == -1) {
+		fd = open(path, O_WRONLY);
+		if (fd == -1)
+			return -errno;
+		opened = 1;
+	}
+
+	int res = -posix_fallocate(fd, offset, length);
+	
+	if (opened == 1) {
+		close(fd);
+	}
+
+	return res;
 }
 #endif
 
 #ifdef HAVE_SETXATTR
-int xmp_setxattr(const char *path, const char *name, const char *value,
+int xmp_setxattr(const char *path, const char *name, const unsigned char *value,
 				 size_t size, int flags) {
 
 	int res = lsetxattr(path, name, value, size, flags);
