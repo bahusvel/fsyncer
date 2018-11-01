@@ -48,6 +48,8 @@ extern "C" {
 #[allow(non_upper_case_globals)]
 pub static mut server_path: *const c_char = null();
 
+pub static mut server_path_rust: String = String::new();
+
 lazy_static! {
     static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
     static ref CORK_VAR: Condvar = Condvar::new();
@@ -234,6 +236,8 @@ fn flush_thread() {
         thread::sleep(Duration::from_secs(1));
     }
 }
+
+pub fn handle_op(call: VFSCall) {}
 
 #[no_mangle]
 pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {

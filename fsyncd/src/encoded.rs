@@ -93,6 +93,24 @@ pub struct enc_timespec {
     pub tv_nsec: int64_t,
 }
 
+impl From<timespec> for enc_timespec {
+    fn from(spec: timespec) -> Self {
+        enc_timespec {
+            tv_sec: spec.tv_sec,
+            tv_nsec: spec.tv_nsec,
+        }
+    }
+}
+
+impl Into<timespec> for enc_timespec {
+    fn into(self) -> timespec {
+        timespec {
+            tv_sec: self.tv_sec,
+            tv_nsec: self.tv_nsec,
+        }
+    }
+}
+
 path_syscall!(utimens {
     timespec: [enc_timespec; 2]
 });

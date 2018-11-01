@@ -1,4 +1,16 @@
-#include "fsops.h"
+#include "config.h"
+#include <errno.h>
+#define __USE_ATFILE 1
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
+#include <unistd.h>
+
+#include <sys/xattr.h>
 
 int xmp_mknod(const char *path, mode_t mode, dev_t rdev) {
 	int res;
@@ -205,7 +217,7 @@ int xmp_create(const char *path, mode_t mode, int *fd, int flags) {
 }
 
 #ifdef HAVE_UTIMENSAT
-int xmp_utimens(const char *path, const struct timespec ts[2], int fd) {
+int xmp_utimens(const char *path, const struct timespec *ts, int fd) {
 	int res;
 
 	/* don't use utime/utimes since they follow symlinks */

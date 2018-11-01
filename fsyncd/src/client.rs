@@ -1,37 +1,27 @@
 use clap::ArgMatches;
 use common::*;
+use dispatch::dispatch;
 use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
 use dssc::Compressor;
-use libc::perror;
-use libc::{c_char, c_void};
+use libc::c_void;
 use lz4;
 use net2::TcpStreamExt;
-use std::ffi::CString;
 use std::io;
 use std::io::{Read, Write};
 use std::mem::{size_of, transmute};
 use std::net::TcpStream;
-use std::ptr::null;
 use zstd;
 
-extern "C" {
-    fn do_call(message: *const c_void) -> i32;
-}
-
-#[no_mangle]
-#[allow(non_upper_case_globals)]
-pub static mut client_path: *const c_char = null();
-
-pub struct Client {
+pub struct Client<F: Fn(VFSCall) -> i32> {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
     mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
-    op_callback: fn(msg: *const c_void) -> i32,
+    op_callback: F,
 }
 
-impl Client {
+impl<F: Fn(VFSCall) -> i32> Client<F> {
     pub fn new(
         host: &str,
         port: i32,
@@ -39,7 +29,7 @@ impl Client {
         dsthash: u64,
         compress: CompMode,
         buffer_size: usize,
-        op_callback: fn(msg: *const c_void) -> i32,
+        op_callback: F,
     ) -> Result<Self, io::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
 
@@ -123,6 +113,7 @@ impl Client {
     }
 }
 
+/*
 fn do_call_wrapper(message: *const c_void) -> i32 {
     //println!("Received call");
     let res = unsafe { do_call(message) };
@@ -131,6 +122,7 @@ fn do_call_wrapper(message: *const c_void) -> i32 {
     }
     res
 }
+*/
 
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");
@@ -153,14 +145,9 @@ pub fn client_main(matches: ArgMatches) {
         .and_then(|b| b.parse().ok())
         .expect("Buffer format incorrect");
 
-    let c_dst = CString::new(
-        matches
-            .value_of("mount-path")
-            .expect("Destination not specified"),
-    ).unwrap();
-    unsafe {
-        client_path = c_dst.into_raw();
-    }
+    let client_path = matches
+        .value_of("mount-path")
+        .expect("Destination not specified");
 
     let mut comp = CompMode::empty();
 
@@ -198,7 +185,7 @@ pub fn client_main(matches: ArgMatches) {
         dsthash,
         comp,
         buffer_size,
-        do_call_wrapper,
+        |call| dispatch(call, client_path),
     ).expect("Failed to connect to fsyncer");
 
     println!(

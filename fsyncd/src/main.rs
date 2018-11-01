@@ -1,4 +1,5 @@
 #![feature(libc)]
+#![feature(const_string_new)]
 
 #[macro_use]
 extern crate bitflags;
@@ -8,6 +9,7 @@ extern crate lazy_static;
 extern crate serde_derive;
 extern crate clap;
 extern crate dssc;
+extern crate errno;
 extern crate libc;
 extern crate lz4;
 extern crate net2;
@@ -18,7 +20,9 @@ mod client;
 mod common;
 mod dispatch;
 mod encoded;
+mod ops;
 mod server;
+mod write;
 
 use std::process::exit;
 
@@ -26,8 +30,8 @@ use clap::{App, Arg, ArgGroup, ErrorKind};
 use client::client_main;
 use server::{display_fuse_help, server_main};
 
-pub use client::client_path;
-pub use server::{send_op, server_path};
+pub use server::server_path;
+pub use write::*;
 
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
