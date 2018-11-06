@@ -24,7 +24,6 @@ fn main() {
         .define("_FILE_OFFSET_BITS", "64")
         .warnings(false)
         .flag("-Wall")
-        .file("main.c")
         .file("read.c")
         .compile("fsyncer");
 }

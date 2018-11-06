@@ -1,3 +1,9 @@
+mod encoded;
+mod ops;
+
+pub use self::encoded::*;
+pub use self::ops::*;
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -74,7 +80,6 @@ pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
     Ok(hasher.finish())
 }
 
-use encoded::*;
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum VFSCall {

@@ -1,12 +1,15 @@
-extern crate futures;
+mod fusemain;
+mod fuseops;
+mod write;
 
+use self::fusemain::fuse_main;
 use bincode::{serialize, serialized_size};
 use clap::ArgMatches;
 use common::*;
 use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
 use dssc::Compressor;
-use libc::c_char;
+use libc::{c_char, c_int};
 use lz4;
 use net2::TcpStreamExt;
 use std;
@@ -25,12 +28,6 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use zstd;
-
-#[link(name = "fsyncer", kind = "static")]
-#[link(name = "fuse3")]
-extern "C" {
-    fn fsyncer_fuse_main(argc: i32, argv: *const *const c_char) -> i32;
-}
 
 #[no_mangle]
 #[allow(non_upper_case_globals)]
@@ -119,6 +116,7 @@ impl Client {
 
         Ok(())
     }
+
     fn park(&self, current_thread: thread::Thread) {
         let mut net = self.net.lock().unwrap();
         net.parked.insert(
@@ -267,7 +265,7 @@ pub fn display_fuse_help() {
         .map(|arg| arg.as_ptr())
         .collect::<Vec<*const c_char>>();
 
-    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr()) };
+    unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
 }
 
 fn check_mount(path: &str) -> Result<bool, io::Error> {
@@ -385,7 +383,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         .map(|arg| arg.as_ptr())
         .collect::<Vec<*const c_char>>();
 
-    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr()) };
+    unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
 
     Ok(())
 }

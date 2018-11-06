@@ -1,23 +1,11 @@
 use common::*;
-use encoded::*;
 use libc::*;
-use ops::*;
+use server::fuseops::fuse_file_info;
 use server::{handle_op, SERVER_PATH_RUST};
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::slice;
 
-#[repr(C)]
-pub struct fuse_file_info {
-    flags: c_int,
-    fuse_flags: c_uint,
-    pad: c_uint, // fuse developers are retards
-    fh: uint64_t,
-    lock_owner: uint64_t,
-    poll_events: uint32_t,
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_mknod(real_path.as_ptr(), mode, rdev);
@@ -28,7 +16,6 @@ pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t
     }));
     res
 }
-#[no_mangle]
 pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_mkdir(real_path.as_ptr(), mode);
@@ -38,7 +25,7 @@ pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_unlink(real_path.as_ptr());
@@ -47,7 +34,7 @@ pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_rmdir(real_path.as_ptr());
@@ -56,7 +43,7 @@ pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_symlink(from: *const c_char, to: *const c_char) -> c_int {
     let real_to = translate_path(CStr::from_ptr(to), &SERVER_PATH_RUST);
     let res = xmp_symlink(from, real_to.as_ptr());
@@ -66,7 +53,7 @@ pub unsafe extern "C" fn do_symlink(from: *const c_char, to: *const c_char) -> c
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_rename(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int {
     if flags != 0 {
         return -EINVAL;
@@ -81,7 +68,7 @@ pub unsafe extern "C" fn do_rename(from: *const c_char, to: *const c_char, flags
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_link(from: *const c_char, to: *const c_char) -> c_int {
     let real_from = translate_path(CStr::from_ptr(from), &SERVER_PATH_RUST);
     let real_to = translate_path(CStr::from_ptr(to), &SERVER_PATH_RUST);
@@ -92,11 +79,11 @@ pub unsafe extern "C" fn do_link(from: *const c_char, to: *const c_char) -> c_in
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_chmod(
     path: *const c_char,
     mode: mode_t,
-    fi: *const fuse_file_info,
+    fi: *mut fuse_file_info,
 ) -> c_int {
     let res = if fi.is_null() {
         let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
@@ -110,12 +97,12 @@ pub unsafe extern "C" fn do_chmod(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_chown(
     path: *const c_char,
     uid: uid_t,
     gid: gid_t,
-    fi: *const fuse_file_info,
+    fi: *mut fuse_file_info,
 ) -> c_int {
     let res = if fi.is_null() {
         let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
@@ -130,11 +117,11 @@ pub unsafe extern "C" fn do_chown(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_truncate(
     path: *const c_char,
     size: off_t,
-    fi: *const fuse_file_info,
+    fi: *mut fuse_file_info,
 ) -> c_int {
     let res = if fi.is_null() {
         let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
@@ -148,13 +135,13 @@ pub unsafe extern "C" fn do_truncate(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_write(
     path: *const c_char,
     buf: *const c_uchar,
     size: usize,
     offset: off_t,
-    fi: *const fuse_file_info,
+    fi: *mut fuse_file_info,
 ) -> c_int {
     let res = if fi.is_null() {
         let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
@@ -169,13 +156,13 @@ pub unsafe extern "C" fn do_write(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_fallocate(
     path: *const c_char,
     mode: c_int,
     offset: off_t,
     length: off_t,
-    fi: *const fuse_file_info,
+    fi: *mut fuse_file_info,
 ) -> c_int {
     let res = if fi.is_null() {
         let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
@@ -191,7 +178,7 @@ pub unsafe extern "C" fn do_fallocate(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_setxattr(
     path: *const c_char,
     name: *const c_char,
@@ -209,7 +196,7 @@ pub unsafe extern "C" fn do_setxattr(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_removexattr(path: *const c_char, name: *const c_char) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_removexattr(real_path.as_ptr(), name);
@@ -219,7 +206,7 @@ pub unsafe extern "C" fn do_removexattr(path: *const c_char, name: *const c_char
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_create(
     path: *const c_char,
     mode: mode_t,
@@ -239,11 +226,11 @@ pub unsafe extern "C" fn do_create(
     }));
     res
 }
-#[no_mangle]
+
 pub unsafe extern "C" fn do_utimens(
     path: *const c_char,
     ts: *const timespec,
-    fi: *const fuse_file_info,
+    fi: *mut fuse_file_info,
 ) -> c_int {
     let res = if fi.is_null() {
         let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);

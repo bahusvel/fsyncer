@@ -1,7 +1,5 @@
 use common::*;
-use encoded::*;
 use libc::*;
-use ops::*;
 
 pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
     match call {

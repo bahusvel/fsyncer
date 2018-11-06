@@ -1,7 +1,9 @@
+mod dispatch;
+
+use self::dispatch::dispatch;
 use bincode::deserialize;
 use clap::ArgMatches;
 use common::*;
-use dispatch::dispatch;
 use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
 use dssc::Compressor;

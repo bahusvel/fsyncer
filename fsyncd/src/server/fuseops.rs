@@ -1,12 +1,15 @@
+#![allow(non_camel_case_types)]
+
 use libc::*;
 
 #[repr(C)]
 pub struct fuse_file_info {
-    flags: c_int,
-    fuse_flags: c_uint,
-    fh: uint64_t,
-    lock_owneder: uint64_t,
-    poll_events: uint32_t,
+    pub flags: c_int,
+    pub fuse_flags: c_uint,
+    pub pad: c_uint, // fuse developers are retards
+    pub fh: uint64_t,
+    pub lock_owner: uint64_t,
+    pub poll_events: uint32_t,
 }
 
 pub type fuse_readdir_flags = u32;
@@ -89,7 +92,7 @@ pub struct fuse_config {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct fuse_operations {
     pub getattr: Option<
         unsafe extern "C" fn(arg1: *const c_char, arg2: *mut stat, fi: *mut fuse_file_info)
@@ -134,7 +137,7 @@ pub struct fuse_operations {
     pub write: Option<
         unsafe extern "C" fn(
             arg1: *const c_char,
-            arg2: *const c_char,
+            arg2: *const c_uchar,
             arg3: usize,
             arg4: off_t,
             arg5: *mut fuse_file_info,
@@ -152,7 +155,7 @@ pub struct fuse_operations {
         unsafe extern "C" fn(
             arg1: *const c_char,
             arg2: *const c_char,
-            arg3: *const c_char,
+            arg3: *const c_uchar,
             arg4: usize,
             arg5: c_int,
         ) -> c_int,
@@ -256,3 +259,26 @@ pub struct fuse_operations {
         ) -> c_int,
     >,
 }
+
+/*
+impl Default for fuse_operations {
+    fn default() -> Self {
+        fuse_operations {
+            read_buf: None,
+            fallocate: None,
+            flock: None,
+            write_buf: None,
+            poll: None,
+            ioctl: None,
+            bmap: None,
+            utimens: None,
+            access: None,
+            chmod: None,
+            chown: None,
+            create: None,
+            destroy: None,
+            flush: None,
+        }
+    }
+}
+*/

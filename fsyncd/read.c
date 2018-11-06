@@ -1,7 +1,33 @@
-#include "fsyncer.h"
-#include <stdlib.h>
-
+#define HAVE_UTIMENSAT 1
+#define HAVE_SETXATTR 1
+#define HAVE_POSIX_FALLOCATE 1
+#define HAVE_FSTATAT 1
 #define MAX_PATH_SIZE 4096
+#define FUSE_USE_VERSION 31
+
+#ifdef linux
+/* For pread()/pwrite()/utimensat() */
+#define _XOPEN_SOURCE 700
+#endif
+
+#include <fuse.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
+#include <unistd.h>
+
+#include <sys/xattr.h>
+
+extern char *server_path;
+
 
 static int fake_root(char *dest, const char *root_path, const char *path) {
 	if ((strlen(root_path) + strlen(path)) > MAX_PATH_SIZE) {
@@ -289,7 +315,31 @@ static int xmp_listxattr(const char *path, char *list, size_t size) {
 }
 #endif
 
-void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg);
+void *xmp_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
+	(void)conn;
+	cfg->use_ino = 1;
+	// NOTE this makes path NULL to parameters where fi->fh exists. This is evil
+	// for the current case of replication. But in future when this is properly
+	// handled it can improve performance.
+	// refer to
+	// https://libfuse.github.io/doxygen/structfuse__config.html#adc93fd1ac03d7f016d6b0bfab77f3863
+	// cfg->nullpath_ok = 1;
+
+	/* Pick up changes from lower filesystem right away. This is
+	   also necessary for better hardlink support. When the kernel
+	   calls the unlink() handler, it does not know the inode of
+	   the to-be-removed entry and can therefore not invalidate
+	   the cache of the associated inode - resulting in an
+	   incorrect st_nlink value being reported for any remaining
+	   hardlinks to this inode. */
+	// cfg->entry_timeout = 0;
+	// cfg->attr_timeout = 0;
+	// cfg->negative_timeout = 0;
+	cfg->auto_cache = 1;
+	conn->max_write = 32 * 1024;
+
+	return NULL;
+}
 
 void gen_read_ops(struct fuse_operations *xmp_oper) {
 	xmp_oper->init = xmp_init;

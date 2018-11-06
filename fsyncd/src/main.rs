@@ -19,12 +19,7 @@ extern crate zstd;
 
 mod client;
 mod common;
-mod dispatch;
-mod encoded;
-mod fuseops;
-mod ops;
 mod server;
-mod write;
 
 use std::process::exit;
 
@@ -33,7 +28,6 @@ use client::client_main;
 use server::{display_fuse_help, server_main};
 
 pub use server::server_path;
-pub use write::*;
 
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
