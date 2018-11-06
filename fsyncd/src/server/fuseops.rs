@@ -259,26 +259,3 @@ pub struct fuse_operations {
         ) -> c_int,
     >,
 }
-
-/*
-impl Default for fuse_operations {
-    fn default() -> Self {
-        fuse_operations {
-            read_buf: None,
-            fallocate: None,
-            flock: None,
-            write_buf: None,
-            poll: None,
-            ioctl: None,
-            bmap: None,
-            utimens: None,
-            access: None,
-            chmod: None,
-            chown: None,
-            create: None,
-            destroy: None,
-            flush: None,
-        }
-    }
-}
-*/

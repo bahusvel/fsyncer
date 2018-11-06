@@ -1,5 +1,6 @@
 use libc::*;
 use server::fuseops::fuse_operations;
+use server::read::*;
 use server::write::*;
 use std::mem::size_of;
 use std::ptr;
@@ -14,7 +15,6 @@ extern "C" {
         op_size: size_t,
         private_data: *const c_void,
     ) -> c_int;
-    fn gen_read_ops(xmp_oper: *mut fuse_operations);
 }
 
 pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
@@ -36,8 +36,23 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     ops.fallocate = Some(do_fallocate);
     ops.setxattr = Some(do_setxattr);
     ops.removexattr = Some(do_removexattr);
-
-    gen_read_ops(&mut ops as *mut _);
+    // Read ops
+    ops.init = Some(xmp_init);
+    ops.getattr = Some(xmp_getattr);
+    ops.access = Some(xmp_access);
+    ops.readlink = Some(xmp_readlink);
+    ops.opendir = Some(xmp_opendir);
+    ops.readdir = Some(xmp_readdir);
+    ops.releasedir = Some(xmp_releasedir);
+    ops.open = Some(xmp_open);
+    ops.read = Some(xmp_read);
+    ops.read_buf = Some(xmp_read_buf);
+    ops.statfs = Some(xmp_statfs);
+    ops.flush = Some(xmp_flush);
+    ops.release = Some(xmp_release);
+    ops.fsync = Some(xmp_fsync);
+    ops.getxattr = Some(xmp_getxattr);
+    ops.listxattr = Some(xmp_listxattr);
 
     return fuse_main_real(
         argc,

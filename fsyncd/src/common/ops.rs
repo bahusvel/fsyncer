@@ -1,7 +1,7 @@
 use libc::*;
 
 #[inline]
-fn neg_errno() -> i32 {
+pub fn neg_errno() -> i32 {
     use errno::errno;
     let errno: i32 = errno().into();
     -errno

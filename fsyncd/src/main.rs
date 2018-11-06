@@ -27,8 +27,6 @@ use clap::{App, Arg, ArgGroup, ErrorKind};
 use client::client_main;
 use server::{display_fuse_help, server_main};
 
-pub use server::server_path;
-
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
         .version("0.1")

@@ -1,5 +1,6 @@
 mod fusemain;
 mod fuseops;
+mod read;
 mod write;
 
 use self::fusemain::fuse_main;
@@ -23,15 +24,10 @@ use std::net::{TcpListener, TcpStream};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::ptr::null;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use zstd;
-
-#[no_mangle]
-#[allow(non_upper_case_globals)]
-pub static mut server_path: *const c_char = null();
 
 pub static mut SERVER_PATH_RUST: String = String::new();
 
@@ -335,10 +331,7 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
 pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let (mount_path, backing_store) = figure_out_paths(&matches)?;
     println!("{:?}, {:?}", mount_path, backing_store);
-
-    let c_dst = CString::new(backing_store.to_str().unwrap()).unwrap();
     unsafe {
-        server_path = c_dst.into_raw();
         SERVER_PATH_RUST = String::from(backing_store.to_str().unwrap());
     }
 
