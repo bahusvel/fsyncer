@@ -1,5 +1,11 @@
-use errno::errno;
 use libc::*;
+
+#[inline]
+fn neg_errno() -> i32 {
+    use errno::errno;
+    let errno: i32 = errno().into();
+    -errno
+}
 
 pub unsafe fn xmp_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
     let res = if mode & S_IFIFO == S_IFIFO {
@@ -8,31 +14,31 @@ pub unsafe fn xmp_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int
         mknod(path, mode, rdev)
     };
     if res == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_mkdir(path: *const c_char, mode: mode_t) -> c_int {
     if mkdir(path, mode) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_unlink(path: *const c_char) -> c_int {
     if unlink(path) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_rmdir(path: *const c_char) -> c_int {
     if rmdir(path) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_symlink(from: *const c_char, to: *const c_char) -> c_int {
     if symlink(from, to) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
@@ -41,13 +47,13 @@ pub unsafe fn xmp_rename(from: *const c_char, to: *const c_char, flags: c_uint) 
         return -EINVAL;
     }
     if rename(from, to) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_link(from: *const c_char, to: *const c_char) -> c_int {
     if link(from, to) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
@@ -58,7 +64,7 @@ pub unsafe fn xmp_chmod(path: *const c_char, mode: mode_t, fd: c_int) -> c_int {
         chmod(path, mode)
     };
     if res == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
@@ -69,7 +75,7 @@ pub unsafe fn xmp_chown(path: *const c_char, uid: uid_t, gid: gid_t, fd: c_int) 
         chown(path, uid, gid)
     };
     if res == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
@@ -80,7 +86,7 @@ pub unsafe fn xmp_truncate(path: *const c_char, size: off_t, fd: c_int) -> c_int
         truncate64(path, size)
     };
     if res == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
@@ -91,19 +97,25 @@ pub unsafe fn xmp_write(
     offset: off_t,
     mut fd: c_int,
 ) -> c_int {
+    // println!(
+    // "Doing write {:?} {:?} {} {} {}",
+    // path, buf, size, offset, fd
+    // );
     let mut opened = false;
-    if path.is_null() {
+    if !path.is_null() {
         fd = open(path, O_WRONLY);
         if fd == -1 {
-            return errno().into();
+            return neg_errno();
         }
         opened = true;
     }
 
     let res = pwrite(fd, buf as *const c_void, size, offset);
     if res == -1 {
-        let errno = errno().into();
-        close(fd);
+        let errno = neg_errno();
+        if opened {
+            close(fd);
+        }
         return errno;
     }
 
@@ -117,7 +129,7 @@ pub unsafe fn xmp_fallocate(
     mode: c_int,
     offset: off_t,
     length: off_t,
-    fd: c_int,
+    mut fd: c_int,
 ) -> c_int {
     let mut opened = false;
 
@@ -125,10 +137,10 @@ pub unsafe fn xmp_fallocate(
         return -EOPNOTSUPP;
     }
 
-    if path.is_null() {
+    if !path.is_null() {
         fd = open(path, O_WRONLY);
         if fd == -1 {
-            return errno().into();
+            return neg_errno();
         }
         opened = true;
     }
@@ -147,20 +159,20 @@ pub unsafe fn xmp_setxattr(
     flags: c_int,
 ) -> c_int {
     if lsetxattr(path, name, value as *const c_void, size, flags) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_removexattr(path: *const c_char, name: *const c_char) -> c_int {
     if lremovexattr(path, name) == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
 pub unsafe fn xmp_create(path: *const c_char, mode: mode_t, fd: *mut c_int, flags: c_int) -> c_int {
     *fd = open(path, flags, mode);
     if *fd == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }
@@ -171,7 +183,7 @@ pub unsafe fn xmp_utimens(path: *const c_char, ts: *const timespec, fd: c_int) -
         utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW)
     };
     if res == -1 {
-        return errno().into();
+        return neg_errno();
     }
     0
 }

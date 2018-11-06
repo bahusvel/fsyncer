@@ -1,6 +1,8 @@
 #ifndef _FSYNCER_H_
 #define _FSYNCER_H_
 
+#include "config.h"
+
 #define FUSE_USE_VERSION 31
 
 #ifdef linux

@@ -7,6 +7,7 @@ extern crate bitflags;
 extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
+extern crate bincode;
 extern crate clap;
 extern crate dssc;
 extern crate errno;
@@ -20,6 +21,7 @@ mod client;
 mod common;
 mod dispatch;
 mod encoded;
+mod fuseops;
 mod ops;
 mod server;
 mod write;

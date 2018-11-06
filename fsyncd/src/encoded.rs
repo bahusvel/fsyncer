@@ -6,7 +6,7 @@ use std::ffi::CString;
 
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
-        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
         pub struct $name {
             $(
                 pub $field: $ft,
@@ -17,7 +17,7 @@ macro_rules! encoded_syscall {
 
 macro_rules! path_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
-        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
         pub struct $name {
             pub path: CString,
             $(
@@ -87,7 +87,7 @@ path_syscall!(create {
     flags: int32_t
 });
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct enc_timespec {
     pub tv_sec: int64_t,
     pub tv_nsec: int64_t,

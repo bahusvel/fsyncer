@@ -1,10 +1,10 @@
+use bincode::deserialize;
 use clap::ArgMatches;
 use common::*;
 use dispatch::dispatch;
 use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
 use dssc::Compressor;
-use libc::c_void;
 use lz4;
 use net2::TcpStreamExt;
 use std::io;
@@ -82,32 +82,43 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
 
     pub fn process_ops(&mut self) -> Result<(), io::Error> {
         let mut rcv_buf = [0; 33 * 1024];
+        const MSG_SIZE: usize = size_of::<u32>();
         loop {
-            self.read.read_exact(&mut rcv_buf[..size_of::<op_msg>()])?;
-            let msg = unsafe { &mut *(rcv_buf.as_ptr() as *mut op_msg) };
+            self.read.read_exact(&mut rcv_buf[..MSG_SIZE])?;
+            let length = unsafe { *(rcv_buf.as_ptr() as *const u32) } as usize;
+
+            assert!(MSG_SIZE + length <= rcv_buf.len());
+
             self.read
-                .read_exact(&mut rcv_buf[size_of::<op_msg>()..msg.op_length as usize])?;
+                .read_exact(&mut rcv_buf[MSG_SIZE..MSG_SIZE + length])?;
 
-            if let Some(ref mut rt_comp) = self.rt_comp {
-                //FIXME also inefficient
-                let mut dbuf = Vec::new();
-                rt_comp.decode(
-                    &rcv_buf[size_of::<op_msg>()..msg.op_length as usize],
-                    &mut dbuf,
-                );
-                rcv_buf[size_of::<op_msg>()..size_of::<op_msg>() + dbuf.len()]
-                    .copy_from_slice(&dbuf);
-                //msg.op_length = (size_of::<op_msg>() + dbuf.len()) as u32;
-            }
+            let mut dbuf = Vec::new();
+            let msgbuf = if let Some(ref mut rt_comp) = self.rt_comp {
+                rt_comp.decode(&rcv_buf[size_of::<u32>()..MSG_SIZE + length], &mut dbuf);
+                &dbuf[..]
+            } else {
+                &rcv_buf[MSG_SIZE..MSG_SIZE + length]
+            };
 
-            if self.mode == ClientMode::MODE_SEMISYNC {
-                self.write_ack(0, msg.tid)?;
-            }
+            match deserialize(msgbuf) {
+                Ok(FsyncerMsg::SyncOp(call, tid)) => {
+                    if self.mode == ClientMode::MODE_SEMISYNC {
+                        self.write_ack(0, tid)?;
+                    }
 
-            let res = (self.op_callback)(rcv_buf.as_ptr() as *const c_void);
+                    let res = (self.op_callback)(call);
 
-            if self.mode == ClientMode::MODE_SYNC {
-                self.write_ack(res, msg.tid)?;
+                    if self.mode == ClientMode::MODE_SYNC {
+                        self.write_ack(res, tid)?;
+                    }
+                }
+                Ok(FsyncerMsg::AsyncOp(call)) => {
+                    // TODO check return status
+                    let _res = (self.op_callback)(call);
+                }
+                Ok(FsyncerMsg::NOP) => {} // Nothing, safe to ingore
+                Err(err) => println!("Failed to read message from client {}", err),
+                msg => println!("Unexpected message for current client state {:?}", msg),
             }
         }
     }
@@ -185,7 +196,7 @@ pub fn client_main(matches: ArgMatches) {
         dsthash,
         comp,
         buffer_size,
-        |call| dispatch(call, client_path),
+        |call| unsafe { dispatch(call, client_path) },
     ).expect("Failed to connect to fsyncer");
 
     println!(

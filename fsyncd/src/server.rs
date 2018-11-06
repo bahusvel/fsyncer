@@ -1,11 +1,12 @@
 extern crate futures;
 
+use bincode::{serialize, serialized_size};
 use clap::ArgMatches;
 use common::*;
 use dssc::chunkmap::ChunkMap;
 use dssc::other::ZstdBlock;
 use dssc::Compressor;
-use libc::{c_char, c_void, free};
+use libc::c_char;
 use lz4;
 use net2::TcpStreamExt;
 use std;
@@ -20,41 +21,27 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr::null;
-use std::slice;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use zstd;
 
-const NOP_MSG: op_msg = op_msg {
-    op_type: op_type::NOP,
-    op_length: size_of::<op_msg>() as u32,
-    tid: 0,
-};
-
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
 extern "C" {
-    fn fsyncer_fuse_main(
-        argc: i32,
-        argv: *const *const c_char,
-        sop: extern "C" fn(*const c_void, i32) -> i32,
-    ) -> i32;
-    fn encode_create(path: *const c_char, mode: u32, flags: u32) -> *const c_void;
-    fn encode_unlink(path: *const c_char) -> *const c_void;
+    fn fsyncer_fuse_main(argc: i32, argv: *const *const c_char) -> i32;
 }
 
 #[no_mangle]
 #[allow(non_upper_case_globals)]
 pub static mut server_path: *const c_char = null();
 
-pub static mut server_path_rust: String = String::new();
+pub static mut SERVER_PATH_RUST: String = String::new();
 
 lazy_static! {
     static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
     static ref CORK_VAR: Condvar = Condvar::new();
     static ref CORK: Mutex<bool> = Mutex::new(false);
-    static ref CORK_FILE: CString = CString::new(".fsyncer-corked").unwrap();
 }
 
 #[derive(PartialEq)]
@@ -76,24 +63,14 @@ struct Client {
     net: Arc<Mutex<ClientNetwork>>,
 }
 
-struct Msg {
-    tid: thread::Thread,
-    op_type: op_type,
-    data: Vec<u8>,
-}
-
 impl Client {
     fn cork(&mut self) -> Result<(), io::Error> {
-        let msg = unsafe { encode_create(CORK_FILE.as_ptr(), 0o755, 0) };
-        let ret = self.send_msg(msg);
-        unsafe { free(msg as *mut c_void) };
+        let _ret = self.send_msg(FsyncerMsg::Cork);
         self.flush()
     }
 
     fn uncork(&mut self) -> Result<(), io::Error> {
-        let msg = unsafe { encode_unlink(CORK_FILE.as_ptr()) };
-        let ret = self.send_msg(msg);
-        unsafe { free(msg as *mut c_void) };
+        let _ret = self.send_msg(FsyncerMsg::Uncork);
         self.flush()
     }
 
@@ -111,49 +88,45 @@ impl Client {
 
     fn flush(&self) -> Result<(), io::Error> {
         //HACK: Without the nop message compression algorithms dont flush immediately.
-        self.send_msg(&NOP_MSG as *const op_msg as *const c_void)?;
+        self.send_msg(FsyncerMsg::NOP)?;
         self.net.lock().unwrap().write.flush()
     }
 
-    fn send_msg(&self, msg_data: *const c_void) -> Result<(), io::Error> {
-        let mut header = unsafe { *(msg_data as *const op_msg) };
-        let mut nbuf = Vec::with_capacity(0);
-        let mut buf =
-            unsafe { slice::from_raw_parts(msg_data as *const u8, header.op_length as usize) };
-        buf = &buf[size_of::<op_msg>()..];
-        let current_thread = thread::current();
+    fn send_msg(&self, msg_data: FsyncerMsg) -> Result<(), io::Error> {
+        let mut size = serialized_size(&msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
 
-        header.tid = if self.mode == ClientMode::MODE_SEMISYNC || self.mode == ClientMode::MODE_SYNC
-        {
-            unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) }
-        } else {
-            0
-        };
+        let serbuf = serialize(&msg_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         let mut net = self.net.lock().unwrap();
+        let mut nbuf = Vec::new();
 
-        if let Some(ref mut rt_comp) = net.rt_comp {
-            rt_comp.encode(buf, &mut nbuf);
-            header.op_length = (size_of::<op_msg>() + nbuf.len()) as u32;
-            buf = &nbuf[..];
-        }
-
-        let hbuf = unsafe {
-            slice::from_raw_parts(&header as *const op_msg as *const u8, size_of::<op_msg>())
+        let buf = if let Some(ref mut rt_comp) = net.rt_comp {
+            rt_comp.encode(&serbuf[..], &mut nbuf);
+            size = nbuf.len();
+            &nbuf[..]
+        } else {
+            &serbuf[..]
         };
+
+        let hbuf = unsafe { transmute::<u32, [u8; size_of::<u32>()]>(size as u32) };
 
         //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
 
-        net.write.write_all(&hbuf)?;
+        // FIXME this is bad in synchronous mode (it will send the length in one packet then the buffer in another)
+        net.write.write_all(&hbuf[..])?;
         net.write.write_all(&buf)?;
 
-        if self.mode == ClientMode::MODE_SEMISYNC || self.mode == ClientMode::MODE_SYNC {
-            let current_thread = thread::current();
-            net.parked.insert(header.tid, current_thread);
-            drop(net);
-            thread::park();
-        }
         Ok(())
+    }
+    fn park(&self, current_thread: thread::Thread) {
+        let mut net = self.net.lock().unwrap();
+        net.parked.insert(
+            unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) },
+            current_thread,
+        );
+        drop(net);
+        thread::park();
     }
 }
 
@@ -237,18 +210,27 @@ fn flush_thread() {
     }
 }
 
-pub fn handle_op(call: VFSCall) {}
-
-#[no_mangle]
-pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
+pub fn handle_op(call: VFSCall) {
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
-    //let mut errors = Vec::with_capacity(0);
 
     for client in list.deref() {
-        if client.send_msg(msg_data).is_err() {
-            println!("Failed sending message to client");
+        let res =
+            if client.mode == ClientMode::MODE_SYNC || client.mode == ClientMode::MODE_SEMISYNC {
+                let current_thread = thread::current();
+                let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
+                let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid));
+                if res.is_ok() {
+                    client.park(current_thread);
+                }
+                res
+            } else {
+                client.send_msg(FsyncerMsg::AsyncOp(call.clone()))
+            };
+        if res.is_err() {
+            println!("Failed sending message to client {}", res.unwrap_err());
         }
     }
+
     /*
     let mut corked = CORK.lock().unwrap();
     if *corked {
@@ -271,9 +253,6 @@ pub extern "C" fn send_op(msg_data: *const c_void, ret_code: i32) -> i32 {
         }
     }
     */
-
-    unsafe { free(msg_data as *mut c_void) };
-    ret_code
 }
 
 pub fn display_fuse_help() {
@@ -288,7 +267,7 @@ pub fn display_fuse_help() {
         .map(|arg| arg.as_ptr())
         .collect::<Vec<*const c_char>>();
 
-    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr(), send_op) };
+    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr()) };
 }
 
 fn check_mount(path: &str) -> Result<bool, io::Error> {
@@ -362,6 +341,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let c_dst = CString::new(backing_store.to_str().unwrap()).unwrap();
     unsafe {
         server_path = c_dst.into_raw();
+        SERVER_PATH_RUST = String::from(backing_store.to_str().unwrap());
     }
 
     // FIXME use net2::TcpBuilder to set SO_REUSEADDR
@@ -405,7 +385,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         .map(|arg| arg.as_ptr())
         .collect::<Vec<*const c_char>>();
 
-    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr(), send_op) };
+    unsafe { fsyncer_fuse_main(c_args.len() as i32, c_args.as_ptr()) };
 
     Ok(())
 }

@@ -26,7 +26,5 @@ fn main() {
         .flag("-Wall")
         .file("main.c")
         .file("read.c")
-        .file("write.c")
-        .file("fsops.c")
         .compile("fsyncer");
 }

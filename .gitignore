@@ -4,3 +4,4 @@ test_dst
 build
 *target
 .fsyncer-*
+fsyncdef.*

@@ -6,30 +6,18 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use walkdir::WalkDir;
 
-#[repr(C)]
-#[derive(PartialEq, Clone, Copy)]
-#[allow(dead_code)]
-pub enum op_type {
-    MKNOD,
-    MKDIR,
-    UNLINK,
-    RMDIR,
-    SYMLINK,
-    RENAME,
-    LINK,
-    CHMOD,
-    CHOWN,
-    TRUNCATE,
-    WRITE,
-    FALLOCATE,
-    SETXATTR,
-    REMOVEXATTR,
-    CREATE,
-    UTIMENS,
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum FsyncerMsg {
+    InitMsg(InitMsg),
+    AsyncOp(VFSCall),
+    SyncOp(VFSCall, u64),
+    Ack(AckMsg),
+    Cork,
+    Uncork,
     NOP,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Serialize, Deserialize, Debug)]
 #[allow(non_camel_case_types)]
 pub enum ClientMode {
     MODE_ASYNC,
@@ -39,26 +27,21 @@ pub enum ClientMode {
     MODE_LISTENER,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct op_msg {
-    pub op_length: u32,
-    pub op_type: op_type,
-    pub tid: u64,
-}
-
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct InitMsg {
     pub mode: ClientMode,
     pub dsthash: u64,
     pub compress: CompMode,
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct AckMsg {
     pub retcode: i32,
     pub tid: u64,
 }
 
 bitflags! {
+    #[derive(Serialize, Deserialize)]
     pub struct CompMode: u32 {
         const RT_DSSC_ZLIB      = 0b00001;
         const RT_DSSC_CHUNKED   = 0b00010;
@@ -91,46 +74,9 @@ pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
     Ok(hasher.finish())
 }
 
-use libc::*;
-extern "C" {
-    pub fn xmp_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int;
-    pub fn xmp_mkdir(path: *const c_char, mode: mode_t) -> c_int;
-    pub fn xmp_unlink(path: *const c_char) -> c_int;
-    pub fn xmp_rmdir(path: *const c_char) -> c_int;
-    pub fn xmp_symlink(from: *const c_char, to: *const c_char) -> c_int;
-    pub fn xmp_rename(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int;
-    pub fn xmp_link(from: *const c_char, to: *const c_char) -> c_int;
-    pub fn xmp_chmod(path: *const c_char, mode: mode_t, fd: c_int) -> c_int;
-    pub fn xmp_chown(path: *const c_char, uid: uid_t, gid: gid_t, fd: c_int) -> c_int;
-    pub fn xmp_truncate(path: *const c_char, size: off_t, fd: c_int) -> c_int;
-    pub fn xmp_write(
-        path: *const c_char,
-        buf: *const c_uchar,
-        size: usize,
-        offset: off_t,
-        fd: c_int,
-    ) -> c_int;
-    pub fn xmp_fallocate(
-        path: *const c_char,
-        mode: c_int,
-        offset: off_t,
-        length: off_t,
-        fd: c_int,
-    ) -> c_int;
-    pub fn xmp_setxattr(
-        path: *const c_char,
-        name: *const c_char,
-        value: *const c_uchar,
-        size: usize,
-        flags: c_int,
-    ) -> c_int;
-    pub fn xmp_removexattr(path: *const c_char, name: *const c_char) -> c_int;
-    pub fn xmp_create(path: *const c_char, mode: mode_t, fd: *mut c_int, flags: c_int) -> c_int;
-    pub fn xmp_utimens(path: *const c_char, ts: *const timespec, fd: c_int) -> c_int;
-}
-
 use encoded::*;
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[allow(non_camel_case_types)]
 pub enum VFSCall {
     mknod(mknod),
     mkdir(mkdir),
