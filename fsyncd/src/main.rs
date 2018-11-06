@@ -8,6 +8,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
+extern crate byteorder;
 extern crate clap;
 extern crate dssc;
 extern crate errno;

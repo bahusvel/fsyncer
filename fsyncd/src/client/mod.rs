@@ -2,6 +2,8 @@ mod dispatch;
 
 use self::dispatch::dispatch;
 use bincode::deserialize;
+use bincode::{serialize_into, serialized_size};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use clap::ArgMatches;
 use common::*;
 use dssc::chunkmap::ChunkMap;
@@ -36,10 +38,6 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
 
         stream.set_recv_buffer_size(buffer_size * 1024 * 1024)?;
-
-        if mode == ClientMode::MODE_SYNC || mode == ClientMode::MODE_SEMISYNC {
-            stream.set_nodelay(true)?;
-        }
 
         let init = unsafe {
             transmute::<InitMsg, [u8; size_of::<InitMsg>()]>(InitMsg {
@@ -76,66 +74,58 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
         })
     }
 
-    fn write_ack(&mut self, retcode: i32, tid: u64) -> Result<(), io::Error> {
-        let ack =
-            unsafe { transmute::<AckMsg, [u8; size_of::<AckMsg>()]>(AckMsg { retcode, tid }) };
-        self.write.write_all(&ack)
+    fn send_msg(&mut self, msg_data: FsyncerMsg) -> Result<(), io::Error> {
+        let size = serialized_size(&msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+
+        //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
+        self.write.write_u32::<BigEndian>(size as u32)?;
+        serialize_into(&mut self.write, &msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        self.write.flush()
     }
 
     pub fn process_ops(&mut self) -> Result<(), io::Error> {
         let mut rcv_buf = [0; 33 * 1024];
-        const MSG_SIZE: usize = size_of::<u32>();
         loop {
-            self.read.read_exact(&mut rcv_buf[..MSG_SIZE])?;
-            let length = unsafe { *(rcv_buf.as_ptr() as *const u32) } as usize;
+            let length = self.read.read_u32::<BigEndian>()? as usize;
 
-            assert!(MSG_SIZE + length <= rcv_buf.len());
+            assert!(length <= rcv_buf.len());
 
-            self.read
-                .read_exact(&mut rcv_buf[MSG_SIZE..MSG_SIZE + length])?;
+            self.read.read_exact(&mut rcv_buf[..length])?;
 
             let mut dbuf = Vec::new();
             let msgbuf = if let Some(ref mut rt_comp) = self.rt_comp {
-                rt_comp.decode(&rcv_buf[size_of::<u32>()..MSG_SIZE + length], &mut dbuf);
+                rt_comp.decode(&rcv_buf[size_of::<u32>()..length], &mut dbuf);
                 &dbuf[..]
             } else {
-                &rcv_buf[MSG_SIZE..MSG_SIZE + length]
+                &rcv_buf[..length]
             };
 
             match deserialize(msgbuf) {
                 Ok(FsyncerMsg::SyncOp(call, tid)) => {
                     if self.mode == ClientMode::MODE_SEMISYNC {
-                        self.write_ack(0, tid)?;
+                        self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: 0, tid }))?;
                     }
 
                     let res = (self.op_callback)(call);
 
                     if self.mode == ClientMode::MODE_SYNC {
-                        self.write_ack(res, tid)?;
+                        self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: res, tid }))?;
                     }
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
                     // TODO check return status
                     let _res = (self.op_callback)(call);
                 }
-                Ok(FsyncerMsg::NOP) => {} // Nothing, safe to ingore
+                Ok(FsyncerMsg::Cork(tid)) => self.send_msg(FsyncerMsg::AckCork(tid))?,
+                Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} // Nothing, safe to ingore
                 Err(err) => println!("Failed to read message from client {}", err),
                 msg => println!("Unexpected message for current client state {:?}", msg),
             }
         }
     }
 }
-
-/*
-fn do_call_wrapper(message: *const c_void) -> i32 {
-    //println!("Received call");
-    let res = unsafe { do_call(message) };
-    if res < 0 {
-        unsafe { perror(CString::new("Error in replay").unwrap().as_ptr()) };
-    }
-    res
-}
-*/
 
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");

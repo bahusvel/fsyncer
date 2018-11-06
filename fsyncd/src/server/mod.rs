@@ -4,7 +4,8 @@ mod read;
 mod write;
 
 use self::fusemain::fuse_main;
-use bincode::{serialize, serialized_size};
+use bincode::{deserialize_from, serialize, serialized_size};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use clap::ArgMatches;
 use common::*;
 use dssc::chunkmap::ChunkMap;
@@ -19,7 +20,7 @@ use std::ffi::CString;
 use std::fs;
 use std::io;
 use std::io::{Read, Write};
-use std::mem::{size_of, transmute};
+use std::mem::transmute;
 use std::net::{TcpListener, TcpStream};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -57,30 +58,44 @@ struct Client {
 }
 
 impl Client {
-    fn cork(&mut self) -> Result<(), io::Error> {
-        let _ret = self.send_msg(FsyncerMsg::Cork);
-        self.flush()
+    // Send a cork to this client, and block until it acknowledges
+    fn cork(&self) -> Result<(), io::Error> {
+        let current_thread = thread::current();
+        let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
+        self.send_msg(FsyncerMsg::Cork(tid))?;
+        self.flush()?;
+        self.park();
+        Ok(())
     }
 
-    fn uncork(&mut self) -> Result<(), io::Error> {
-        let _ret = self.send_msg(FsyncerMsg::Uncork);
-        self.flush()
+    fn uncork(&self) -> Result<(), io::Error> {
+        self.send_msg(FsyncerMsg::Uncork)
+        // Don't need flush after uncork
+    }
+
+    fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, io::Error> {
+        let _size = read.read_u32::<BigEndian>()?;
+        // TODO use size to restrict reading
+        Ok(deserialize_from(read).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
     }
 
     fn reader<R: Read>(mut read: R, net: Arc<Mutex<ClientNetwork>>) {
-        let mut ack_buf = [0; size_of::<AckMsg>()];
         let net = net.deref();
         loop {
-            read.read_exact(&mut ack_buf)
-                .expect("Failed to read message from client");
-            let ack = unsafe { transmute::<[u8; size_of::<AckMsg>()], AckMsg>(ack_buf) };
-            let mut netlock = net.lock().unwrap();
-            netlock.parked.remove(&ack.tid).map(|t| t.unpark());
+            match Client::read_msg(&mut read) {
+                Ok(FsyncerMsg::AckCork(tid)) | Ok(FsyncerMsg::Ack(AckMsg { retcode: _, tid })) => {
+                    let mut netlock = net.lock().unwrap();
+                    netlock.parked.remove(&tid).map(|t| t.unpark());
+                }
+                Err(e) => println!("Failed to read from client {}", e),
+                msg => println!("Unexpected message from client {:?}", msg),
+            }
         }
     }
 
     fn flush(&self) -> Result<(), io::Error> {
         //HACK: Without the nop message compression algorithms dont flush immediately.
+        // TODO atleast check for compression mode
         self.send_msg(FsyncerMsg::NOP)?;
         self.net.lock().unwrap().write.flush()
     }
@@ -102,18 +117,18 @@ impl Client {
             &serbuf[..]
         };
 
-        let hbuf = unsafe { transmute::<u32, [u8; size_of::<u32>()]>(size as u32) };
-
         //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
 
-        // FIXME this is bad in synchronous mode (it will send the length in one packet then the buffer in another)
-        net.write.write_all(&hbuf[..])?;
+        net.write.write_u32::<BigEndian>(size as u32)?;
         net.write.write_all(&buf)?;
-
+        if self.mode == ClientMode::MODE_SEMISYNC || self.mode == ClientMode::MODE_SYNC {
+            net.write.flush()?;
+        }
         Ok(())
     }
 
-    fn park(&self, current_thread: thread::Thread) {
+    fn park(&self) {
+        let current_thread = thread::current();
         let mut net = self.net.lock().unwrap();
         net.parked.insert(
             unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) },
@@ -131,14 +146,19 @@ fn handle_client(
     buffer_size: usize,
 ) -> Result<(), io::Error> {
     stream.set_send_buffer_size(buffer_size * 1024 * 1024)?;
-    let mut init_buf = [0; size_of::<InitMsg>()];
-    stream.read_exact(&mut init_buf)?;
 
     println!("Calculating source hash...");
     let srchash = hash_metadata(storage_path.to_str().unwrap()).expect("Hash check failed");
     println!("Source hash is {:x}", srchash);
 
-    let init = unsafe { transmute::<[u8; size_of::<InitMsg>()], InitMsg>(init_buf) };
+    let init = match Client::read_msg(&mut stream) {
+        Ok(FsyncerMsg::InitMsg(msg)) => msg,
+        Err(e) => panic!("Failed to get init message from client {}", e),
+        otherwise => panic!(
+            "Expected init message from client, received {:?}",
+            otherwise
+        ),
+    };
 
     if (!dontcheck) && init.dsthash != srchash {
         println!(
@@ -148,10 +168,6 @@ fn handle_client(
         println!("Dropping this client!");
         drop(stream);
         return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
-    }
-
-    if init.mode == ClientMode::MODE_SYNC || init.mode == ClientMode::MODE_SEMISYNC {
-        stream.set_nodelay(true)?;
     }
 
     let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
@@ -204,9 +220,39 @@ fn flush_thread() {
     }
 }
 
-pub fn handle_op(call: VFSCall) {
+fn cork_server() {
+    // Cork the server
+    *CORK.lock().unwrap() = true;
+    // Cork the individual clients
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
+    for client in list.deref() {
+        if client.cork().is_err() {
+            println!("Failed to cork client");
+        }
+    }
+}
 
+fn uncork_server() {
+    let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
+    for client in list.deref() {
+        if client.uncork().is_err() {
+            println!("Failed to uncork client");
+        }
+    }
+    drop(list);
+    *CORK.lock().unwrap() = false;
+    CORK_VAR.notify_all();
+}
+
+pub fn handle_op(call: VFSCall) {
+    let mut corked = CORK.lock().unwrap();
+    if *corked {
+        while *corked {
+            corked = CORK_VAR.wait(corked).unwrap();
+        }
+    }
+
+    let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
         let res =
             if client.mode == ClientMode::MODE_SYNC || client.mode == ClientMode::MODE_SEMISYNC {
@@ -214,7 +260,7 @@ pub fn handle_op(call: VFSCall) {
                 let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
                 let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid));
                 if res.is_ok() {
-                    client.park(current_thread);
+                    client.park();
                 }
                 res
             } else {
@@ -224,29 +270,7 @@ pub fn handle_op(call: VFSCall) {
             println!("Failed sending message to client {}", res.unwrap_err());
         }
     }
-
-    /*
-    let mut corked = CORK.lock().unwrap();
-    if *corked {
-        for client in list.into_iter() {
-            if client.cork().is_err() || client.write.flush().is_err() {
-                println!("Failed corking client");
-                client.status = ClientStatus::DEAD;
-            }
-        }
-
-        while *corked {
-            corked = CORK_VAR.wait(corked).unwrap();
-        }
-
-        for client in list.into_iter().filter(|c| c.status != ClientStatus::DEAD) {
-            if client.uncork().is_err() {
-                println!("Failed uncorking client");
-                client.status = ClientStatus::DEAD;
-            }
-        }
-    }
-    */
+    /* Cork lock is held until here, it is used to make sure that any pending operations get sent over the network, the flush operation will force them to the other side */
 }
 
 pub fn display_fuse_help() {

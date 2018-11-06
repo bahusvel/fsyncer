@@ -18,7 +18,8 @@ pub enum FsyncerMsg {
     AsyncOp(VFSCall),
     SyncOp(VFSCall, u64),
     Ack(AckMsg),
-    Cork,
+    Cork(u64),
+    AckCork(u64),
     Uncork,
     NOP,
 }

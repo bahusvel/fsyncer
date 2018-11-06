@@ -18,6 +18,7 @@ bincode = "1.0.1"
 serde = "1.0.80"
 serde_derive = "1.0.80"
 errno = "0.2.4"
+byteorder = "1.2.7"
 
 [build-dependencies]
 cc = "1.0"
