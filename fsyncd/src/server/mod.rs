@@ -47,13 +47,41 @@ enum ClientStatus {
 struct ClientNetwork {
     write: Box<Write + Send>,
     rt_comp: Option<Box<Compressor>>,
-    parked: HashMap<u64, thread::Thread>,
+    parked: HashMap<u64, Arc<ClientResponse<i32>>>,
     status: ClientStatus,
 }
 
 struct Client {
     mode: ClientMode,
     net: Arc<Mutex<ClientNetwork>>,
+}
+
+struct ClientResponse<T> {
+    data: Mutex<Option<T>>,
+    cvar: Condvar,
+}
+
+impl<T> ClientResponse<T> {
+    pub fn new() -> Self {
+        ClientResponse {
+            data: Mutex::new(None),
+            cvar: Condvar::new(),
+        }
+    }
+    pub fn wait(&self) -> T {
+        let mut lock = self.data.lock().unwrap();
+
+        while lock.is_none() {
+            lock = self.cvar.wait(lock).unwrap();
+        }
+
+        lock.take().unwrap()
+    }
+
+    pub fn notify(&self, data: T) {
+        *self.data.lock().unwrap() = Some(data);
+        self.cvar.notify_one()
+    }
 }
 
 impl Client {
@@ -65,7 +93,7 @@ impl Client {
         self.flush()?;
         // Cannot park on control as it will block its reader thread
         if self.mode != ClientMode::MODE_CONTROL {
-            self.park();
+            self.wait_thread_response();
         }
         Ok(())
     }
@@ -85,9 +113,13 @@ impl Client {
         let net = net.deref();
         loop {
             match Client::read_msg(&mut read) {
-                Ok(FsyncerMsg::AckCork(tid)) | Ok(FsyncerMsg::Ack(AckMsg { retcode: _, tid })) => {
+                Ok(FsyncerMsg::AckCork(tid)) => {
                     let mut netlock = net.lock().unwrap();
-                    netlock.parked.remove(&tid).map(|t| t.unpark());
+                    netlock.parked.get(&tid).map(|t| t.notify(0));
+                }
+                Ok(FsyncerMsg::Ack(AckMsg { retcode: code, tid })) => {
+                    let mut netlock = net.lock().unwrap();
+                    netlock.parked.get(&tid).map(|t| t.notify(code));
                 }
                 Ok(FsyncerMsg::Cork(_)) => cork_server(),
                 Ok(FsyncerMsg::Uncork) => uncork_server(),
@@ -131,15 +163,15 @@ impl Client {
         Ok(())
     }
 
-    fn park(&self) {
-        let current_thread = thread::current();
-        let mut net = self.net.lock().unwrap();
-        net.parked.insert(
-            unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) },
-            current_thread,
-        );
-        drop(net);
-        thread::park();
+    fn wait_thread_response(&self) -> i32 {
+        {
+            let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
+            let mut net = self.net.lock().unwrap();
+            net.parked
+                .entry(tid)
+                .or_insert(Arc::new(ClientResponse::new()))
+                .clone()
+        }.wait()
     }
 }
 
@@ -252,7 +284,7 @@ fn uncork_server() {
     println!("Uncork done");
 }
 
-pub fn handle_op(call: VFSCall) {
+pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
     let mut corked = CORK.lock().unwrap();
     if *corked {
         while *corked {
@@ -264,12 +296,19 @@ pub fn handle_op(call: VFSCall) {
     for client in list.deref() {
         let res = match client.mode {
             ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC => {
-                let current_thread = thread::current();
-                let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
+                let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
                 let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid));
+
                 if res.is_ok() {
-                    client.park();
+                    let client_ret = client.wait_thread_response();
+                    if client.mode == ClientMode::MODE_SYNC && client_ret != ret {
+                        println!(
+                            "Response from client {} does not match server {}",
+                            client_ret, ret
+                        );
+                    }
                 }
+
                 res
             }
             ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone())),
@@ -282,6 +321,7 @@ pub fn handle_op(call: VFSCall) {
         }
     }
     /* Cork lock is held until here, it is used to make sure that any pending operations get sent over the network, the flush operation will force them to the other side */
+    ret
 }
 
 pub fn display_fuse_help() {
