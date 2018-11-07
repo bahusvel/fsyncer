@@ -47,6 +47,7 @@ enum ClientStatus {
 struct ClientNetwork {
     write: Box<Write + Send>,
     rt_comp: Option<Box<Compressor>>,
+    // TODO remvoe this hashmap and use an array
     parked: HashMap<u64, Arc<ClientResponse<i32>>>,
     status: ClientStatus,
 }
@@ -89,8 +90,7 @@ impl Client {
     fn cork(&self) -> Result<(), io::Error> {
         let current_thread = thread::current();
         let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
-        self.send_msg(FsyncerMsg::Cork(tid))?;
-        self.flush()?;
+        self.send_msg(FsyncerMsg::Cork(tid), true)?;
         // Cannot park on control as it will block its reader thread
         if self.mode != ClientMode::MODE_CONTROL {
             self.wait_thread_response();
@@ -99,8 +99,7 @@ impl Client {
     }
 
     fn uncork(&self) -> Result<(), io::Error> {
-        self.send_msg(FsyncerMsg::Uncork)
-        // Don't need flush after uncork
+        self.send_msg(FsyncerMsg::Uncork, false)
     }
 
     fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, io::Error> {
@@ -115,15 +114,27 @@ impl Client {
             match Client::read_msg(&mut read) {
                 Ok(FsyncerMsg::AckCork(tid)) => {
                     let mut netlock = net.lock().unwrap();
-                    netlock.parked.get(&tid).map(|t| t.notify(0));
+                    netlock.parked.get(&tid).map(|t| {
+                        assert!(Arc::strong_count(t) <= 2);
+                        t.notify(0)
+                    });
                 }
                 Ok(FsyncerMsg::Ack(AckMsg { retcode: code, tid })) => {
                     let mut netlock = net.lock().unwrap();
-                    netlock.parked.get(&tid).map(|t| t.notify(code));
+                    netlock.parked.get(&tid).map(|t| {
+                        assert!(Arc::strong_count(t) <= 2);
+                        t.notify(0)
+                    });
                 }
                 Ok(FsyncerMsg::Cork(_)) => cork_server(),
                 Ok(FsyncerMsg::Uncork) => uncork_server(),
-                Err(e) => panic!("Failed to read from client {}", e),
+                Err(e) => {
+                    let mut netlock = net.lock().unwrap();
+                    netlock.status = ClientStatus::DEAD;
+                    // Will kill this thread
+                    println!("Failed to read from client {}", e);
+                    return;
+                }
                 msg => println!("Unexpected message from client {:?}", msg),
             }
         }
@@ -132,18 +143,23 @@ impl Client {
     fn flush(&self) -> Result<(), io::Error> {
         //HACK: Without the nop message compression algorithms dont flush immediately.
         // TODO atleast check for compression mode
-        self.send_msg(FsyncerMsg::NOP)?;
-        self.net.lock().unwrap().write.flush()
+        self.send_msg(FsyncerMsg::NOP, true)
     }
 
-    fn send_msg(&self, msg_data: FsyncerMsg) -> Result<(), io::Error> {
+    fn send_msg(&self, msg_data: FsyncerMsg, flush: bool) -> Result<(), io::Error> {
+        let mut nbuf = Vec::new();
         let mut size = serialized_size(&msg_data)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
 
         let serbuf = serialize(&msg_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
+        //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
         let mut net = self.net.lock().unwrap();
-        let mut nbuf = Vec::new();
+
+        if net.status == ClientStatus::DEAD {
+            // Ignore writes to dead clients, they will be harvested later
+            return Ok(());
+        }
 
         let buf = if let Some(ref mut rt_comp) = net.rt_comp {
             rt_comp.encode(&serbuf[..], &mut nbuf);
@@ -153,14 +169,21 @@ impl Client {
             &serbuf[..]
         };
 
-        //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
+        let res = (|| {
+            // Uggly way to shortcut error checking
+            net.write.write_u32::<BigEndian>(size as u32)?;
+            net.write.write_all(&buf)?;
+            if flush {
+                net.write.flush()?;
+            }
+            Ok(())
+        })();
 
-        net.write.write_u32::<BigEndian>(size as u32)?;
-        net.write.write_all(&buf)?;
-        if self.mode == ClientMode::MODE_SEMISYNC || self.mode == ClientMode::MODE_SYNC {
-            net.write.flush()?;
+        if res.is_err() {
+            net.status = ClientStatus::DEAD;
         }
-        Ok(())
+
+        res
     }
 
     fn wait_thread_response(&self) -> i32 {
@@ -172,6 +195,16 @@ impl Client {
                 .or_insert(Arc::new(ClientResponse::new()))
                 .clone()
         }.wait()
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        // Unblock all threads that could be waiting on this client
+        for (_, thread) in self.net.lock().unwrap().parked.iter() {
+            assert!(Arc::strong_count(thread) <= 2);
+            thread.notify(-1);
+        }
     }
 }
 
@@ -244,7 +277,7 @@ fn handle_client(
     Ok(())
 }
 
-fn flush_thread() {
+fn flush_thread(interval: u64) {
     loop {
         let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
         for client in list.iter().filter(|c| c.mode == ClientMode::MODE_ASYNC) {
@@ -253,6 +286,27 @@ fn flush_thread() {
             }
         }
         drop(list);
+        thread::sleep(Duration::from_secs(interval));
+    }
+}
+
+fn harvester_thread() {
+    loop {
+        // Check to see if there are dead nodes (without exclusive lock)
+        let have_dead_nodes = SYNC_LIST
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|c| c.net.lock().unwrap().status == ClientStatus::DEAD)
+            .count()
+            != 0;
+        // if there are, obtain exclusive lock and remove them
+        if have_dead_nodes {
+            SYNC_LIST
+                .write()
+                .unwrap()
+                .retain(|c| c.net.lock().unwrap().status != ClientStatus::DEAD);
+        }
         thread::sleep(Duration::from_secs(1));
     }
 }
@@ -297,7 +351,7 @@ pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
         let res = match client.mode {
             ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC => {
                 let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
-                let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid));
+                let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid), true);
 
                 if res.is_ok() {
                     let client_ret = client.wait_thread_response();
@@ -311,7 +365,7 @@ pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
 
                 res
             }
-            ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone())),
+            ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone()), false),
             ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
             _ => panic!("Unexpected client mode"),
         };
@@ -438,7 +492,16 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         }
     });
 
-    thread::spawn(flush_thread);
+    let interval = server_matches
+        .value_of("flush-interval")
+        .map(|v| v.parse::<u64>().expect("Invalid format for flush interval"))
+        .unwrap();
+
+    if interval != 0 {
+        thread::spawn(move || flush_thread(interval));
+    }
+
+    thread::spawn(harvester_thread);
 
     let args = vec![
         "fsyncd".to_string(),

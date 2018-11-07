@@ -74,7 +74,7 @@ fn main() {
                         .possible_values(&["default", "zstd", "lz4", "none"])
                         .default_value_if("sync", Some("sync"), "none")
                         .default_value_if("sync", Some("semisync"), "none")
-                        .default_value_if("client", None, "default")
+                        .default_value("default")
                         .help("Stream compression method to use")
                         .takes_value(true),
                 ).arg(
@@ -103,6 +103,10 @@ fn main() {
                         .help(
                             "Explicitly specifies which directory server should use to store files",
                         ).takes_value(true),
+                ).arg(Arg::with_name("flush-interval")
+                        .default_value("1")
+                        .help("Sets the interval in seconds for periodic flush for synchronous clients, 0 disables flushing altogether")
+                        .takes_value(true)
                 ),
         ).subcommand(
             SubCommand::with_name("checksum").arg(
