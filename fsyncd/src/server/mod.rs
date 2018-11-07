@@ -52,7 +52,6 @@ struct ClientNetwork {
 }
 
 struct Client {
-    id: String,
     mode: ClientMode,
     net: Arc<Mutex<ClientNetwork>>,
 }
@@ -64,7 +63,10 @@ impl Client {
         let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
         self.send_msg(FsyncerMsg::Cork(tid))?;
         self.flush()?;
-        self.park();
+        // Cannot park on control as it will block its reader thread
+        if self.mode != ClientMode::MODE_CONTROL {
+            self.park();
+        }
         Ok(())
     }
 
@@ -87,7 +89,9 @@ impl Client {
                     let mut netlock = net.lock().unwrap();
                     netlock.parked.remove(&tid).map(|t| t.unpark());
                 }
-                Err(e) => println!("Failed to read from client {}", e),
+                Ok(FsyncerMsg::Cork(_)) => cork_server(),
+                Ok(FsyncerMsg::Uncork) => uncork_server(),
+                Err(e) => panic!("Failed to read from client {}", e),
                 msg => println!("Unexpected message from client {:?}", msg),
             }
         }
@@ -145,11 +149,8 @@ fn handle_client(
     dontcheck: bool,
     buffer_size: usize,
 ) -> Result<(), io::Error> {
+    println!("Received connection from client {:?}", stream.peer_addr());
     stream.set_send_buffer_size(buffer_size * 1024 * 1024)?;
-
-    println!("Calculating source hash...");
-    let srchash = hash_metadata(storage_path.to_str().unwrap()).expect("Hash check failed");
-    println!("Source hash is {:x}", srchash);
 
     let init = match Client::read_msg(&mut stream) {
         Ok(FsyncerMsg::InitMsg(msg)) => msg,
@@ -160,14 +161,19 @@ fn handle_client(
         ),
     };
 
-    if (!dontcheck) && init.dsthash != srchash {
-        println!(
-            "{:x} != {:x} client's hash does not match!",
-            init.dsthash, srchash
-        );
-        println!("Dropping this client!");
-        drop(stream);
-        return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
+    if init.mode != ClientMode::MODE_CONTROL && (!dontcheck) {
+        println!("Calculating source hash...");
+        let srchash = hash_metadata(storage_path.to_str().unwrap()).expect("Hash check failed");
+        println!("Source hash is {:x}", srchash);
+        if init.dsthash != srchash {
+            println!(
+                "{:x} != {:x} client's hash does not match!",
+                init.dsthash, srchash
+            );
+            println!("Dropping this client!");
+            drop(stream);
+            return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
+        }
     }
 
     let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
@@ -197,7 +203,6 @@ fn handle_client(
     thread::spawn(move || Client::reader(stream, net_clone));
 
     SYNC_LIST.write().unwrap().push(Client {
-        id: "".to_string(),
         mode: init.mode,
         net: net,
     });
@@ -226,22 +231,25 @@ fn cork_server() {
     // Cork the individual clients
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        if client.cork().is_err() {
-            println!("Failed to cork client");
+        if let Err(e) = client.cork() {
+            println!("Failed to cork client {}", e);
         }
     }
+    println!("Cork done");
 }
 
 fn uncork_server() {
+    println!("Uncorking");
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        if client.uncork().is_err() {
-            println!("Failed to uncork client");
+        if let Err(e) = client.uncork() {
+            println!("Failed to uncork client {}", e);
         }
     }
     drop(list);
     *CORK.lock().unwrap() = false;
     CORK_VAR.notify_all();
+    println!("Uncork done");
 }
 
 pub fn handle_op(call: VFSCall) {
@@ -254,8 +262,8 @@ pub fn handle_op(call: VFSCall) {
 
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        let res =
-            if client.mode == ClientMode::MODE_SYNC || client.mode == ClientMode::MODE_SEMISYNC {
+        let res = match client.mode {
+            ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC => {
                 let current_thread = thread::current();
                 let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
                 let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid));
@@ -263,9 +271,12 @@ pub fn handle_op(call: VFSCall) {
                     client.park();
                 }
                 res
-            } else {
-                client.send_msg(FsyncerMsg::AsyncOp(call.clone()))
-            };
+            }
+            ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone())),
+            ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
+            _ => panic!("Unexpected client mode"),
+        };
+
         if res.is_err() {
             println!("Failed sending message to client {}", res.unwrap_err());
         }
@@ -298,6 +309,7 @@ fn check_mount(path: &str) -> Result<bool, io::Error> {
 
 fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Error> {
     let mount_path = Path::new(matches.value_of("mount-path").unwrap()).canonicalize()?;
+
     if matches.is_present("backing-store")
         && !Path::new(matches.value_of("backing-store").unwrap()).exists()
     {
@@ -353,7 +365,8 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
 }
 
 pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
-    let (mount_path, backing_store) = figure_out_paths(&matches)?;
+    let server_matches = matches.subcommand_matches("server").unwrap();
+    let (mount_path, backing_store) = figure_out_paths(&server_matches)?;
     println!("{:?}, {:?}", mount_path, backing_store);
     unsafe {
         SERVER_PATH_RUST = String::from(backing_store.to_str().unwrap());
@@ -368,7 +381,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
             .unwrap()
     ))?;
 
-    let dont_check = matches.is_present("dont-check");
+    let dont_check = server_matches.is_present("dont-check");
     let buffer_size = matches
         .value_of("buffer")
         .and_then(|b| b.parse().ok())
@@ -389,7 +402,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
 
     let args = vec![
         "fsyncd".to_string(),
-        matches.value_of("mount-path").unwrap().to_string(),
+        server_matches.value_of("mount-path").unwrap().to_string(),
     ].into_iter()
     .chain(std::env::args().skip_while(|v| v != "--").skip(1))
     .map(|arg| CString::new(arg).unwrap())

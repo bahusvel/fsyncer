@@ -13,7 +13,7 @@ use lz4;
 use net2::TcpStreamExt;
 use std::io;
 use std::io::{Read, Write};
-use std::mem::{size_of, transmute};
+use std::mem::size_of;
 use std::net::TcpStream;
 use zstd;
 
@@ -23,6 +23,15 @@ pub struct Client<F: Fn(VFSCall) -> i32> {
     mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
     op_callback: F,
+}
+
+fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
+    let size = serialized_size(&msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+
+    //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
+    write.write_u32::<BigEndian>(size as u32)?;
+    serialize_into(&mut write, &msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    write.flush()
 }
 
 impl<F: Fn(VFSCall) -> i32> Client<F> {
@@ -39,15 +48,14 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
 
         stream.set_recv_buffer_size(buffer_size * 1024 * 1024)?;
 
-        let init = unsafe {
-            transmute::<InitMsg, [u8; size_of::<InitMsg>()]>(InitMsg {
+        send_msg(
+            &mut stream,
+            FsyncerMsg::InitMsg(InitMsg {
                 mode,
                 dsthash,
                 compress,
-            })
-        };
-
-        stream.write_all(&init)?;
+            }),
+        )?;
 
         let reader = if compress.contains(CompMode::STREAM_ZSTD) {
             Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
@@ -75,34 +83,45 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
     }
 
     fn send_msg(&mut self, msg_data: FsyncerMsg) -> Result<(), io::Error> {
-        let size = serialized_size(&msg_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+        send_msg(&mut self.write, msg_data)
+    }
 
-        //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
-        self.write.write_u32::<BigEndian>(size as u32)?;
-        serialize_into(&mut self.write, &msg_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        self.write.flush()
+    fn read_msg(&mut self) -> Result<FsyncerMsg, io::Error> {
+        let mut rcv_buf = [0; 33 * 1024];
+        let length = self.read.read_u32::<BigEndian>()? as usize;
+
+        assert!(length <= rcv_buf.len());
+
+        self.read.read_exact(&mut rcv_buf[..length])?;
+
+        let mut dbuf = Vec::new();
+        let msgbuf = if let Some(ref mut rt_comp) = self.rt_comp {
+            rt_comp.decode(&rcv_buf[size_of::<u32>()..length], &mut dbuf);
+            &dbuf[..]
+        } else {
+            &rcv_buf[..length]
+        };
+        deserialize(msgbuf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
+
+    pub fn cork_server(&mut self) -> Result<(), io::Error> {
+        self.send_msg(FsyncerMsg::Cork(0))?;
+        loop {
+            let msg = self.read_msg()?;
+            if let FsyncerMsg::Cork(tid) = msg {
+                println!("Acknowledging cork");
+                return self.send_msg(FsyncerMsg::AckCork(tid));
+            }
+        }
+    }
+
+    pub fn uncork_server(&mut self) -> Result<(), io::Error> {
+        self.send_msg(FsyncerMsg::Uncork)
     }
 
     pub fn process_ops(&mut self) -> Result<(), io::Error> {
-        let mut rcv_buf = [0; 33 * 1024];
         loop {
-            let length = self.read.read_u32::<BigEndian>()? as usize;
-
-            assert!(length <= rcv_buf.len());
-
-            self.read.read_exact(&mut rcv_buf[..length])?;
-
-            let mut dbuf = Vec::new();
-            let msgbuf = if let Some(ref mut rt_comp) = self.rt_comp {
-                rt_comp.decode(&rcv_buf[size_of::<u32>()..length], &mut dbuf);
-                &dbuf[..]
-            } else {
-                &rcv_buf[..length]
-            };
-
-            match deserialize(msgbuf) {
+            match self.read_msg() {
                 Ok(FsyncerMsg::SyncOp(call, tid)) => {
                     if self.mode == ClientMode::MODE_SEMISYNC {
                         self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: 0, tid }))?;
@@ -120,7 +139,7 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
                 }
                 Ok(FsyncerMsg::Cork(tid)) => self.send_msg(FsyncerMsg::AckCork(tid))?,
                 Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} // Nothing, safe to ingore
-                Err(err) => println!("Failed to read message from client {}", err),
+                Err(err) => return Err(err),
                 msg => println!("Unexpected message for current client state {:?}", msg),
             }
         }
@@ -129,14 +148,17 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
 
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");
-    let dsthash = hash_metadata(
-        matches
-            .value_of("mount-path")
-            .expect("No destination specified"),
-    ).expect("Hash failed");
+    let client_matches = matches.subcommand_matches("client").unwrap();
+    let client_path = client_matches
+        .value_of("mount-path")
+        .expect("Destination not specified");
+
+    let dsthash = hash_metadata(client_path).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
 
-    let mode = match matches.value_of("sync").unwrap() {
+    let host = client_matches.value_of("host").expect("No host specified");
+
+    let mode = match client_matches.value_of("sync").unwrap() {
         "sync" => ClientMode::MODE_SYNC,
         "async" => ClientMode::MODE_ASYNC,
         "semisync" => ClientMode::MODE_SEMISYNC,
@@ -148,13 +170,9 @@ pub fn client_main(matches: ArgMatches) {
         .and_then(|b| b.parse().ok())
         .expect("Buffer format incorrect");
 
-    let client_path = matches
-        .value_of("mount-path")
-        .expect("Destination not specified");
-
     let mut comp = CompMode::empty();
 
-    match matches.value_of("stream-compressor").unwrap() {
+    match client_matches.value_of("stream-compressor").unwrap() {
         "default" | "lz4" => {
             println!("Using a LZ4 stream compressor");
             comp.insert(CompMode::STREAM_LZ4)
@@ -166,7 +184,7 @@ pub fn client_main(matches: ArgMatches) {
         _ => (),
     }
 
-    match matches.value_of("rt-compressor").unwrap() {
+    match client_matches.value_of("rt-compressor").unwrap() {
         "default" | "zstd" => {
             println!("Using a RT_DSSC_ZSTD realtime compressor");
             comp.insert(CompMode::RT_DSSC_ZSTD)
@@ -179,7 +197,7 @@ pub fn client_main(matches: ArgMatches) {
     }
 
     let mut client = Client::new(
-        matches.value_of("client").expect("No host specified"),
+        host,
         matches
             .value_of("port")
             .map(|v| v.parse().expect("Invalid format for port"))
@@ -191,10 +209,7 @@ pub fn client_main(matches: ArgMatches) {
         |call| unsafe { dispatch(call, client_path) },
     ).expect("Failed to connect to fsyncer");
 
-    println!(
-        "Connected to {}",
-        matches.value_of("client").expect("No host specified")
-    );
+    println!("Connected to {}", host);
 
     client.process_ops().expect("Stopped processing ops!");
 }

@@ -17,9 +17,12 @@ clean:
 
 test_fs: dirs
 	fusermount3 -u -z test_src || true
-	cd fsyncd && RUST_BACKTRACE=1 cargo run -- ../test_src --server -- -f
+	cd fsyncd && RUST_BACKTRACE=1 cargo run -- server ../test_src -- -f -o allow_root
 
 test_client:
 	rm -rf test_dst || true
 	cp -rax .fsyncer-test_src test_dst
-	cd fsyncd && RUST_BACKTRACE=1 cargo run -- `realpath ../test_dst` --sync=async --stream-compressor=zstd --client 127.0.0.1
+	cd fsyncd && RUST_BACKTRACE=1 cargo run -- client `realpath ../test_dst` 127.0.0.1 --sync=async --stream-compressor=zstd
+
+test_cork:
+	cd fsyncd && RUST_BACKTRACE=1 cargo run -- control localhost cork

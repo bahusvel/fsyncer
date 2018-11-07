@@ -53,6 +53,7 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     ops.fsync = Some(xmp_fsync);
     ops.getxattr = Some(xmp_getxattr);
     ops.listxattr = Some(xmp_listxattr);
+    //ops.ioctl = Some(xmp_ioctl);
 
     return fuse_main_real(
         argc,

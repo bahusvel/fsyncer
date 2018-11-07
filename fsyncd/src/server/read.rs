@@ -228,3 +228,17 @@ pub unsafe extern "C" fn xmp_getattr(
     }
     0
 }
+
+/* Cannot be used for arbitrary ioctl
+pub unsafe extern "C" fn xmp_ioctl(
+    path: *const c_char,
+    cmd: c_int,
+    arg: *mut c_void,
+    arg2: *mut fuse_file_info,
+    flags: c_uint,
+    data: *mut c_void,
+) -> c_int {
+    println!("ioctl at {:?}", CStr::from_ptr(path));
+    0
+}
+*/
