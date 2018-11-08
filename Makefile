@@ -15,6 +15,10 @@ test_ll: dirs ll_passthrough
 clean:
 	cd fsyncd && cargo clean
 
+compile_tests:
+	gcc test/sync_test.c -o test/sync_test
+	gcc test/direct_test.c -o test/direct_test
+
 test_fs: dirs
 	fusermount3 -u -z test_src || true
 	cd fsyncd && RUST_BACKTRACE=1 cargo run -- server --flush-interval 0 ../test_src -- -f -o allow_root
