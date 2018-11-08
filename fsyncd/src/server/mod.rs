@@ -31,11 +31,14 @@ use std::time::Duration;
 use zstd;
 
 pub static mut SERVER_PATH_RUST: String = String::new();
+static NOP_MSG: FsyncerMsg = FsyncerMsg::NOP;
 
 lazy_static! {
     static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
     static ref CORK_VAR: Condvar = Condvar::new();
     static ref CORK: Mutex<bool> = Mutex::new(false);
+    static ref ENCODED_NOP: Vec<u8> = serialize(&NOP_MSG).unwrap();
+    static ref NOP_SIZE: usize = serialized_size(&NOP_MSG).unwrap() as usize;
 }
 
 #[derive(PartialEq)]
@@ -54,6 +57,7 @@ struct ClientNetwork {
 
 struct Client {
     mode: ClientMode,
+    comp: CompMode,
     net: Arc<Mutex<ClientNetwork>>,
 }
 
@@ -123,7 +127,7 @@ impl Client {
                     let mut netlock = net.lock().unwrap();
                     netlock.parked.get(&tid).map(|t| {
                         assert!(Arc::strong_count(t) <= 2);
-                        t.notify(0)
+                        t.notify(code)
                     });
                 }
                 Ok(FsyncerMsg::Cork(_)) => cork_server(),
@@ -141,14 +145,49 @@ impl Client {
     }
 
     fn flush(&self) -> Result<(), io::Error> {
-        //HACK: Without the nop message compression algorithms dont flush immediately.
-        // TODO atleast check for compression mode
-        self.send_msg(FsyncerMsg::NOP, true)
+        //Without the nop message compression algorithms dont flush immediately.
+        if self.comp.intersects(CompMode::STREAM_MASK) {
+            self.send_msg(FsyncerMsg::NOP, true)?
+        } else {
+            self.net.lock().unwrap().write.flush()?
+        }
+        Ok(())
     }
 
     fn send_msg(&self, msg_data: FsyncerMsg, flush: bool) -> Result<(), io::Error> {
-        let mut nbuf = Vec::new();
-        let mut size = serialized_size(&msg_data)
+        fn inner(
+            serbuf: &[u8],
+            mut size: usize,
+            net: &mut ClientNetwork,
+            flush: bool,
+            comp: bool,
+        ) -> Result<(), io::Error> {
+            let mut nbuf = Vec::new();
+            let buf = if let Some(ref mut rt_comp) = net.rt_comp {
+                rt_comp.encode(&serbuf[..], &mut nbuf);
+                size = nbuf.len();
+                &nbuf[..]
+            } else {
+                &serbuf[..]
+            };
+
+            // Uggly way to shortcut error checking
+            net.write.write_u32::<BigEndian>(size as u32)?;
+            net.write.write_all(&buf)?;
+            if flush {
+                //println!("Doing funky flush");
+                net.write.flush()?;
+                // Without the nop message compression algorithms dont flush immediately.
+                if comp {
+                    inner(&ENCODED_NOP[..], *NOP_SIZE, net, false, comp)?;
+                    net.write.flush()?;
+                }
+                //println!("Finished funky flush");
+            }
+            Ok(())
+        }
+
+        let size = serialized_size(&msg_data)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
 
         let serbuf = serialize(&msg_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -161,23 +200,13 @@ impl Client {
             return Ok(());
         }
 
-        let buf = if let Some(ref mut rt_comp) = net.rt_comp {
-            rt_comp.encode(&serbuf[..], &mut nbuf);
-            size = nbuf.len();
-            &nbuf[..]
-        } else {
-            &serbuf[..]
-        };
-
-        let res = (|| {
-            // Uggly way to shortcut error checking
-            net.write.write_u32::<BigEndian>(size as u32)?;
-            net.write.write_all(&buf)?;
-            if flush {
-                net.write.flush()?;
-            }
-            Ok(())
-        })();
+        let res = inner(
+            &serbuf[..],
+            size,
+            &mut *net,
+            flush,
+            self.comp.intersects(CompMode::STREAM_MASK),
+        );
 
         if res.is_err() {
             net.status = ClientStatus::DEAD;
@@ -269,6 +298,7 @@ fn handle_client(
 
     SYNC_LIST.write().unwrap().push(Client {
         mode: init.mode,
+        comp: init.compress,
         net: net,
     });
 
@@ -312,7 +342,7 @@ fn harvester_thread() {
 }
 
 fn cork_server() {
-    // Cork the server
+    println!("Corking");
     *CORK.lock().unwrap() = true;
     // Cork the individual clients
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
@@ -338,44 +368,57 @@ fn uncork_server() {
     println!("Uncork done");
 }
 
+macro_rules! is_variant {
+    ($val:expr, $variant:path) => {
+        if let $variant(_) = $val {
+            true
+        } else {
+            false
+        }
+    };
+}
+
+fn send_call(call: &VFSCall, client: &Client, ret: i32) -> Result<(), io::Error> {
+    match client.mode {
+        ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC | ClientMode::MODE_FLUSHSYNC => {
+            // In flushsync mode all ops except for fsync are sent async
+            if client.mode == ClientMode::MODE_FLUSHSYNC && !is_variant!(call, VFSCall::fsync) {
+                return client.send_msg(FsyncerMsg::AsyncOp(call.clone()), false);
+            }
+
+            let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
+            let client_ret = client
+                .send_msg(FsyncerMsg::SyncOp(call.clone(), tid), true)
+                .map(|_| client.wait_thread_response())?;
+
+            if client.mode == ClientMode::MODE_SYNC && client_ret != ret {
+                println!(
+                    "Response from client {} does not match server {}",
+                    client_ret, ret
+                );
+            }
+            Ok(())
+        }
+        ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone()), false),
+        ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
+    }
+}
+
 pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
     let mut corked = CORK.lock().unwrap();
-    if *corked {
-        while *corked {
-            corked = CORK_VAR.wait(corked).unwrap();
-        }
+    while *corked {
+        corked = CORK_VAR.wait(corked).unwrap();
     }
 
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        let res = match client.mode {
-            ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC => {
-                let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
-                let res = client.send_msg(FsyncerMsg::SyncOp(call.clone(), tid), true);
-
-                if res.is_ok() {
-                    let client_ret = client.wait_thread_response();
-                    if client.mode == ClientMode::MODE_SYNC && client_ret != ret {
-                        println!(
-                            "Response from client {} does not match server {}",
-                            client_ret, ret
-                        );
-                    }
-                }
-
-                res
-            }
-            ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone()), false),
-            ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
-            _ => panic!("Unexpected client mode"),
-        };
-
+        let res = send_call(&call, client, ret);
         if res.is_err() {
             println!("Failed sending message to client {}", res.unwrap_err());
         }
     }
-    /* Cork lock is held until here, it is used to make sure that any pending operations get sent over the network, the flush operation will force them to the other side */
     ret
+    /* Cork lock is held until here, it is used to make sure that any pending operations get sent over the network, the flush operation will force them to the other side */
 }
 
 pub fn display_fuse_help() {

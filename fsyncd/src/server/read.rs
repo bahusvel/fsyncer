@@ -106,25 +106,6 @@ pub unsafe extern "C" fn xmp_getxattr(
     0
 }
 
-pub unsafe extern "C" fn xmp_fsync(
-    _path: *const c_char,
-    isdatasync: c_int,
-    fi: *mut fuse_file_info,
-) -> c_int {
-    if fi.is_null() {
-        panic!("Cannot fsync by path");
-    }
-    let res = if isdatasync != 0 {
-        fdatasync((*fi).fh as i32)
-    } else {
-        fsync((*fi).fh as i32)
-    };
-    if res == -1 {
-        return neg_errno();
-    }
-    0
-}
-
 pub unsafe extern "C" fn xmp_release(_path: *const c_char, fi: *mut fuse_file_info) -> c_int {
     if !fi.is_null() {
         close((*fi).fh as i32);

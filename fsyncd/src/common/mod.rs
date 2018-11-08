@@ -30,8 +30,8 @@ pub enum ClientMode {
     MODE_ASYNC,
     MODE_SYNC,
     MODE_SEMISYNC,
+    MODE_FLUSHSYNC,
     MODE_CONTROL,
-    MODE_LISTENER,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -55,6 +55,7 @@ bitflags! {
         const RT_DSSC_ZSTD      = 0b00100;
         const STREAM_ZSTD       = 0b01000;
         const STREAM_LZ4        = 0b10000;
+        const STREAM_MASK       = 0b11000;
     }
 }
 
@@ -100,6 +101,7 @@ pub enum VFSCall {
     removexattr(removexattr),
     create(create),
     utimens(utimens),
+    fsync(fsync),
 }
 
 use std::ffi::{CStr, CString};

@@ -81,8 +81,8 @@ fn main() {
                     Arg::with_name("sync")
                         .short("s")
                         .long("sync")
-                        .possible_values(&["sync", "async", "semisync"])
-                        .default_value_if("client", None, "async")
+                        .possible_values(&["sync", "async", "semi", "flush"])
+                        .default_value("async")
                         .help("Selects replication mode"),
                 ),
         ).subcommand(
@@ -104,6 +104,7 @@ fn main() {
                             "Explicitly specifies which directory server should use to store files",
                         ).takes_value(true),
                 ).arg(Arg::with_name("flush-interval")
+                        .long("flush-interval")
                         .default_value("1")
                         .help("Sets the interval in seconds for periodic flush for synchronous clients, 0 disables flushing altogether")
                         .takes_value(true)

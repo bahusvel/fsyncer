@@ -276,3 +276,25 @@ pub unsafe extern "C" fn do_utimens(
         res,
     )
 }
+
+pub unsafe extern "C" fn do_fsync(
+    path: *const c_char,
+    isdatasync: c_int,
+    fi: *mut fuse_file_info,
+) -> c_int {
+    println!("Sync received");
+    let res = if fi.is_null() {
+        let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+        xmp_fsync(real_path.as_ptr(), isdatasync, -1)
+    } else {
+        xmp_fsync(ptr::null(), isdatasync, (*fi).fh as c_int)
+    };
+
+    handle_op(
+        VFSCall::fsync(fsync {
+            path: CString::from(CStr::from_ptr(path)),
+            isdatasync: isdatasync,
+        }),
+        res,
+    )
+}

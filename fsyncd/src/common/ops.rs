@@ -187,3 +187,29 @@ pub unsafe fn xmp_utimens(path: *const c_char, ts: *const timespec, fd: c_int) -
     }
     0
 }
+pub unsafe fn xmp_fsync(path: *const c_char, isdatasync: c_int, mut fd: c_int) -> c_int {
+    let mut opened = false;
+
+    if !path.is_null() {
+        fd = open(path, O_WRONLY);
+        if fd == -1 {
+            return neg_errno();
+        }
+        opened = true;
+    }
+
+    let res = if isdatasync != 0 {
+        fdatasync(fd)
+    } else {
+        fsync(fd)
+    };
+
+    if opened {
+        close(fd);
+    }
+
+    if res == -1 {
+        return neg_errno();
+    }
+    0
+}

@@ -38,6 +38,8 @@ path_syscall!(unlink {});
 
 path_syscall!(rmdir {});
 
+path_syscall!(fsync { isdatasync: c_int });
+
 encoded_syscall!(symlink {
     from: CString,
     to: CString

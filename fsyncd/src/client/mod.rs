@@ -129,7 +129,8 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
 
                     let res = (self.op_callback)(call);
 
-                    if self.mode == ClientMode::MODE_SYNC {
+                    if self.mode == ClientMode::MODE_SYNC || self.mode == ClientMode::MODE_FLUSHSYNC
+                    {
                         self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: res, tid }))?;
                     }
                 }
@@ -137,7 +138,10 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
                     // TODO check return status
                     let _res = (self.op_callback)(call);
                 }
-                Ok(FsyncerMsg::Cork(tid)) => self.send_msg(FsyncerMsg::AckCork(tid))?,
+                Ok(FsyncerMsg::Cork(tid)) => {
+                    println!("Received cork request");
+                    self.send_msg(FsyncerMsg::AckCork(tid))?
+                }
                 Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} // Nothing, safe to ingore
                 Err(err) => return Err(err),
                 msg => println!("Unexpected message for current client state {:?}", msg),
@@ -161,7 +165,8 @@ pub fn client_main(matches: ArgMatches) {
     let mode = match client_matches.value_of("sync").unwrap() {
         "sync" => ClientMode::MODE_SYNC,
         "async" => ClientMode::MODE_ASYNC,
-        "semisync" => ClientMode::MODE_SEMISYNC,
+        "semi" => ClientMode::MODE_SEMISYNC,
+        "flush" => ClientMode::MODE_FLUSHSYNC,
         _ => panic!("That is not possible"),
     };
 

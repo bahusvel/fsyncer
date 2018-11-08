@@ -36,6 +36,7 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     ops.fallocate = Some(do_fallocate);
     ops.setxattr = Some(do_setxattr);
     ops.removexattr = Some(do_removexattr);
+    ops.fsync = Some(do_fsync);
     // Read ops
     ops.init = Some(xmp_init);
     ops.getattr = Some(xmp_getattr);
@@ -50,7 +51,6 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     ops.statfs = Some(xmp_statfs);
     ops.flush = Some(xmp_flush);
     ops.release = Some(xmp_release);
-    ops.fsync = Some(xmp_fsync);
     ops.getxattr = Some(xmp_getxattr);
     ops.listxattr = Some(xmp_listxattr);
     //ops.ioctl = Some(xmp_ioctl);

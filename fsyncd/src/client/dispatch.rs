@@ -100,5 +100,9 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
             ];
             xmp_utimens(path.as_ptr(), &ts as *const timespec, -1)
         }
+        VFSCall::fsync(fsync { path, isdatasync }) => {
+            let path = translate_path(&path, root);
+            xmp_fsync(path.as_ptr(), isdatasync, -1)
+        }
     }
 }
