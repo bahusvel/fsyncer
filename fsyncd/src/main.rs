@@ -1,6 +1,11 @@
 #![feature(libc)]
 #![feature(const_string_new)]
 
+#[cfg(feature = "profile")]
+extern crate cpuprofiler;
+#[cfg(feature = "profile")]
+extern crate nix;
+
 #[macro_use]
 extern crate bitflags;
 #[macro_use]
@@ -29,6 +34,33 @@ use client::client_main;
 use client::Client;
 use common::{ClientMode, CompMode};
 use server::{display_fuse_help, server_main};
+
+#[cfg(feature = "profile")]
+extern "C" fn stop_profiler(_: i32) {
+    use cpuprofiler::PROFILER;
+    PROFILER.lock().unwrap().stop().unwrap();
+    println!("Stopped profiler");
+    exit(0);
+}
+
+#[cfg(feature = "profile")]
+fn start_profiler() {
+    use cpuprofiler::PROFILER;
+    use nix::sys::signal;
+    PROFILER.lock().unwrap().start("./fsyncd.profile").unwrap();
+
+    println!("Started profiler");
+
+    let sig_action = signal::SigAction::new(
+        signal::SigHandler::Handler(stop_profiler),
+        signal::SaFlags::empty(),
+        signal::SigSet::empty(),
+    );
+    unsafe {
+        signal::sigaction(signal::SIGINT, &sig_action)
+            .expect("Failed to declare signal handler for profiling")
+    };
+}
 
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
@@ -135,6 +167,9 @@ fn main() {
             }
             _ => e.exit(),
         });
+
+    #[cfg(feature = "profile")]
+    start_profiler();
 
     match matches.subcommand_name() {
         Some("server") => {
