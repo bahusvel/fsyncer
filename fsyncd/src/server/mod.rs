@@ -380,7 +380,7 @@ macro_rules! is_variant {
     };
 }
 
-fn send_call(call: Cow<VFSCall>, client: &Client, ret: i32) -> Result<(), io::Error> {
+fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Result<(), io::Error> {
     match client.mode {
         ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC | ClientMode::MODE_FLUSHSYNC => {
             // In flushsync mode all ops except for fsync are sent async
@@ -401,7 +401,7 @@ fn send_call(call: Cow<VFSCall>, client: &Client, ret: i32) -> Result<(), io::Er
             }
             Ok(())
         }
-        ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call.clone()), false),
+        ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call), false),
         ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
     }
 }

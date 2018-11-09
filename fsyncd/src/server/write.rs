@@ -7,9 +7,6 @@ use std::ffi::CStr;
 use std::ptr;
 use std::slice;
 
-const NULL: u8 = 0;
-const NULL_PTR: *const c_char = &NULL as *const _ as *const _;
-
 pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_mknod(real_path.as_ptr(), mode, rdev);

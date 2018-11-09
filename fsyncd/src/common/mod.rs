@@ -16,8 +16,8 @@ use walkdir::WalkDir;
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum FsyncerMsg<'a> {
     InitMsg(InitMsg),
-    AsyncOp(Cow<'a, VFSCall>),
-    SyncOp(Cow<'a, VFSCall>, u64),
+    AsyncOp(Cow<'a, VFSCall<'a>>),
+    SyncOp(Cow<'a, VFSCall<'a>>, u64),
     Ack(AckMsg),
     Cork(u64),
     AckCork(u64),
@@ -85,24 +85,24 @@ pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[allow(non_camel_case_types)]
-pub enum VFSCall {
-    mknod(mknod),
-    mkdir(mkdir),
-    unlink(unlink),
-    rmdir(rmdir),
-    symlink(symlink),
-    rename(rename),
-    link(link),
-    chmod(chmod),
-    chown(chown),
-    truncate(truncate),
-    write(write),
-    fallocate(fallocate),
-    setxattr(setxattr),
-    removexattr(removexattr),
-    create(create),
-    utimens(utimens),
-    fsync(fsync),
+pub enum VFSCall<'a> {
+    mknod(mknod<'a>),
+    mkdir(mkdir<'a>),
+    unlink(unlink<'a>),
+    rmdir(rmdir<'a>),
+    symlink(symlink<'a>),
+    rename(rename<'a>),
+    link(link<'a>),
+    chmod(chmod<'a>),
+    chown(chown<'a>),
+    truncate(truncate<'a>),
+    write(write<'a>),
+    fallocate(fallocate<'a>),
+    setxattr(setxattr<'a>),
+    removexattr(removexattr<'a>),
+    create(create<'a>),
+    utimens(utimens<'a>),
+    fsync(fsync<'a>),
 }
 
 use std::ffi::{CStr, CString};

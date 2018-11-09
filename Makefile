@@ -33,6 +33,19 @@ test_fs: dirs
 	fusermount3 -u -z test_src || true
 	cd fsyncd && RUST_BACKTRACE=1 cargo run --release -- server --flush-interval 0 ../test_src -- -f -o allow_root
 
+perf_fs: dirs
+	fusermount3 -u -z test_src || true
+	cd fsyncd && cargo build --release
+	target/release/fsyncd server --flush-interval 0 test_src -- -o allow_root
+	sudo perf record -e 'syscalls:sys_enter_writev' -p `pidof fsyncd` || true
+	killall fsyncd
+
+callgrind_fs: dirs
+	fusermount3 -u -z test_src || true
+	cd fsyncd && cargo build --release
+	valgrind --tool=callgrind target/release/fsyncd server --flush-interval 0 test_src -- -f -o allow_root
+	killall fsyncd
+
 test_client:
 	rm -rf test_dst || true
 	cp -rax .fsyncer-test_src test_dst

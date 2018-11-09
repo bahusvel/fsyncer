@@ -1,8 +1,12 @@
 extern crate cc;
+extern crate git_build_version;
 use std::process::Command;
 use std::str::from_utf8;
 
+const PACKAGE_TOP_DIR: &'static str = ".";
+
 fn main() {
+    git_build_version::write_version(PACKAGE_TOP_DIR).expect("Saving git version");
     let fuse_flags_out = Command::new("pkg-config")
         .arg("fuse3")
         .arg("--cflags")

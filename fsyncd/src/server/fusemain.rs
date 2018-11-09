@@ -25,7 +25,7 @@ pub unsafe extern "C" fn xmp_init(conn: *mut fuse_conn_info, cfg: *mut fuse_conf
     // handled it can improve performance.
     // refer to
     // https://libfuse.github.io/doxygen/structfuse__config.html#adc93fd1ac03d7f016d6b0bfab77f3863
-    (*cfg).nullpath_ok = 1;
+    //(*cfg).nullpath_ok = 1;
 
     /* Pick up changes from lower filesystem right away. This is
 	   also necessary for better hardlink support. When the kernel

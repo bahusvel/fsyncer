@@ -8,7 +8,7 @@ use std::ffi::{CStr, CString};
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
         #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-        pub struct $name {
+        pub struct $name<'a> {
             $(
                 pub $field: $ft,
             )*
@@ -19,8 +19,8 @@ macro_rules! encoded_syscall {
 macro_rules! path_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
         #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-        pub struct $name {
-            pub path: Cow<'static, CStr>,
+        pub struct $name<'a> {
+            pub path: Cow<'a, CStr>,
             $(
                 pub $field: $ft,
             )*
@@ -42,19 +42,19 @@ path_syscall!(rmdir {});
 path_syscall!(fsync { isdatasync: c_int });
 
 encoded_syscall!(symlink {
-    from: Cow<'static, CStr>,
-    to: Cow<'static, CStr>
+    from: Cow<'a, CStr>,
+    to: Cow<'a, CStr>
 });
 
 encoded_syscall!(rename {
-    from: Cow<'static, CStr>,
-    to: Cow<'static, CStr>,
+    from: Cow<'a, CStr>,
+    to: Cow<'a, CStr>,
     flags: uint32_t
 });
 
 encoded_syscall!(link {
-    from: Cow<'static, CStr>,
-    to: Cow<'static, CStr>
+    from: Cow<'a, CStr>,
+    to: Cow<'a, CStr>
 });
 
 path_syscall!(chmod { mode: uint32_t });
@@ -67,9 +67,9 @@ path_syscall!(chown {
 path_syscall!(truncate { size: int64_t });
 
 encoded_syscall!(write {
-    path: Cow<'static, CStr>,
+    path: Cow<'a, CStr>,
     offset: int64_t,
-    buf: Cow<'static, [u8]>
+    buf: Cow<'a, [u8]>
 });
 
 path_syscall!(fallocate {
@@ -79,12 +79,12 @@ path_syscall!(fallocate {
 });
 
 path_syscall!(setxattr {
-    name: Cow<'static, CStr>,
+    name: Cow<'a, CStr>,
     value: Vec<u8>,
     flags: int32_t
 });
 
-path_syscall!(removexattr { name: Cow<'static, CStr> });
+path_syscall!(removexattr { name: Cow<'a, CStr> });
 
 path_syscall!(create {
     mode: uint32_t,

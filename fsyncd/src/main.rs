@@ -62,9 +62,11 @@ fn start_profiler() {
     };
 }
 
+include!(concat!(env!("OUT_DIR"), "/version.rs"));
+
 fn main() {
     let matches = App::new("Fsyncer Replication Daemon")
-        .version("0.1")
+        .version(VERSION)
         .author("Denis Lavrov <bahus.vel@gmail.com>")
         .about("Filesystem replication daemon")
         .arg(
