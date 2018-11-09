@@ -1,8 +1,6 @@
 use common::{neg_errno, translate_path};
 use libc::*;
-use server::fuseops::{
-    fuse_bufvec, fuse_config, fuse_conn_info, fuse_file_info, fuse_fill_dir_t, fuse_readdir_flags,
-};
+use server::fuseops::{fuse_bufvec, fuse_file_info, fuse_fill_dir_t, fuse_readdir_flags};
 use server::SERVER_PATH_RUST;
 use std::ffi::CStr;
 use std::ptr;
@@ -23,31 +21,6 @@ extern "C" {
         off: off_t,
         arg2: *mut fuse_file_info,
     ) -> c_int;
-}
-
-pub unsafe extern "C" fn xmp_init(conn: *mut fuse_conn_info, cfg: *mut fuse_config) -> *mut c_void {
-    (*cfg).use_ino = 1;
-    // NOTE this makes path NULL to parameters where fi->fh exists. This is evil
-    // for the current case of replication. But in future when this is properly
-    // handled it can improve performance.
-    // refer to
-    // https://libfuse.github.io/doxygen/structfuse__config.html#adc93fd1ac03d7f016d6b0bfab77f3863
-    // cfg->nullpath_ok = 1;
-
-    /* Pick up changes from lower filesystem right away. This is
-	   also necessary for better hardlink support. When the kernel
-	   calls the unlink() handler, it does not know the inode of
-	   the to-be-removed entry and can therefore not invalidate
-	   the cache of the associated inode - resulting in an
-	   incorrect st_nlink value being reported for any remaining
-	   hardlinks to this inode. */
-    // cfg->entry_timeout = 0;
-    // cfg->attr_timeout = 0;
-    // cfg->negative_timeout = 0;
-    (*cfg).auto_cache = 1;
-    (*conn).max_write = 32 * 1024;
-
-    return ptr::null_mut();
 }
 
 #[repr(C)]

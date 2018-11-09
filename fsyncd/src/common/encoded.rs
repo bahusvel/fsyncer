@@ -2,7 +2,8 @@
 #![allow(unused)]
 
 use libc::*;
-use std::ffi::CString;
+use std::borrow::Cow;
+use std::ffi::{CStr, CString};
 
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
@@ -19,7 +20,7 @@ macro_rules! path_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
         #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
         pub struct $name {
-            pub path: CString,
+            pub path: Cow<'static, CStr>,
             $(
                 pub $field: $ft,
             )*
@@ -41,19 +42,19 @@ path_syscall!(rmdir {});
 path_syscall!(fsync { isdatasync: c_int });
 
 encoded_syscall!(symlink {
-    from: CString,
-    to: CString
+    from: Cow<'static, CStr>,
+    to: Cow<'static, CStr>
 });
 
 encoded_syscall!(rename {
-    from: CString,
-    to: CString,
+    from: Cow<'static, CStr>,
+    to: Cow<'static, CStr>,
     flags: uint32_t
 });
 
 encoded_syscall!(link {
-    from: CString,
-    to: CString
+    from: Cow<'static, CStr>,
+    to: Cow<'static, CStr>
 });
 
 path_syscall!(chmod { mode: uint32_t });
@@ -65,9 +66,10 @@ path_syscall!(chown {
 
 path_syscall!(truncate { size: int64_t });
 
-path_syscall!(write {
+encoded_syscall!(write {
+    path: Cow<'static, CStr>,
     offset: int64_t,
-    buf: Vec<u8>
+    buf: Cow<'static, [u8]>
 });
 
 path_syscall!(fallocate {
@@ -77,12 +79,12 @@ path_syscall!(fallocate {
 });
 
 path_syscall!(setxattr {
-    name: CString,
+    name: Cow<'static, CStr>,
     value: Vec<u8>,
     flags: int32_t
 });
 
-path_syscall!(removexattr { name: CString });
+path_syscall!(removexattr { name: Cow<'static, CStr> });
 
 path_syscall!(create {
     mode: uint32_t,

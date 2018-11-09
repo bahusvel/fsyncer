@@ -1,15 +1,15 @@
 use common::*;
 use libc::*;
 
-pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
+pub unsafe fn dispatch(call: &VFSCall, root: &str) -> c_int {
     match call {
         VFSCall::mknod(mknod { path, mode, rdev }) => {
             let path = translate_path(&path, root);
-            xmp_mknod(path.as_ptr(), mode, rdev)
+            xmp_mknod(path.as_ptr(), *mode, *rdev)
         }
         VFSCall::mkdir(mkdir { path, mode }) => {
             let path = translate_path(&path, root);
-            xmp_mkdir(path.as_ptr(), mode)
+            xmp_mkdir(path.as_ptr(), *mode)
         }
         VFSCall::unlink(unlink { path }) => {
             let path = translate_path(&path, root);
@@ -26,7 +26,7 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
         VFSCall::rename(rename { from, to, flags }) => {
             let from = translate_path(&from, root);
             let to = translate_path(&to, root);
-            xmp_rename(from.as_ptr(), to.as_ptr(), flags)
+            xmp_rename(from.as_ptr(), to.as_ptr(), *flags)
         }
         VFSCall::link(link { from, to }) => {
             let from = translate_path(&from, root);
@@ -35,19 +35,19 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
         }
         VFSCall::chmod(chmod { path, mode }) => {
             let path = translate_path(&path, root);
-            xmp_chmod(path.as_ptr(), mode, -1)
+            xmp_chmod(path.as_ptr(), *mode, -1)
         }
         VFSCall::chown(chown { path, uid, gid }) => {
             let path = translate_path(&path, root);
-            xmp_chown(path.as_ptr(), uid, gid, -1)
+            xmp_chown(path.as_ptr(), *uid, *gid, -1)
         }
         VFSCall::truncate(truncate { path, size }) => {
             let path = translate_path(&path, root);
-            xmp_truncate(path.as_ptr(), size, -1)
+            xmp_truncate(path.as_ptr(), *size, -1)
         }
         VFSCall::write(write { path, buf, offset }) => {
             let path = translate_path(&path, root);
-            xmp_write(path.as_ptr(), buf.as_ptr(), buf.len(), offset, -1)
+            xmp_write(path.as_ptr(), buf.as_ptr(), buf.len(), *offset, -1)
         }
         VFSCall::fallocate(fallocate {
             path,
@@ -56,7 +56,7 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
             length,
         }) => {
             let path = translate_path(&path, root);
-            xmp_fallocate(path.as_ptr(), mode, offset, length, -1)
+            xmp_fallocate(path.as_ptr(), *mode, *offset, *length, -1)
         }
         VFSCall::setxattr(setxattr {
             path,
@@ -70,7 +70,7 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
                 name.as_ptr(),
                 value.as_ptr(),
                 value.len(),
-                flags,
+                *flags,
             )
         }
         VFSCall::removexattr(removexattr { path, name }) => {
@@ -80,7 +80,7 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
         VFSCall::create(create { path, mode, flags }) => {
             let path = translate_path(&path, root);
             let mut fd = -1;
-            let res = xmp_create(path.as_ptr(), mode, &mut fd as *mut c_int, flags);
+            let res = xmp_create(path.as_ptr(), *mode, &mut fd as *mut c_int, *flags);
             if fd != -1 {
                 close(fd);
             }
@@ -102,7 +102,7 @@ pub unsafe fn dispatch(call: VFSCall, root: &str) -> c_int {
         }
         VFSCall::fsync(fsync { path, isdatasync }) => {
             let path = translate_path(&path, root);
-            xmp_fsync(path.as_ptr(), isdatasync, -1)
+            xmp_fsync(path.as_ptr(), *isdatasync, -1)
         }
     }
 }

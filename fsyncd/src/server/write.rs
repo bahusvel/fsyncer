@@ -2,16 +2,20 @@ use common::*;
 use libc::*;
 use server::fuseops::fuse_file_info;
 use server::{handle_op, SERVER_PATH_RUST};
-use std::ffi::{CStr, CString};
+use std::borrow::Cow;
+use std::ffi::CStr;
 use std::ptr;
 use std::slice;
+
+const NULL: u8 = 0;
+const NULL_PTR: *const c_char = &NULL as *const _ as *const _;
 
 pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
     let res = xmp_mknod(real_path.as_ptr(), mode, rdev);
     handle_op(
         VFSCall::mknod(mknod {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             mode,
             rdev,
         }),
@@ -23,7 +27,7 @@ pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
     let res = xmp_mkdir(real_path.as_ptr(), mode);
     handle_op(
         VFSCall::mkdir(mkdir {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             mode,
         }),
         res,
@@ -35,7 +39,7 @@ pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
     let res = xmp_unlink(real_path.as_ptr());
     handle_op(
         VFSCall::unlink(unlink {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
         }),
         res,
     )
@@ -46,7 +50,7 @@ pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
     let res = xmp_rmdir(real_path.as_ptr());
     handle_op(
         VFSCall::rmdir(rmdir {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
         }),
         res,
     )
@@ -57,8 +61,8 @@ pub unsafe extern "C" fn do_symlink(from: *const c_char, to: *const c_char) -> c
     let res = xmp_symlink(from, real_to.as_ptr());
     handle_op(
         VFSCall::symlink(symlink {
-            from: CString::from(CStr::from_ptr(from)),
-            to: CString::from(CStr::from_ptr(to)),
+            from: Cow::Borrowed(CStr::from_ptr(from)),
+            to: Cow::Borrowed(CStr::from_ptr(to)),
         }),
         res,
     )
@@ -73,8 +77,8 @@ pub unsafe extern "C" fn do_rename(from: *const c_char, to: *const c_char, flags
     let res = xmp_rename(real_from.as_ptr(), real_to.as_ptr(), flags);
     handle_op(
         VFSCall::rename(rename {
-            from: CString::from(CStr::from_ptr(from)),
-            to: CString::from(CStr::from_ptr(to)),
+            from: Cow::Borrowed(CStr::from_ptr(from)),
+            to: Cow::Borrowed(CStr::from_ptr(to)),
             flags,
         }),
         res,
@@ -87,8 +91,8 @@ pub unsafe extern "C" fn do_link(from: *const c_char, to: *const c_char) -> c_in
     let res = xmp_link(real_from.as_ptr(), real_to.as_ptr());
     handle_op(
         VFSCall::link(link {
-            from: CString::from(CStr::from_ptr(from)),
-            to: CString::from(CStr::from_ptr(to)),
+            from: Cow::Borrowed(CStr::from_ptr(from)),
+            to: Cow::Borrowed(CStr::from_ptr(to)),
         }),
         res,
     )
@@ -107,7 +111,7 @@ pub unsafe extern "C" fn do_chmod(
     };
     handle_op(
         VFSCall::chmod(chmod {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             mode,
         }),
         res,
@@ -128,7 +132,7 @@ pub unsafe extern "C" fn do_chown(
     };
     handle_op(
         VFSCall::chown(chown {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             uid,
             gid,
         }),
@@ -149,7 +153,7 @@ pub unsafe extern "C" fn do_truncate(
     };
     handle_op(
         VFSCall::truncate(truncate {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             size,
         }),
         res,
@@ -171,8 +175,8 @@ pub unsafe extern "C" fn do_write(
     };
     handle_op(
         VFSCall::write(write {
-            path: CString::from(CStr::from_ptr(path)),
-            buf: Vec::from(slice::from_raw_parts(buf, size)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
+            buf: Cow::Borrowed(slice::from_raw_parts(buf, size)),
             offset,
         }),
         res,
@@ -194,7 +198,7 @@ pub unsafe extern "C" fn do_fallocate(
     };
     handle_op(
         VFSCall::fallocate(fallocate {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             mode,
             offset,
             length,
@@ -214,8 +218,8 @@ pub unsafe extern "C" fn do_setxattr(
     let res = xmp_setxattr(real_path.as_ptr(), name, value, size, flags);
     handle_op(
         VFSCall::setxattr(setxattr {
-            path: CString::from(CStr::from_ptr(path)),
-            name: CString::from(CStr::from_ptr(name)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
+            name: Cow::Borrowed(CStr::from_ptr(name)),
             value: Vec::from(slice::from_raw_parts(value, size)),
             flags,
         }),
@@ -228,8 +232,8 @@ pub unsafe extern "C" fn do_removexattr(path: *const c_char, name: *const c_char
     let res = xmp_removexattr(real_path.as_ptr(), name);
     handle_op(
         VFSCall::removexattr(removexattr {
-            path: CString::from(CStr::from_ptr(path)),
-            name: CString::from(CStr::from_ptr(name)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
+            name: Cow::Borrowed(CStr::from_ptr(name)),
         }),
         res,
     )
@@ -249,7 +253,7 @@ pub unsafe extern "C" fn do_create(
     assert!((*fi).fh as i32 == fd);
     handle_op(
         VFSCall::create(create {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             mode,
             flags: (*fi).flags,
         }),
@@ -270,7 +274,7 @@ pub unsafe extern "C" fn do_utimens(
     };
     handle_op(
         VFSCall::utimens(utimens {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             timespec: [(*ts).into(), (*ts.offset(1)).into()],
         }),
         res,
@@ -292,7 +296,7 @@ pub unsafe extern "C" fn do_fsync(
 
     handle_op(
         VFSCall::fsync(fsync {
-            path: CString::from(CStr::from_ptr(path)),
+            path: Cow::Borrowed(CStr::from_ptr(path)),
             isdatasync: isdatasync,
         }),
         res,

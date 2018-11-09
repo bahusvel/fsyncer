@@ -15,6 +15,7 @@ use libc::{c_char, c_int};
 use lz4;
 use net2::TcpStreamExt;
 use std;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
@@ -163,6 +164,7 @@ impl Client {
             comp: bool,
         ) -> Result<(), io::Error> {
             let mut nbuf = Vec::new();
+
             let buf = if let Some(ref mut rt_comp) = net.rt_comp {
                 rt_comp.encode(&serbuf[..], &mut nbuf);
                 size = nbuf.len();
@@ -378,17 +380,17 @@ macro_rules! is_variant {
     };
 }
 
-fn send_call(call: &VFSCall, client: &Client, ret: i32) -> Result<(), io::Error> {
+fn send_call(call: Cow<VFSCall>, client: &Client, ret: i32) -> Result<(), io::Error> {
     match client.mode {
         ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC | ClientMode::MODE_FLUSHSYNC => {
             // In flushsync mode all ops except for fsync are sent async
-            if client.mode == ClientMode::MODE_FLUSHSYNC && !is_variant!(call, VFSCall::fsync) {
-                return client.send_msg(FsyncerMsg::AsyncOp(call.clone()), false);
+            if client.mode == ClientMode::MODE_FLUSHSYNC && !is_variant!(&*call, VFSCall::fsync) {
+                return client.send_msg(FsyncerMsg::AsyncOp(call), false);
             }
 
             let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
             let client_ret = client
-                .send_msg(FsyncerMsg::SyncOp(call.clone(), tid), true)
+                .send_msg(FsyncerMsg::SyncOp(call, tid), true)
                 .map(|_| client.wait_thread_response())?;
 
             if client.mode == ClientMode::MODE_SYNC && client_ret != ret {
@@ -412,7 +414,7 @@ pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
 
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        let res = send_call(&call, client, ret);
+        let res = send_call(Cow::Borrowed(&call), client, ret);
         if res.is_err() {
             println!("Failed sending message to client {}", res.unwrap_err());
         }

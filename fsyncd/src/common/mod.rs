@@ -4,6 +4,7 @@ mod ops;
 pub use self::encoded::*;
 pub use self::ops::*;
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -13,10 +14,10 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub enum FsyncerMsg {
+pub enum FsyncerMsg<'a> {
     InitMsg(InitMsg),
-    AsyncOp(VFSCall),
-    SyncOp(VFSCall, u64),
+    AsyncOp(Cow<'a, VFSCall>),
+    SyncOp(Cow<'a, VFSCall>, u64),
     Ack(AckMsg),
     Cork(u64),
     AckCork(u64),

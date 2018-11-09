@@ -17,7 +17,7 @@ use std::mem::size_of;
 use std::net::TcpStream;
 use zstd;
 
-pub struct Client<F: Fn(VFSCall) -> i32> {
+pub struct Client<F: Fn(&VFSCall) -> i32> {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
     mode: ClientMode,
@@ -34,7 +34,7 @@ fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
     write.flush()
 }
 
-impl<F: Fn(VFSCall) -> i32> Client<F> {
+impl<F: Fn(&VFSCall) -> i32> Client<F> {
     pub fn new(
         host: &str,
         port: i32,
@@ -86,7 +86,7 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
         send_msg(&mut self.write, msg_data)
     }
 
-    fn read_msg(&mut self) -> Result<FsyncerMsg, io::Error> {
+    fn read_msg<'a, 'b>(&'a mut self) -> Result<FsyncerMsg<'b>, io::Error> {
         let mut rcv_buf = [0; 33 * 1024];
         let length = self.read.read_u32::<BigEndian>()? as usize;
 
@@ -127,7 +127,7 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
                         self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: 0, tid }))?;
                     }
 
-                    let res = (self.op_callback)(call);
+                    let res = (self.op_callback)(&call);
 
                     if self.mode == ClientMode::MODE_SYNC || self.mode == ClientMode::MODE_FLUSHSYNC
                     {
@@ -136,7 +136,7 @@ impl<F: Fn(VFSCall) -> i32> Client<F> {
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
                     // TODO check return status
-                    let _res = (self.op_callback)(call);
+                    let _res = (self.op_callback)(&call);
                 }
                 Ok(FsyncerMsg::Cork(tid)) => {
                     println!("Received cork request");
