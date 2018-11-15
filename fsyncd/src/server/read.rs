@@ -61,10 +61,11 @@ pub unsafe extern "C" fn xmp_listxattr(
     size: usize,
 ) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
-    if llistxattr(real_path.as_ptr(), list, size) == -1 {
+    let res = llistxattr(real_path.as_ptr(), list, size);
+    if res == -1 {
         return neg_errno();
     }
-    0
+    res as i32
 }
 pub unsafe extern "C" fn xmp_getxattr(
     path: *const c_char,
@@ -73,10 +74,11 @@ pub unsafe extern "C" fn xmp_getxattr(
     size: usize,
 ) -> c_int {
     let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
-    if lgetxattr(real_path.as_ptr(), name, value as *mut _, size) == -1 {
+    let res = lgetxattr(real_path.as_ptr(), name, value as *mut _, size);
+    if res == -1 {
         return neg_errno();
     }
-    0
+    res as i32
 }
 
 pub unsafe extern "C" fn xmp_release(_path: *const c_char, fi: *mut fuse_file_info) -> c_int {
@@ -133,8 +135,9 @@ pub unsafe extern "C" fn xmp_read(
         }
         let res = pread(fd, buf as *mut _, size, offset);
         if res == -1 {
+            let err = neg_errno();
             close(fd);
-            return neg_errno();
+            return err;
         }
         close(fd);
         res as i32

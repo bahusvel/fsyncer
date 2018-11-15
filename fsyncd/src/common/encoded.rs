@@ -66,8 +66,7 @@ path_syscall!(chown {
 
 path_syscall!(truncate { size: int64_t });
 
-encoded_syscall!(write {
-    path: Cow<'a, CStr>,
+path_syscall!(write {
     offset: int64_t,
     buf: Cow<'a, [u8]>
 });
