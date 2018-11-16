@@ -3,9 +3,21 @@ use common::*;
 use errno::errno;
 use libc::*;
 use std::ffi::CString;
+use std::fs;
 use std::fs::File;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::os::unix::io::FromRawFd;
+use walkdir::DirEntryExt;
+
+macro_rules! is_variant {
+    ($val:expr, $variant:path) => {
+        if let $variant(_) = $val {
+            true
+        } else {
+            false
+        }
+    };
+}
 
 fn translate_and_stat(path: &CStr, fspath: &str) -> Result<stat, Error> {
     use std::mem;
@@ -17,6 +29,16 @@ fn translate_and_stat(path: &CStr, fspath: &str) -> Result<stat, Error> {
         return Err(Error::from(errno()));
     }
     Ok(stbuf)
+}
+
+fn find_hardlink(ino: u64, intree: &str) -> Result<Option<String>, Error> {
+    for entry in WalkDir::new(intree) {
+        let e = entry?;
+        if e.ino() == ino {
+            return Ok(Some(String::from(e.path().to_str().unwrap())));
+        }
+    }
+    return Ok(None);
 }
 
 pub trait LogItem {
@@ -56,6 +78,16 @@ impl LogItem for log_chmod {
 
 pub struct log_chown(chown<'static>);
 
+impl<'a, 'b> From<&'b chown<'a>> for log_chown {
+    fn from(c: &chown) -> Self {
+        log_chown(chown {
+            path: Cow::Owned(c.path.clone().into_owned()),
+            uid: c.uid,
+            gid: c.gid,
+        })
+    }
+}
+
 impl LogItem for log_chown {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
         let stbuf = translate_and_stat(&self.0.path, fspath)?;
@@ -75,6 +107,15 @@ impl LogItem for log_chown {
 }
 
 pub struct log_utimens(utimens<'static>);
+
+impl<'a, 'b> From<&'b utimens<'a>> for log_utimens {
+    fn from(u: &utimens) -> Self {
+        log_utimens(utimens {
+            path: Cow::Owned(u.path.clone().into_owned()),
+            timespec: u.timespec.clone(),
+        })
+    }
+}
 
 impl LogItem for log_utimens {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
@@ -113,6 +154,16 @@ impl LogItem for log_utimens {
 #[derive(Clone)]
 pub struct log_rename(rename<'static>);
 
+impl<'a, 'b> From<&'b rename<'a>> for log_rename {
+    fn from(r: &rename) -> Self {
+        log_rename(rename {
+            from: Cow::Owned(r.from.clone().into_owned()),
+            to: Cow::Owned(r.to.clone().into_owned()),
+            flags: r.flags,
+        })
+    }
+}
+
 impl LogItem for log_rename {
     fn current_state(&self, _fspath: &str) -> Result<Self, Error> {
         Ok(self.clone())
@@ -129,6 +180,24 @@ impl LogItem for log_rename {
 
 #[derive(Clone)]
 pub struct log_dir(mkdir<'static>);
+
+impl<'a, 'b> From<&'b mkdir<'a>> for log_dir {
+    fn from(m: &mkdir) -> Self {
+        log_dir(mkdir {
+            path: Cow::Owned(m.path.clone().into_owned()),
+            mode: m.mode,
+        })
+    }
+}
+
+impl<'a, 'b> From<&'b rmdir<'a>> for log_dir {
+    fn from(r: &rmdir) -> Self {
+        log_dir(mkdir {
+            path: Cow::Owned(r.path.clone().into_owned()),
+            mode: 0,
+        })
+    }
+}
 
 impl LogItem for log_dir {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
@@ -150,26 +219,148 @@ impl LogItem for log_dir {
 /*
     If the file exists it's type needs to be identified, one of 4 below, and it is to be removed via unlink. If the file doesnt exist it is to be created from the type recorded with the specified parameters.
 */
+#[derive(Clone)]
 pub enum log_file {
     symlink(symlink<'static>),
     link(link<'static>),
     node(mknod<'static>),
     file(create<'static>),
+    unlink(unlink<'static>),
+}
+
+impl log_file {
+    #[inline]
+    fn file_path(&self) -> &CStr {
+        match self {
+            log_file::symlink(symlink { to, .. }) => to,
+            log_file::link(link { to, .. }) => to,
+            log_file::node(mknod { path, .. }) => path,
+            log_file::file(create { path, .. }) => path,
+            log_file::unlink(unlink { path }) => path,
+        }
+    }
+}
+
+impl<'a, 'b> From<&'b symlink<'a>> for log_file {
+    fn from(s: &symlink) -> Self {
+        log_file::symlink(symlink {
+            from: Cow::Owned(s.from.clone().into_owned()),
+            to: Cow::Owned(s.to.clone().into_owned()),
+        })
+    }
+}
+
+impl<'a, 'b> From<&'b link<'a>> for log_file {
+    fn from(l: &link) -> Self {
+        log_file::link(link {
+            from: Cow::Owned(l.from.clone().into_owned()),
+            to: Cow::Owned(l.to.clone().into_owned()),
+        })
+    }
+}
+
+impl<'a, 'b> From<&'b mknod<'a>> for log_file {
+    fn from(m: &mknod) -> Self {
+        log_file::node(mknod {
+            path: Cow::Owned(m.path.clone().into_owned()),
+            mode: m.mode,
+            rdev: m.rdev,
+        })
+    }
+}
+
+impl<'a, 'b> From<&'b create<'a>> for log_file {
+    fn from(c: &create) -> Self {
+        log_file::file(create {
+            path: Cow::Owned(c.path.clone().into_owned()),
+            mode: c.mode,
+            flags: c.flags,
+        })
+    }
+}
+
+impl<'a, 'b> From<&'b unlink<'a>> for log_file {
+    fn from(u: &unlink) -> Self {
+        log_file::unlink(unlink {
+            path: Cow::Owned(u.path.clone().into_owned()),
+        })
+    }
 }
 
 impl LogItem for log_file {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
-        if self.0.mode != 0 {
-            return Ok(self.clone());
+        #[inline(always)]
+        fn is_type(mode: uint32_t, ftype: uint32_t) -> bool {
+            mode & ftype == ftype
         }
-        let stbuf = translate_and_stat(&self.0.path, fspath)?;
-        Ok(log_dir(mkdir {
-            path: self.0.path.clone(),
-            mode: stbuf.st_mode,
-        }))
+        let stat_res = translate_and_stat(&self.file_path(), fspath);
+        match stat_res {
+            Ok(stbuf) => {
+                assert!(is_variant!(self, log_file::unlink));
+                let m = stbuf.st_mode;
+                // file exists, deleting
+                if is_type(m, S_IFREG) {
+                    // Regular file
+                    if stbuf.st_nlink > 1 {
+                        println!("This file is hard linked, balls...");
+                        let dst = find_hardlink(stbuf.st_ino, fspath)?;
+                        if dst.is_none() {
+                            return Err(Error::new(
+                                ErrorKind::Other,
+                                "File is hardlinked outside fsyncer path",
+                            ));
+                        }
+                        Ok(log_file::link(link {
+                            from: Cow::Owned(CString::new(dst.unwrap()).unwrap()),
+                            to: Cow::Owned(CString::from(self.file_path())),
+                        }))
+                    } else {
+                        Ok(log_file::file(create {
+                            path: Cow::Owned(CString::from(self.file_path())),
+                            mode: stbuf.st_mode,
+                            flags: 0,
+                        }))
+                    }
+                } else if is_type(m, S_IFLNK) {
+                    // symlink
+                    let real_path = translate_path(&self.file_path(), &fspath);
+                    let dst = fs::read_link(
+                        real_path
+                            .to_str()
+                            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+                    )?;
+
+                    Ok(log_file::symlink(symlink {
+                        from: Cow::Owned(CString::new(dst.to_str().unwrap()).unwrap()),
+                        to: Cow::Owned(CString::from(self.file_path())),
+                    }))
+                } else if is_type(m, S_IFBLK)
+                    || is_type(m, S_IFCHR)
+                    || is_type(m, S_IFIFO)
+                    || is_type(m, S_IFSOCK)
+                //http://man7.org/linux/man-pages/man2/mknod.2.html
+                {
+                    Ok(log_file::node(mknod {
+                        path: Cow::Owned(CString::from(self.file_path())),
+                        mode: stbuf.st_mode,
+                        rdev: stbuf.st_rdev,
+                    }))
+                } else {
+                    panic!("log_file does not understand {:x} file type", m & S_IFMT);
+                }
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::NotFound => Ok(log_file::unlink(unlink {
+                path: Cow::Owned(CString::from(self.file_path())),
+            })), //file does not exist, creating
+            Err(err) => Err(err),
+        }
     }
-    fn gen_bilog(oldstate: Self, _newstate: Self) -> Self {
-        oldstate
+    fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
+        if is_variant!(newstate, log_file::unlink) {
+            oldstate
+        } else {
+            newstate
+        }
     }
 }
 
@@ -180,6 +371,26 @@ pub struct log_xattr {
     path: CString,
     name: CString,
     value: Option<Vec<u8>>,
+}
+
+impl<'a, 'b> From<&'b setxattr<'a>> for log_xattr {
+    fn from(s: &setxattr) -> Self {
+        log_xattr {
+            path: s.path.clone().into_owned(),
+            name: s.name.clone().into_owned(),
+            value: Some(s.value.clone()),
+        }
+    }
+}
+
+impl<'a, 'b> From<&'b removexattr<'a>> for log_xattr {
+    fn from(r: &removexattr) -> Self {
+        log_xattr {
+            path: r.path.clone().into_owned(),
+            name: r.name.clone().into_owned(),
+            value: None,
+        }
+    }
 }
 
 impl LogItem for log_xattr {
