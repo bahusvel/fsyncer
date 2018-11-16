@@ -217,7 +217,7 @@ pub unsafe extern "C" fn do_setxattr(
         VFSCall::setxattr(setxattr {
             path: Cow::Borrowed(CStr::from_ptr(path)),
             name: Cow::Borrowed(CStr::from_ptr(name)),
-            value: Vec::from(slice::from_raw_parts(value, size)),
+            value: Cow::Borrowed(slice::from_raw_parts(value, size)),
             flags,
         }),
         res,

@@ -1,5 +1,6 @@
 mod encoded;
 mod log;
+mod logstore;
 mod ops;
 
 pub use self::encoded::*;

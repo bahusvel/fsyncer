@@ -79,7 +79,7 @@ path_syscall!(fallocate {
 
 path_syscall!(setxattr {
     name: Cow<'a, CStr>,
-    value: Vec<u8>,
+    value: Cow<'a, [u8]>,
     flags: int32_t
 });
 

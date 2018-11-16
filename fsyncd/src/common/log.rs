@@ -49,6 +49,7 @@ pub trait LogItem {
 }
 
 //Auto transforms
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_chmod(chmod<'static>);
 
 impl<'a, 'b> From<&'b chmod<'a>> for log_chmod {
@@ -76,6 +77,7 @@ impl LogItem for log_chmod {
     }
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_chown(chown<'static>);
 
 impl<'a, 'b> From<&'b chown<'a>> for log_chown {
@@ -106,6 +108,7 @@ impl LogItem for log_chown {
     }
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_utimens(utimens<'static>);
 
 impl<'a, 'b> From<&'b utimens<'a>> for log_utimens {
@@ -151,7 +154,7 @@ impl LogItem for log_utimens {
     }
 }
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_rename(rename<'static>);
 
 impl<'a, 'b> From<&'b rename<'a>> for log_rename {
@@ -178,7 +181,7 @@ impl LogItem for log_rename {
     If directory exists it shall be removed with rmdir on the specified path, if the directory does not exist it shall be created on the specified path with the specified mode.
 */
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_dir(mkdir<'static>);
 
 impl<'a, 'b> From<&'b mkdir<'a>> for log_dir {
@@ -219,7 +222,7 @@ impl LogItem for log_dir {
 /*
     If the file exists it's type needs to be identified, one of 4 below, and it is to be removed via unlink. If the file doesnt exist it is to be created from the type recorded with the specified parameters.
 */
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum log_file {
     symlink(symlink<'static>),
     link(link<'static>),
@@ -367,6 +370,7 @@ impl LogItem for log_file {
 /* 
 If the attribute exists and its value matches that of recorded below it is to be removed, if the attribute doesn't exist or its value doesnt match the one below it is to be set.
 */
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_xattr {
     path: CString,
     name: CString,
@@ -378,7 +382,7 @@ impl<'a, 'b> From<&'b setxattr<'a>> for log_xattr {
         log_xattr {
             path: s.path.clone().into_owned(),
             name: s.name.clone().into_owned(),
-            value: Some(s.value.clone()),
+            value: Some(s.value.clone().into_owned()),
         }
     }
 }
@@ -446,6 +450,7 @@ impl LogItem for log_xattr {
 
     If the operation is truncate and removes part of the file its reverse operation is to write the missing data back in.
 */
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct log_write {
     path: CString,
     offset: int64_t,
