@@ -93,10 +93,10 @@ pub unsafe extern "C" fn xmp_release(_path: *const c_char, fi: *mut fuse_file_in
 pub unsafe extern "C" fn xmp_flush(_path: *const c_char, fi: *mut fuse_file_info) -> c_int {
     if !fi.is_null() {
         /* This is called from every close on an open file, so call the
-	   close on the underlying filesystem.	But since flush may be
-	   called multiple times for an open file, this must not really
-	   close the file.  This is important if used on a network
-	   filesystem like NFS which flush the data/metadata on close() */
+        close on the underlying filesystem.	But since flush may be
+        called multiple times for an open file, this must not really
+        close the file.  This is important if used on a network
+        filesystem like NFS which flush the data/metadata on close() */
         if close(dup((*fi).fh as i32)) == -1 {
             return neg_errno();
         }

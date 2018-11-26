@@ -367,7 +367,7 @@ impl LogItem for log_file {
     }
 }
 
-/* 
+/*
 If the attribute exists and its value matches that of recorded below it is to be removed, if the attribute doesn't exist or its value doesnt match the one below it is to be set.
 */
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -446,7 +446,7 @@ impl LogItem for log_xattr {
 }
 
 /*
-    If the write offset + size > file length its reverse operation is to truncate offset + size - file length bytes of the end of the file, and write old data for the rest as follows. When overwriting old data the reverse is to write the old data. 
+    If the write offset + size > file length its reverse operation is to truncate offset + size - file length bytes of the end of the file, and write old data for the rest as follows. When overwriting old data the reverse is to write the old data.
 
     If the operation is truncate and removes part of the file its reverse operation is to write the missing data back in.
 */
