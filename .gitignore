@@ -5,6 +5,7 @@ build
 *target
 .fsyncer-*
 bindgen
+*.fj
 
 # Magic rule to exclude binaries in test 
 test/*

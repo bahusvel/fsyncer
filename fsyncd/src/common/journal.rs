@@ -1,15 +1,13 @@
 use bincode::{deserialize_from, serialize_into, serialized_size};
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
 use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
-use std::mem::size_of;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static TRANS_CTR: AtomicUsize = AtomicUsize::new(0);
-const ZERO_SIZE: [u8; 4096] = [0; 4096];
 
 #[derive(Clone)]
 struct JournaHeader {
@@ -121,7 +119,31 @@ where
         );
 
         let rsize = iter_try!(self.journal.file.read_u32::<LittleEndian>());
-        iter_try!(self.journal.file.seek(SeekFrom::Current(-(rsize as i64))));
+        println!("rsize {}", rsize);
+
+        let last_entry = self.header.tail - rsize as u64;
+
+        let pad_size = if d2end(last_entry, self.journal.size) < 4 {
+            d2end(last_entry, self.journal.size)
+        } else {
+            iter_try!(
+                self.journal
+                    .file
+                    .seek(SeekFrom::Start(last_entry % self.journal.size))
+            );
+            let size = iter_try!(self.journal.file.read_u32::<LittleEndian>());
+            if size == 0 {
+                d2end(last_entry, self.journal.size)
+            } else {
+                0
+            }
+        };
+
+        iter_try!(
+            self.journal
+                .file
+                .seek(SeekFrom::Start((last_entry + pad_size) % self.journal.size))
+        );
 
         let entry: JournalEntry<T> = iter_try!(
             deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
@@ -155,7 +177,6 @@ impl Journal {
         };
         let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
         e.fsize = esize as u32;
-        e.rsize = esize as u32;
         println!(
             "esize {}, tail {}, head {}",
             esize, self.header.tail, self.header.head
@@ -192,15 +213,12 @@ impl Journal {
             self.header.head += fsize as u64;
             free_space += fsize as u64;
         }
-
+        e.rsize = (esize + pad) as u32;
         self.file
             .seek(SeekFrom::Start(self.header.tail % self.size))?;
         if pad != 0 {
-            let mut pad_left = pad as usize;
-            while pad_left > 0 {
-                self.file
-                    .write_all(&ZERO_SIZE[..if pad_left >= 4096 { 4096 } else { pad_left }])?;
-                pad_left -= 4096;
+            if pad >= 4 {
+                self.file.write_u32::<LittleEndian>(0)?;
             }
             self.file
                 .seek(SeekFrom::Start((self.header.tail + pad) % self.size))?;
