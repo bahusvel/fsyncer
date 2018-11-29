@@ -225,8 +225,7 @@ impl Client {
                 .entry(tid)
                 .or_insert(Arc::new(ClientResponse::new()))
                 .clone()
-        }
-        .wait()
+        }.wait()
     }
 }
 
@@ -534,8 +533,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 backing_store.clone(),
                 dont_check,
                 buffer_size,
-            )
-            .expect("Failed handling client");
+            ).expect("Failed handling client");
         }
     });
 
@@ -553,8 +551,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let args = vec![
         "fsyncd".to_string(),
         server_matches.value_of("mount-path").unwrap().to_string(),
-    ]
-    .into_iter()
+    ].into_iter()
     .chain(std::env::args().skip_while(|v| v != "--").skip(1))
     .map(|arg| CString::new(arg).unwrap())
     .collect::<Vec<CString>>();

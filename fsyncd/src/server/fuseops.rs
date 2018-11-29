@@ -95,11 +95,8 @@ pub struct fuse_config {
 #[derive(Debug, Copy, Clone, Default)]
 pub struct fuse_operations {
     pub getattr: Option<
-        unsafe extern "C" fn(
-            arg1: *const c_char,
-            arg2: *mut stat,
-            fi: *mut fuse_file_info,
-        ) -> c_int,
+        unsafe extern "C" fn(arg1: *const c_char, arg2: *mut stat, fi: *mut fuse_file_info)
+            -> c_int,
     >,
     pub readlink:
         Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut c_char, arg3: usize) -> c_int>,
@@ -209,11 +206,8 @@ pub struct fuse_operations {
         ) -> c_int,
     >,
     pub utimens: Option<
-        unsafe extern "C" fn(
-            arg1: *const c_char,
-            tv: *const timespec,
-            fi: *mut fuse_file_info,
-        ) -> c_int,
+        unsafe extern "C" fn(arg1: *const c_char, tv: *const timespec, fi: *mut fuse_file_info)
+            -> c_int,
     >,
     pub bmap:
         Option<unsafe extern "C" fn(arg1: *const c_char, blocksize: usize, idx: *mut u64) -> c_int>,
