@@ -12,8 +12,6 @@ use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-static TRANS_CTR: AtomicUsize = AtomicUsize::new(0);
-
 #[derive(Clone)]
 struct JournaHeader {
     tail: u64,
@@ -30,6 +28,7 @@ struct JournalEntry<T> {
 
 pub struct Journal {
     header: JournaHeader,
+    trans_ctr: AtomicUsize,
     size: u64,
     file: File,
 }
@@ -163,6 +162,7 @@ impl Journal {
     pub fn new(file: File) -> Result<Self, Error> {
         Ok(Journal {
             header: JournaHeader { head: 0, tail: 0 },
+            trans_ctr: AtomicUsize::new(0),
             size: file.metadata()?.len(),
             file: file,
         })
@@ -171,7 +171,7 @@ impl Journal {
     pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
         let mut e = JournalEntry {
             fsize: 0,
-            trans_id: TRANS_CTR.fetch_add(1, Ordering::Relaxed) as u32,
+            trans_id: self.trans_ctr.fetch_add(1, Ordering::Relaxed) as u32,
             inner: entry,
             rsize: 0,
         };
