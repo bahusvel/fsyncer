@@ -19,6 +19,41 @@ macro_rules! is_variant {
     };
 }
 
+pub enum JournalCall {
+    log_chmod(log_chmod),
+    log_chown(log_chown),
+    log_utimens(log_utimens),
+    log_rename(log_rename),
+    log_dir(log_dir),
+    log_file(log_file),
+    log_xattr(log_xattr),
+    log_write(log_write),
+}
+
+impl<'a, 'b> From<&'b VFSCall<'a>> for JournalCall {
+    fn from(call: &VFSCall) -> JournalCall {
+        match call {
+            VFSCall::mknod(mknod) => JournalCall::log_file(log_file::from(mknod)),
+            VFSCall::mkdir(mkdir) => JournalCall::log_dir(log_dir::from(mkdir)),
+            VFSCall::unlink(unlink) => JournalCall::log_file(log_file::from(unlink)),
+            VFSCall::rmdir(rmdir) => JournalCall::log_dir(log_dir::from(rmdir)),
+            VFSCall::symlink(symlink) => JournalCall::log_dir(log_dir::from(rmdir)),
+            VFSCall::rename(rename),
+            VFSCall::link(link),
+            VFSCall::chmod(chmod),
+            VFSCall::chown(chown),
+            VFSCall::truncate(truncate),
+            VFSCall::write(write),
+            VFSCall::fallocate(fallocate),
+            VFSCall::setxattr(setxattr),
+            VFSCall::removexattr(removexattr),
+            VFSCall::create(create),
+            VFSCall::utimens(utimens),
+            VFSCall::fsync(fsync),
+        }
+    }
+}
+
 fn translate_and_stat(path: &CStr, fspath: &str) -> Result<stat, Error> {
     use std::mem;
     let real_path = translate_path(path, &fspath);

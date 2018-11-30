@@ -1,3 +1,8 @@
+#[cfg(test)]
+extern crate test;
+
+#[cfg(test)]
+use self::test::Bencher;
 use bincode::{deserialize_from, serialize_into, serialized_size};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::{Deserialize, Serialize};
@@ -92,10 +97,10 @@ where
             deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
         );
 
-        println!(
-            "head {}, tail {}, entry {:?}",
-            self.header.head, self.header.tail, entry
-        );
+        // println!(
+        //     "head {}, tail {}, entry {:?}",
+        //     self.header.head, self.header.tail, entry
+        // );
 
         self.header.head += entry.fsize as u64;
         Some(Ok(entry.inner))
@@ -119,7 +124,7 @@ where
         );
 
         let rsize = iter_try!(self.journal.file.read_u32::<LittleEndian>());
-        println!("rsize {}", rsize);
+        //println!("rsize {}", rsize);
 
         let last_entry = self.header.tail - rsize as u64;
 
@@ -149,10 +154,10 @@ where
             deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
         );
 
-        println!(
-            "head {}, tail {}, entry {:?}",
-            self.header.head, self.header.tail, entry
-        );
+        // println!(
+        // "head {}, tail {}, entry {:?}",
+        // self.header.head, self.header.tail, entry
+        // );
 
         self.header.tail -= rsize as u64;
         Some(Ok(entry.inner))
@@ -190,7 +195,7 @@ impl Journal {
         let mut free_space = self.size - (self.header.tail - self.header.head);
 
         while free_space < esize + pad {
-            println!("{} <= {} + {}", free_space, esize, pad);
+            //println!("{} <= {} + {}", free_space, esize, pad);
             if self.header.head == self.header.tail {
                 return Err(Error::new(
                     ErrorKind::UnexpectedEof,
@@ -209,7 +214,7 @@ impl Journal {
                     s as u64
                 }
             };
-            println!("fsize {}, head {}", fsize, self.header.head);
+            //println!("fsize {}, head {}", fsize, self.header.head);
             self.header.head += fsize as u64;
             free_space += fsize as u64;
         }
@@ -264,12 +269,26 @@ fn journal_test() {
         for _ in 0..100 {
             j.write_entry("Hello")?;
         }
-
         for e in j.read_reverse::<String>() {
             println!("{:?}", e?);
         }
-
         Ok(())
     }
     inner().unwrap();
+}
+
+#[bench]
+fn journal_write(b: &mut Bencher) {
+    fn inner() -> Result<Journal, Error> {
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open("test.fj")?;
+        f.set_len(1024)?;
+        Journal::new(f)
+    }
+    let buf = [1; 100];
+    let mut j = inner().unwrap();
+    b.iter(|| j.write_entry(&buf[..]).expect("Write failed"));
 }

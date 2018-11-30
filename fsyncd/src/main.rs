@@ -1,5 +1,6 @@
 #![feature(libc)]
 #![feature(const_string_new)]
+#![feature(test)]
 
 #[cfg(feature = "profile")]
 extern crate cpuprofiler;
