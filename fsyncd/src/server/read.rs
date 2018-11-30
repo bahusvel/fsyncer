@@ -1,7 +1,7 @@
 use common::{neg_errno, translate_path};
 use libc::*;
 use server::fuseops::{fuse_bufvec, fuse_file_info, fuse_fill_dir_t, fuse_readdir_flags};
-use server::SERVER_PATH_RUST;
+use server::SERVER_PATH;
 use std::ffi::CStr;
 use std::ptr;
 
@@ -30,13 +30,19 @@ struct xmp_dirp {
     offset: off_t,
 }
 
+macro_rules! trans_ppath {
+    ($path:expr) => {
+        translate_path(CStr::from_ptr($path), &SERVER_PATH)
+    };
+}
+
 pub unsafe extern "C" fn xmp_opendir(path: *const c_char, fi: *mut fuse_file_info) -> c_int {
     let mut d = Box::new(xmp_dirp {
         offset: 0,
         dp: ptr::null_mut(),
         entry: ptr::null_mut(),
     });
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
 
     d.dp = opendir(real_path.as_ptr());
     if d.dp.is_null() {
@@ -60,7 +66,7 @@ pub unsafe extern "C" fn xmp_listxattr(
     list: *mut c_char,
     size: usize,
 ) -> c_int {
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
     let res = llistxattr(real_path.as_ptr(), list, size);
     if res == -1 {
         return neg_errno();
@@ -73,7 +79,7 @@ pub unsafe extern "C" fn xmp_getxattr(
     value: *mut c_char,
     size: usize,
 ) -> c_int {
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
     let res = lgetxattr(real_path.as_ptr(), name, value as *mut _, size);
     if res == -1 {
         return neg_errno();
@@ -107,7 +113,7 @@ pub unsafe extern "C" fn xmp_flush(_path: *const c_char, fi: *mut fuse_file_info
 }
 
 pub unsafe extern "C" fn xmp_statfs(path: *const c_char, stbuf: *mut statvfs) -> c_int {
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
     if statvfs(real_path.as_ptr(), stbuf) == -1 {
         return neg_errno();
     }
@@ -128,7 +134,7 @@ pub unsafe extern "C" fn xmp_read(
         }
         res as i32
     } else {
-        let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+        let real_path = trans_ppath!(path);
         let fd = open(real_path.as_ptr(), O_RDONLY);
         if fd == -1 {
             return neg_errno();
@@ -144,7 +150,7 @@ pub unsafe extern "C" fn xmp_read(
     }
 }
 pub unsafe extern "C" fn xmp_open(path: *const c_char, fi: *mut fuse_file_info) -> c_int {
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
     let fd = open(real_path.as_ptr(), (*fi).flags);
     if fd == -1 {
         return neg_errno();
@@ -154,7 +160,7 @@ pub unsafe extern "C" fn xmp_open(path: *const c_char, fi: *mut fuse_file_info) 
 }
 
 pub unsafe extern "C" fn xmp_readlink(path: *const c_char, buf: *mut c_char, size: usize) -> c_int {
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
     let res = readlink(real_path.as_ptr(), buf, size - 1);
     if res == -1 {
         return neg_errno();
@@ -163,7 +169,7 @@ pub unsafe extern "C" fn xmp_readlink(path: *const c_char, buf: *mut c_char, siz
     0
 }
 pub unsafe extern "C" fn xmp_access(path: *const c_char, mask: c_int) -> c_int {
-    let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+    let real_path = trans_ppath!(path);
     if access(real_path.as_ptr(), mask) == -1 {
         return neg_errno();
     }
@@ -177,7 +183,7 @@ pub unsafe extern "C" fn xmp_getattr(
     let res = if !fi.is_null() {
         fstat((*fi).fh as i32, stbuf)
     } else {
-        let real_path = translate_path(CStr::from_ptr(path), &SERVER_PATH_RUST);
+        let real_path = trans_ppath!(path);
         lstat(real_path.as_ptr(), stbuf)
     };
     if res == -1 {

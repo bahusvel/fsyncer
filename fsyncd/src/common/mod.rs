@@ -5,6 +5,8 @@ mod ops;
 
 pub use self::encoded::*;
 pub use self::ops::*;
+pub use self::journal::*;
+pub use self::log::*;
 
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;

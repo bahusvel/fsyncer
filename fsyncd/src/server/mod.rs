@@ -8,30 +8,22 @@ use bincode::{deserialize_from, serialize, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use clap::ArgMatches;
 use common::*;
-use dssc::chunkmap::ChunkMap;
-use dssc::other::ZstdBlock;
-use dssc::Compressor;
+use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use libc::{c_char, c_int};
-use lz4;
 use net2::TcpStreamExt;
-use std;
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::ffi::CString;
-use std::fs;
-use std::io;
-use std::io::{Read, Write};
-use std::mem::transmute;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::thread;
-use std::time::Duration;
-use zstd;
+use std::{
+    borrow::Cow, collections::HashMap, env, ffi::CString, mem::transmute, ops::Deref,
+    process::Command, thread, time::Duration,
+};
+use {lz4, zstd};
 
-pub static mut SERVER_PATH_RUST: String = String::new();
+pub static mut SERVER_PATH: String = String::new();
+static mut JOURNAL: Option<Mutex<Journal>> = None;
 static NOP_MSG: FsyncerMsg = FsyncerMsg::NOP;
 
 lazy_static! {
@@ -225,7 +217,8 @@ impl Client {
                 .entry(tid)
                 .or_insert(Arc::new(ClientResponse::new()))
                 .clone()
-        }.wait()
+        }
+        .wait()
     }
 }
 
@@ -406,7 +399,21 @@ fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Resul
     }
 }
 
-pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
+pub fn pre_op(call: &VFSCall) {
+    // This is safe, journal is only initialized once.
+    if unsafe { JOURNAL.is_none() } {
+        return;
+    }
+    let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
+    j.write_entry(
+        JournalCall::from(call)
+            .gen_bilog(unsafe { &SERVER_PATH })
+            .expect("Failed to generate bilog"),
+    )
+    .expect("Failed to write journal entry");
+}
+
+pub fn post_op(call: &VFSCall, ret: i32) -> i32 {
     let mut corked = CORK.lock().unwrap();
     while *corked {
         corked = CORK_VAR.wait(corked).unwrap();
@@ -414,7 +421,7 @@ pub fn handle_op(call: VFSCall, ret: i32) -> i32 {
 
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        let res = send_call(Cow::Borrowed(&call), client, ret);
+        let res = send_call(Cow::Borrowed(call), client, ret);
         if res.is_err() {
             println!("Failed sending message to client {}", res.unwrap_err());
         }
@@ -503,12 +510,22 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     Ok((mount_path, backing_store))
 }
 
+fn open_journal() -> Result<Journal, io::Error> {
+    let f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("test.fj")?;
+    f.set_len(1024 * 1024 * 1024)?;
+    Journal::new(f)
+}
+
 pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let server_matches = matches.subcommand_matches("server").unwrap();
     let (mount_path, backing_store) = figure_out_paths(&server_matches)?;
     println!("{:?}, {:?}", mount_path, backing_store);
     unsafe {
-        SERVER_PATH_RUST = String::from(backing_store.to_str().unwrap());
+        SERVER_PATH = String::from(backing_store.to_str().unwrap());
     }
 
     // FIXME use net2::TcpBuilder to set SO_REUSEADDR
@@ -533,7 +550,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 backing_store.clone(),
                 dont_check,
                 buffer_size,
-            ).expect("Failed handling client");
+            )
+            .expect("Failed handling client");
         }
     });
 
@@ -548,11 +566,21 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
 
     thread::spawn(harvester_thread);
 
+    match server_matches.value_of("journal").unwrap() {
+        "bilog" => unsafe {
+            JOURNAL = Some(Mutex::new(open_journal().expect("Failed to open journal")))
+        },
+        "off" => {}
+        _ => panic!("Unknown journal type"),
+    }
+
+    // Fuse args parsing
     let args = vec![
         "fsyncd".to_string(),
         server_matches.value_of("mount-path").unwrap().to_string(),
-    ].into_iter()
-    .chain(std::env::args().skip_while(|v| v != "--").skip(1))
+    ]
+    .into_iter()
+    .chain(env::args().skip_while(|v| v != "--").skip(1))
     .map(|arg| CString::new(arg).unwrap())
     .collect::<Vec<CString>>();
     // convert the strings to raw pointers

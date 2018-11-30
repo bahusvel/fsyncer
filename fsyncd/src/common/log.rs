@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+#![allow(private_in_public)]
 use common::*;
 use errno::errno;
 use libc::*;
@@ -19,6 +20,7 @@ macro_rules! is_variant {
     };
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum JournalCall {
     log_chmod(log_chmod),
     log_chown(log_chown),
@@ -30,26 +32,111 @@ pub enum JournalCall {
     log_write(log_write),
 }
 
+impl JournalCall {
+    pub fn gen_bilog(self, fspath: &str) -> Result<JournalCall, Error> {
+        Ok(match self {
+            JournalCall::log_chmod(c) => {
+                JournalCall::log_chmod(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_chown(c) => {
+                JournalCall::log_chown(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_utimens(c) => {
+                JournalCall::log_utimens(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_rename(c) => {
+                JournalCall::log_rename(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_dir(c) => {
+                JournalCall::log_dir(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_file(c) => {
+                JournalCall::log_file(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_xattr(c) => {
+                JournalCall::log_xattr(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+            JournalCall::log_write(c) => {
+                JournalCall::log_write(LogItem::gen_bilog(c.current_state(fspath)?, c))
+            }
+        })
+    }
+}
+
 impl<'a, 'b> From<&'b VFSCall<'a>> for JournalCall {
     fn from(call: &VFSCall) -> JournalCall {
         match call {
-            VFSCall::mknod(mknod) => JournalCall::log_file(log_file::from(mknod)),
-            VFSCall::mkdir(mkdir) => JournalCall::log_dir(log_dir::from(mkdir)),
-            VFSCall::unlink(unlink) => JournalCall::log_file(log_file::from(unlink)),
-            VFSCall::rmdir(rmdir) => JournalCall::log_dir(log_dir::from(rmdir)),
-            VFSCall::symlink(symlink) => JournalCall::log_dir(log_dir::from(rmdir)),
-            VFSCall::rename(rename),
-            VFSCall::link(link),
-            VFSCall::chmod(chmod),
-            VFSCall::chown(chown),
-            VFSCall::truncate(truncate),
-            VFSCall::write(write),
-            VFSCall::fallocate(fallocate),
-            VFSCall::setxattr(setxattr),
-            VFSCall::removexattr(removexattr),
-            VFSCall::create(create),
-            VFSCall::utimens(utimens),
-            VFSCall::fsync(fsync),
+            VFSCall::mknod(m) => JournalCall::log_file(log_file::node(mknod {
+                path: Cow::Owned(m.path.clone().into_owned()),
+                mode: m.mode,
+                rdev: m.rdev,
+            })),
+            VFSCall::mkdir(m) => JournalCall::log_dir(log_dir(mkdir {
+                path: Cow::Owned(m.path.clone().into_owned()),
+                mode: m.mode,
+            })),
+            VFSCall::unlink(u) => JournalCall::log_file(log_file::unlink(unlink {
+                path: Cow::Owned(u.path.clone().into_owned()),
+            })),
+            VFSCall::rmdir(r) => JournalCall::log_dir(log_dir(mkdir {
+                path: Cow::Owned(r.path.clone().into_owned()),
+                mode: 0,
+            })),
+            VFSCall::symlink(s) => JournalCall::log_file(log_file::symlink(symlink {
+                from: Cow::Owned(s.from.clone().into_owned()),
+                to: Cow::Owned(s.to.clone().into_owned()),
+            })),
+            VFSCall::rename(r) => JournalCall::log_rename(log_rename(rename {
+                from: Cow::Owned(r.from.clone().into_owned()),
+                to: Cow::Owned(r.to.clone().into_owned()),
+                flags: r.flags,
+            })),
+            VFSCall::link(l) => JournalCall::log_file(log_file::link(link {
+                from: Cow::Owned(l.from.clone().into_owned()),
+                to: Cow::Owned(l.to.clone().into_owned()),
+            })),
+            VFSCall::chmod(c) => JournalCall::log_chmod(log_chmod(chmod {
+                path: Cow::Owned(c.path.clone().into_owned()),
+                mode: c.mode,
+            })),
+            VFSCall::chown(c) => JournalCall::log_chown(log_chown(chown {
+                path: Cow::Owned(c.path.clone().into_owned()),
+                uid: c.uid,
+                gid: c.gid,
+            })),
+            VFSCall::truncate(t) => JournalCall::log_write(log_write {
+                path: t.path.clone().into_owned(),
+                offset: 0,
+                size: t.size,
+                buf: Vec::new(),
+            }),
+            VFSCall::write(w) => JournalCall::log_write(log_write {
+                path: w.path.clone().into_owned(),
+                offset: w.offset,
+                size: w.offset + w.buf.len() as i64,
+                buf: w.buf.clone().into_owned(),
+            }),
+            VFSCall::setxattr(s) => JournalCall::log_xattr(log_xattr {
+                path: s.path.clone().into_owned(),
+                name: s.name.clone().into_owned(),
+                value: Some(s.value.clone().into_owned()),
+            }),
+            VFSCall::removexattr(r) => JournalCall::log_xattr(log_xattr {
+                path: r.path.clone().into_owned(),
+                name: r.name.clone().into_owned(),
+                value: None,
+            }),
+            VFSCall::create(c) => JournalCall::log_file(log_file::file(create {
+                path: Cow::Owned(c.path.clone().into_owned()),
+                mode: c.mode,
+                flags: c.flags,
+            })),
+            VFSCall::utimens(u) => JournalCall::log_utimens(log_utimens(utimens {
+                path: Cow::Owned(u.path.clone().into_owned()),
+                timespec: u.timespec.clone(),
+            })),
+            VFSCall::fallocate(_fallocate) => panic!("Not implemented"),
+            VFSCall::fsync(_fsync) => panic!("Not an IO call"),
         }
     }
 }
@@ -85,16 +172,7 @@ pub trait LogItem {
 
 //Auto transforms
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_chmod(chmod<'static>);
-
-impl<'a, 'b> From<&'b chmod<'a>> for log_chmod {
-    fn from(c: &chmod) -> Self {
-        log_chmod(chmod {
-            path: Cow::Owned(c.path.clone().into_owned()),
-            mode: c.mode,
-        })
-    }
-}
+struct log_chmod(chmod<'static>);
 
 impl LogItem for log_chmod {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
@@ -113,17 +191,7 @@ impl LogItem for log_chmod {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_chown(chown<'static>);
-
-impl<'a, 'b> From<&'b chown<'a>> for log_chown {
-    fn from(c: &chown) -> Self {
-        log_chown(chown {
-            path: Cow::Owned(c.path.clone().into_owned()),
-            uid: c.uid,
-            gid: c.gid,
-        })
-    }
-}
+struct log_chown(chown<'static>);
 
 impl LogItem for log_chown {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
@@ -144,16 +212,7 @@ impl LogItem for log_chown {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_utimens(utimens<'static>);
-
-impl<'a, 'b> From<&'b utimens<'a>> for log_utimens {
-    fn from(u: &utimens) -> Self {
-        log_utimens(utimens {
-            path: Cow::Owned(u.path.clone().into_owned()),
-            timespec: u.timespec.clone(),
-        })
-    }
-}
+struct log_utimens(utimens<'static>);
 
 impl LogItem for log_utimens {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
@@ -190,17 +249,7 @@ impl LogItem for log_utimens {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_rename(rename<'static>);
-
-impl<'a, 'b> From<&'b rename<'a>> for log_rename {
-    fn from(r: &rename) -> Self {
-        log_rename(rename {
-            from: Cow::Owned(r.from.clone().into_owned()),
-            to: Cow::Owned(r.to.clone().into_owned()),
-            flags: r.flags,
-        })
-    }
-}
+struct log_rename(rename<'static>);
 
 impl LogItem for log_rename {
     fn current_state(&self, _fspath: &str) -> Result<Self, Error> {
@@ -217,25 +266,7 @@ impl LogItem for log_rename {
 */
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_dir(mkdir<'static>);
-
-impl<'a, 'b> From<&'b mkdir<'a>> for log_dir {
-    fn from(m: &mkdir) -> Self {
-        log_dir(mkdir {
-            path: Cow::Owned(m.path.clone().into_owned()),
-            mode: m.mode,
-        })
-    }
-}
-
-impl<'a, 'b> From<&'b rmdir<'a>> for log_dir {
-    fn from(r: &rmdir) -> Self {
-        log_dir(mkdir {
-            path: Cow::Owned(r.path.clone().into_owned()),
-            mode: 0,
-        })
-    }
-}
+struct log_dir(mkdir<'static>);
 
 impl LogItem for log_dir {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
@@ -258,7 +289,7 @@ impl LogItem for log_dir {
     If the file exists it's type needs to be identified, one of 4 below, and it is to be removed via unlink. If the file doesnt exist it is to be created from the type recorded with the specified parameters.
 */
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub enum log_file {
+enum log_file {
     symlink(symlink<'static>),
     link(link<'static>),
     node(mknod<'static>),
@@ -276,52 +307,6 @@ impl log_file {
             log_file::file(create { path, .. }) => path,
             log_file::unlink(unlink { path }) => path,
         }
-    }
-}
-
-impl<'a, 'b> From<&'b symlink<'a>> for log_file {
-    fn from(s: &symlink) -> Self {
-        log_file::symlink(symlink {
-            from: Cow::Owned(s.from.clone().into_owned()),
-            to: Cow::Owned(s.to.clone().into_owned()),
-        })
-    }
-}
-
-impl<'a, 'b> From<&'b link<'a>> for log_file {
-    fn from(l: &link) -> Self {
-        log_file::link(link {
-            from: Cow::Owned(l.from.clone().into_owned()),
-            to: Cow::Owned(l.to.clone().into_owned()),
-        })
-    }
-}
-
-impl<'a, 'b> From<&'b mknod<'a>> for log_file {
-    fn from(m: &mknod) -> Self {
-        log_file::node(mknod {
-            path: Cow::Owned(m.path.clone().into_owned()),
-            mode: m.mode,
-            rdev: m.rdev,
-        })
-    }
-}
-
-impl<'a, 'b> From<&'b create<'a>> for log_file {
-    fn from(c: &create) -> Self {
-        log_file::file(create {
-            path: Cow::Owned(c.path.clone().into_owned()),
-            mode: c.mode,
-            flags: c.flags,
-        })
-    }
-}
-
-impl<'a, 'b> From<&'b unlink<'a>> for log_file {
-    fn from(u: &unlink) -> Self {
-        log_file::unlink(unlink {
-            path: Cow::Owned(u.path.clone().into_owned()),
-        })
     }
 }
 
@@ -406,30 +391,10 @@ impl LogItem for log_file {
 If the attribute exists and its value matches that of recorded below it is to be removed, if the attribute doesn't exist or its value doesnt match the one below it is to be set.
 */
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_xattr {
+struct log_xattr {
     path: CString,
     name: CString,
     value: Option<Vec<u8>>,
-}
-
-impl<'a, 'b> From<&'b setxattr<'a>> for log_xattr {
-    fn from(s: &setxattr) -> Self {
-        log_xattr {
-            path: s.path.clone().into_owned(),
-            name: s.name.clone().into_owned(),
-            value: Some(s.value.clone().into_owned()),
-        }
-    }
-}
-
-impl<'a, 'b> From<&'b removexattr<'a>> for log_xattr {
-    fn from(r: &removexattr) -> Self {
-        log_xattr {
-            path: r.path.clone().into_owned(),
-            name: r.name.clone().into_owned(),
-            value: None,
-        }
-    }
 }
 
 impl LogItem for log_xattr {
@@ -486,7 +451,7 @@ impl LogItem for log_xattr {
     If the operation is truncate and removes part of the file its reverse operation is to write the missing data back in.
 */
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct log_write {
+struct log_write {
     path: CString,
     offset: int64_t,
     size: int64_t,
@@ -556,26 +521,6 @@ impl LogItem for log_write {
             offset: newstate.offset,
             size: oldstate.size ^ newstate.size,
             buf: newstate.buf,
-        }
-    }
-}
-impl<'a, 'b> From<&'b write<'a>> for log_write {
-    fn from(w: &write) -> Self {
-        log_write {
-            path: w.path.clone().into_owned(),
-            offset: w.offset,
-            size: w.offset + w.buf.len() as i64,
-            buf: w.buf.clone().into_owned(),
-        }
-    }
-}
-impl<'a, 'b> From<&'b truncate<'a>> for log_write {
-    fn from(t: &truncate) -> Self {
-        log_write {
-            path: t.path.clone().into_owned(),
-            offset: 0,
-            size: t.size,
-            buf: Vec::new(),
         }
     }
 }

@@ -129,6 +129,17 @@ fn main() {
                         .required(true)
                         .takes_value(true),
                 ).arg(
+                    Arg::with_name("journal")
+                        .long("journal")
+                        .takes_value(true)
+                        .default_value("off")
+                        .possible_values(&["bilog", "off"]),
+                ).arg(
+                    Arg::with_name("journal-size")
+                        .long("journal-size")
+                        .takes_value(true)
+                        .default_value("1024")
+                ).arg(
                     Arg::with_name("dont-check")
                         .long("dont-check")
                         .help("Disables comparison of the source and destination"),
@@ -189,7 +200,8 @@ fn main() {
                 matches
                     .value_of("mount-path")
                     .expect("No destination specified"),
-            ).expect("Hash failed");
+            )
+            .expect("Hash failed");
             println!("{:x}", hash);
         }
         Some("control") => {
@@ -214,7 +226,8 @@ fn main() {
                 CompMode::empty(),
                 buffer,
                 |_| 0,
-            ).expect("Failed to initialize client");
+            )
+            .expect("Failed to initialize client");
 
             match control_matches.value_of("cmd").unwrap() {
                 "cork" => {
@@ -226,7 +239,8 @@ fn main() {
                     client.uncork_server()
                 }
                 _ => unreachable!(),
-            }.expect("Failed to execute command server");
+            }
+            .expect("Failed to execute command server");
         }
         _ => unreachable!(),
     }

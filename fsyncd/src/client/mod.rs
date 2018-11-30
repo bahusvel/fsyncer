@@ -212,7 +212,8 @@ pub fn client_main(matches: ArgMatches) {
         comp,
         buffer_size,
         |call| unsafe { dispatch(call, client_path) },
-    ).expect("Failed to connect to fsyncer");
+    )
+    .expect("Failed to connect to fsyncer");
 
     println!("Connected to {}", host);
 

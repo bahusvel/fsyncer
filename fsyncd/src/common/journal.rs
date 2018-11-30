@@ -35,9 +35,9 @@ pub struct Journal {
 }
 
 pub trait Direction {}
-struct Forward;
+pub struct Forward;
 impl Direction for Forward {}
-struct Reverse;
+pub struct Reverse;
 impl Direction for Reverse {}
 
 pub struct JournalIterator<'a, D: Direction, T> {
@@ -75,11 +75,10 @@ where
             // This is the right boundary of the buffer
             self.header.head += d2end(self.header.head, self.journal.size);
         } else {
-            iter_try!(
-                self.journal
-                    .file
-                    .seek(SeekFrom::Start((self.header.head) % self.journal.size))
-            );
+            iter_try!(self
+                .journal
+                .file
+                .seek(SeekFrom::Start((self.header.head) % self.journal.size)));
 
             let size = iter_try!(self.journal.file.read_u32::<LittleEndian>());
             if size == 0 {
@@ -87,15 +86,14 @@ where
             }
         }
 
-        iter_try!(
-            self.journal
-                .file
-                .seek(SeekFrom::Start((self.header.head) % self.journal.size))
-        );
+        iter_try!(self
+            .journal
+            .file
+            .seek(SeekFrom::Start((self.header.head) % self.journal.size)));
 
-        let entry: JournalEntry<T> = iter_try!(
-            deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
-        );
+        let entry: JournalEntry<T> =
+            iter_try!(deserialize_from(&mut self.journal.file)
+                .map_err(|e| Error::new(ErrorKind::Other, e)));
 
         // println!(
         //     "head {}, tail {}, entry {:?}",
@@ -117,11 +115,10 @@ where
             return None;
         }
 
-        iter_try!(
-            self.journal
-                .file
-                .seek(SeekFrom::Start((self.header.tail - 4) % self.journal.size))
-        );
+        iter_try!(self
+            .journal
+            .file
+            .seek(SeekFrom::Start((self.header.tail - 4) % self.journal.size)));
 
         let rsize = iter_try!(self.journal.file.read_u32::<LittleEndian>());
         //println!("rsize {}", rsize);
@@ -131,11 +128,10 @@ where
         let pad_size = if d2end(last_entry, self.journal.size) < 4 {
             d2end(last_entry, self.journal.size)
         } else {
-            iter_try!(
-                self.journal
-                    .file
-                    .seek(SeekFrom::Start(last_entry % self.journal.size))
-            );
+            iter_try!(self
+                .journal
+                .file
+                .seek(SeekFrom::Start(last_entry % self.journal.size)));
             let size = iter_try!(self.journal.file.read_u32::<LittleEndian>());
             if size == 0 {
                 d2end(last_entry, self.journal.size)
@@ -144,15 +140,14 @@ where
             }
         };
 
-        iter_try!(
-            self.journal
-                .file
-                .seek(SeekFrom::Start((last_entry + pad_size) % self.journal.size))
-        );
+        iter_try!(self
+            .journal
+            .file
+            .seek(SeekFrom::Start((last_entry + pad_size) % self.journal.size)));
 
-        let entry: JournalEntry<T> = iter_try!(
-            deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
-        );
+        let entry: JournalEntry<T> =
+            iter_try!(deserialize_from(&mut self.journal.file)
+                .map_err(|e| Error::new(ErrorKind::Other, e)));
 
         // println!(
         // "head {}, tail {}, entry {:?}",
@@ -165,7 +160,7 @@ where
 }
 
 impl Journal {
-    fn new(file: File) -> Result<Self, Error> {
+    pub fn new(file: File) -> Result<Self, Error> {
         Ok(Journal {
             header: JournaHeader { head: 0, tail: 0 },
             size: file.metadata()?.len(),
@@ -173,7 +168,7 @@ impl Journal {
         })
     }
 
-    fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
+    pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
         let mut e = JournalEntry {
             fsize: 0,
             trans_id: TRANS_CTR.fetch_add(1, Ordering::Relaxed) as u32,
@@ -233,12 +228,13 @@ impl Journal {
         self.header.tail += esize + pad;
         Ok(())
     }
-    fn flush(&mut self) -> Result<(), Error> {
+    pub fn flush(&mut self) -> Result<(), Error> {
         self.file.flush()
     }
-    fn flush_header() {}
 
-    fn read_forward<T>(&mut self) -> JournalIterator<Forward, T> {
+    //fn flush_header() {}
+
+    pub fn read_forward<T>(&mut self) -> JournalIterator<Forward, T> {
         JournalIterator {
             direction: PhantomData,
             inner_t: PhantomData,
@@ -246,7 +242,7 @@ impl Journal {
             journal: self,
         }
     }
-    fn read_reverse<T>(&mut self) -> JournalIterator<Reverse, T> {
+    pub fn read_reverse<T>(&mut self) -> JournalIterator<Reverse, T> {
         JournalIterator {
             direction: PhantomData,
             inner_t: PhantomData,
