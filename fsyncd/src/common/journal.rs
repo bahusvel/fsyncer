@@ -4,16 +4,23 @@ extern crate test;
 #[cfg(test)]
 use self::test::Bencher;
 use bincode::{deserialize_from, serialize_into, serialized_size};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
-use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
+use std::io::{Error, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
+use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[derive(Clone)]
-struct JournaHeader {
+const HEADER_FLUSH_FREQUENCY: usize = 1000;
+
+lazy_static! {
+    static ref HEADER_SIZE: u64 = serialized_size(&JournalHeader { tail: 0, head: 0 }).unwrap();
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+struct JournalHeader {
     tail: u64,
     head: u64,
 }
@@ -27,7 +34,7 @@ struct JournalEntry<T> {
 }
 
 pub struct Journal {
-    header: JournaHeader,
+    header: JournalHeader,
     trans_ctr: AtomicUsize,
     size: u64,
     file: File,
@@ -42,7 +49,7 @@ impl Direction for Reverse {}
 pub struct JournalIterator<'a, D: Direction, T> {
     direction: PhantomData<D>,
     inner_t: PhantomData<T>,
-    header: JournaHeader,
+    header: JournalHeader,
     journal: &'a mut Journal,
 }
 
@@ -55,11 +62,6 @@ macro_rules! iter_try {
     };
 }
 
-#[inline(always)]
-fn d2end(off: u64, end: u64) -> u64 {
-    end - (off % end)
-}
-
 impl<'a, T: Debug> Iterator for JournalIterator<'a, Forward, T>
 where
     for<'de> T: Deserialize<'de>,
@@ -70,29 +72,25 @@ where
             return None;
         }
 
-        if d2end(self.header.head, self.journal.size) < 4 {
+        if self.journal.d2end(self.header.head) < 4 {
             // This is the right boundary of the buffer
-            self.header.head += d2end(self.header.head, self.journal.size);
+            self.header.head += self.journal.d2end(self.header.head);
         } else {
-            iter_try!(self
-                .journal
-                .file
-                .seek(SeekFrom::Start((self.header.head) % self.journal.size)));
+            let off = self.journal.file_off(self.header.head);
+            iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
 
             let size = iter_try!(self.journal.file.read_u32::<LittleEndian>());
             if size == 0 {
-                self.header.head += d2end(self.header.head, self.journal.size);
+                self.header.head += self.journal.d2end(self.header.head);
             }
         }
 
-        iter_try!(self
-            .journal
-            .file
-            .seek(SeekFrom::Start((self.header.head) % self.journal.size)));
+        let off = self.journal.file_off(self.header.head);
+        iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
 
-        let entry: JournalEntry<T> =
-            iter_try!(deserialize_from(&mut self.journal.file)
-                .map_err(|e| Error::new(ErrorKind::Other, e)));
+        let entry: JournalEntry<T> = iter_try!(
+            deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
+        );
 
         // println!(
         //     "head {}, tail {}, entry {:?}",
@@ -114,39 +112,34 @@ where
             return None;
         }
 
-        iter_try!(self
-            .journal
-            .file
-            .seek(SeekFrom::Start((self.header.tail - 4) % self.journal.size)));
+        let off = self.journal.file_off(self.header.tail - 4);
+        iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
 
         let rsize = iter_try!(self.journal.file.read_u32::<LittleEndian>());
         //println!("rsize {}", rsize);
 
         let last_entry = self.header.tail - rsize as u64;
 
-        let pad_size = if d2end(last_entry, self.journal.size) < 4 {
-            d2end(last_entry, self.journal.size)
+        let pad_size = if self.journal.d2end(last_entry) < 4 {
+            self.journal.d2end(last_entry)
         } else {
-            iter_try!(self
-                .journal
-                .file
-                .seek(SeekFrom::Start(last_entry % self.journal.size)));
+            let off = self.journal.file_off(last_entry);
+            iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
             let size = iter_try!(self.journal.file.read_u32::<LittleEndian>());
             if size == 0 {
-                d2end(last_entry, self.journal.size)
+                self.journal.d2end(last_entry)
             } else {
                 0
             }
         };
 
-        iter_try!(self
-            .journal
-            .file
-            .seek(SeekFrom::Start((last_entry + pad_size) % self.journal.size)));
+        let off = self.journal.file_off(last_entry + pad_size);
 
-        let entry: JournalEntry<T> =
-            iter_try!(deserialize_from(&mut self.journal.file)
-                .map_err(|e| Error::new(ErrorKind::Other, e)));
+        iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
+
+        let entry: JournalEntry<T> = iter_try!(
+            deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
+        );
 
         // println!(
         // "head {}, tail {}, entry {:?}",
@@ -161,14 +154,15 @@ where
 impl Journal {
     pub fn new(file: File) -> Result<Self, Error> {
         Ok(Journal {
-            header: JournaHeader { head: 0, tail: 0 },
+            header: JournalHeader { head: 0, tail: 0 },
             trans_ctr: AtomicUsize::new(0),
-            size: file.metadata()?.len(),
+            size: file.metadata()?.len() - *HEADER_SIZE,
             file: file,
         })
     }
 
     pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
+        const ZERO_SIZE: [u8; 4] = [0; 4];
         let mut e = JournalEntry {
             fsize: 0,
             trans_id: self.trans_ctr.fetch_add(1, Ordering::Relaxed) as u32,
@@ -177,13 +171,13 @@ impl Journal {
         };
         let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
         e.fsize = esize as u32;
-        println!(
-            "esize {}, tail {}, head {}",
-            esize, self.header.tail, self.header.head
-        );
-        let pad = if d2end(self.header.tail, self.size) < esize {
+        // println!(
+        // "esize {}, tail {}, head {}",
+        // esize, self.header.tail, self.header.head
+        // );
+        let pad = if self.d2end(self.header.tail) < esize {
             // The write would overlap the right boundary of ring buffer.
-            d2end(self.header.tail, self.size)
+            self.d2end(self.header.tail)
         } else {
             0
         };
@@ -197,14 +191,15 @@ impl Journal {
                     "Journal is too small for this entry",
                 ));
             }
-            let fsize = if d2end(self.header.head, self.size) < 4 {
-                d2end(self.header.head, self.size)
+            let h2end = self.d2end(self.header.head);
+            let fsize = if h2end < 4 {
+                h2end
             } else {
-                self.file
-                    .seek(SeekFrom::Start(self.header.head % self.size))?;
+                let off = self.file_off(self.header.head);
+                self.file.seek(SeekFrom::Start(off))?;
                 let s = self.file.read_u32::<LittleEndian>()?;
                 if s == 0 {
-                    d2end(self.header.head, self.size)
+                    h2end
                 } else {
                     s as u64
                 }
@@ -214,25 +209,46 @@ impl Journal {
             free_space += fsize as u64;
         }
         e.rsize = (esize + pad) as u32;
-        self.file
-            .seek(SeekFrom::Start(self.header.tail % self.size))?;
+
         if pad != 0 {
             if pad >= 4 {
-                self.file.write_u32::<LittleEndian>(0)?;
+                self.file
+                    .write_all_at(&ZERO_SIZE, self.file_off(self.header.tail))?;
             }
-            self.file
-                .seek(SeekFrom::Start((self.header.tail + pad) % self.size))?;
         }
 
-        serialize_into(&mut self.file, &e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let mut buf = Vec::with_capacity(esize as usize);
+        serialize_into(&mut buf, &e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        self.file
+            .write_all_at(&buf[..], self.file_off(self.header.tail + pad))?;
         self.header.tail += esize + pad;
+
+        if e.trans_id as usize % HEADER_FLUSH_FREQUENCY == 0 {
+            self.write_header()?;
+        }
+
         Ok(())
     }
+
+    #[inline(always)]
+    fn d2end(&self, off: u64) -> u64 {
+        self.size - (off % self.size)
+    }
+
+    #[inline(always)]
+    fn file_off(&self, off: u64) -> u64 {
+        *HEADER_SIZE + (off % self.size)
+    }
+
     pub fn flush(&mut self) -> Result<(), Error> {
         self.file.flush()
     }
 
-    //fn flush_header() {}
+    fn write_header(&mut self) -> Result<(), Error> {
+        let mut buf = Vec::with_capacity(*HEADER_SIZE as usize);
+        serialize_into(&mut buf, &self.header).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        self.file.write_all_at(&buf[..], 0)
+    }
 
     pub fn read_forward<T>(&mut self) -> JournalIterator<Forward, T> {
         JournalIterator {
@@ -281,10 +297,10 @@ fn journal_write(b: &mut Bencher) {
             .write(true)
             .create(true)
             .open("test.fj")?;
-        f.set_len(1024)?;
+        f.set_len(1024 * 1024 * 1024)?;
         Journal::new(f)
     }
-    let buf = [1; 100];
+    let buf = [1; 4197];
     let mut j = inner().unwrap();
     b.iter(|| j.write_entry(&buf[..]).expect("Write failed"));
 }

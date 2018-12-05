@@ -31,7 +31,7 @@ profile_client: dirs
 
 test_fs: dirs
 	fusermount3 -u -z test_src || true
-	cd fsyncd && RUST_BACKTRACE=1 cargo run -- server --journal bilog ../test_src -- -f
+	cd fsyncd && RUST_BACKTRACE=1 cargo run --release -- server --journal bilog --journal-size 1M ../test_src -- -f
 
 perf_fs: dirs
 	fusermount3 -u -z test_src || true

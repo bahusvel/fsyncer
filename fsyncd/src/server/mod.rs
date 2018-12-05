@@ -136,8 +136,7 @@ pub fn pre_op(call: &VFSCall) {
         JournalCall::from(call)
             .gen_bilog(unsafe { &SERVER_PATH })
             .expect("Failed to generate bilog"),
-    )
-    .expect("Failed to write journal entry");
+    ).expect("Failed to write journal entry");
 }
 
 pub fn post_op(call: &VFSCall, ret: i32) -> i32 {
@@ -237,13 +236,13 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     Ok((mount_path, backing_store))
 }
 
-fn open_journal() -> Result<Journal, io::Error> {
+fn open_journal(size: usize) -> Result<Journal, io::Error> {
     let f = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open("test.fj")?;
-    f.set_len(1024 * 1024 * 1024)?;
+    f.set_len(size as u64)?;
     Journal::new(f)
 }
 
@@ -277,8 +276,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 backing_store.clone(),
                 dont_check,
                 buffer_size,
-            )
-            .expect("Failed handling client");
+            ).expect("Failed handling client");
             SYNC_LIST.write().unwrap().push(client);
         }
     });
@@ -294,9 +292,14 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
 
     thread::spawn(harvester_thread);
 
+    let journal_size = parse_human_size(server_matches.value_of("journal-size").unwrap())
+        .expect("Invalid format for journal-size");
+
     match server_matches.value_of("journal").unwrap() {
         "bilog" => unsafe {
-            JOURNAL = Some(Mutex::new(open_journal().expect("Failed to open journal")))
+            JOURNAL = Some(Mutex::new(
+                open_journal(journal_size).expect("Failed to open journal"),
+            ))
         },
         "off" => {}
         _ => panic!("Unknown journal type"),
@@ -306,8 +309,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let args = vec![
         "fsyncd".to_string(),
         server_matches.value_of("mount-path").unwrap().to_string(),
-    ]
-    .into_iter()
+    ].into_iter()
     .chain(env::args().skip_while(|v| v != "--").skip(1))
     .map(|arg| CString::new(arg).unwrap())
     .collect::<Vec<CString>>();

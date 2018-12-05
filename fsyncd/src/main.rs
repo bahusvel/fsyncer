@@ -1,6 +1,7 @@
 #![feature(libc)]
 #![feature(const_string_new)]
 #![feature(test)]
+#![feature(rw_exact_all_at)]
 
 #[cfg(feature = "profile")]
 extern crate cpuprofiler;
@@ -138,7 +139,7 @@ fn main() {
                     Arg::with_name("journal-size")
                         .long("journal-size")
                         .takes_value(true)
-                        .default_value("1024")
+                        .default_value("1024M")
                 ).arg(
                     Arg::with_name("dont-check")
                         .long("dont-check")
@@ -200,8 +201,7 @@ fn main() {
                 matches
                     .value_of("mount-path")
                     .expect("No destination specified"),
-            )
-            .expect("Hash failed");
+            ).expect("Hash failed");
             println!("{:x}", hash);
         }
         Some("control") => {
@@ -226,8 +226,7 @@ fn main() {
                 CompMode::empty(),
                 buffer,
                 |_| 0,
-            )
-            .expect("Failed to initialize client");
+            ).expect("Failed to initialize client");
 
             match control_matches.value_of("cmd").unwrap() {
                 "cork" => {
@@ -239,8 +238,7 @@ fn main() {
                     client.uncork_server()
                 }
                 _ => unreachable!(),
-            }
-            .expect("Failed to execute command server");
+            }.expect("Failed to execute command server");
         }
         _ => unreachable!(),
     }

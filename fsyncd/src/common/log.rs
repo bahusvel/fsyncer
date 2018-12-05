@@ -409,21 +409,22 @@ impl LogItem for log_xattr {
                 4096, // HACK, I should query the size first
             )
         };
-        if len as i32 == ENOATTR {
-            // new attribute is set
-            return Ok(log_xattr {
-                path: self.path.clone(),
-                name: self.name.clone(),
-                value: Some(
-                    self.value
-                        .as_ref()
-                        .expect("No attribute is set, must be setting it")
-                        .clone(),
-                ),
-            });
-        }
         if len == -1 {
-            return Err(Error::from(errno()));
+            let err = errno();
+            let interr: i32 = err.into();
+            if interr == ENOATTR {
+                return Ok(log_xattr {
+                    path: self.path.clone(),
+                    name: self.name.clone(),
+                    value: Some(
+                        self.value
+                            .as_ref()
+                            .expect("Attribute is not set, must be setting it")
+                            .clone(),
+                    ),
+                });
+            }
+            return Err(Error::from(err));
         }
         // Removing or replacing the value
         Ok(log_xattr {
@@ -477,11 +478,13 @@ fn xor_largest_buf(mut new: Vec<u8>, mut old: Vec<u8>) -> Vec<u8> {
 
 impl LogItem for log_write {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
+        //println!("Atleast here");
         let real_path = translate_path(self.path.as_c_str(), &fspath);
         let fd = unsafe { open(real_path.as_ptr(), O_RDONLY) };
         if fd == -1 {
             return Err(Error::from(errno()));
         }
+
         let f = unsafe { File::from_raw_fd(fd) };
 
         let mut current = log_write {

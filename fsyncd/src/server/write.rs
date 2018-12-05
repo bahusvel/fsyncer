@@ -226,6 +226,8 @@ pub unsafe extern "C" fn do_setxattr(
         flags,
     });
 
+    //println!("setxattr {:?}", call);
+
     pre_op(&call);
     let res = xmp_setxattr(real_path.as_ptr(), name, value, size, flags);
     post_op(&call, res)

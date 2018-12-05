@@ -4,9 +4,9 @@ mod log;
 mod ops;
 
 pub use self::encoded::*;
-pub use self::ops::*;
 pub use self::journal::*;
 pub use self::log::*;
+pub use self::ops::*;
 
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
@@ -85,6 +85,15 @@ pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
         stat.gid().hash(&mut hasher);
     }
     Ok(hasher.finish())
+}
+
+pub fn parse_human_size(s: &str) -> Option<usize> {
+    Some(match s.chars().last().unwrap() {
+        'K' | 'k' => s[..s.len() - 1].parse::<usize>().ok()? * 1024,
+        'M' | 'm' => s[..s.len() - 1].parse::<usize>().ok()? * 1024 * 1024,
+        'G' | 'g' => s[..s.len() - 1].parse::<usize>().ok()? * 1024 * 1024 * 1024,
+        _ => s[..s.len()].parse::<usize>().ok()?,
+    })
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
