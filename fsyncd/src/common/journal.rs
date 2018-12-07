@@ -35,7 +35,7 @@ struct JournalEntry<T> {
 
 pub struct Journal {
     header: JournalHeader,
-    trans_ctr: AtomicUsize,
+    trans_ctr: usize,
     size: u64,
     file: File,
 }
@@ -72,18 +72,9 @@ where
             return None;
         }
 
-        if self.journal.d2end(self.header.head) < 4 {
-            // This is the right boundary of the buffer
-            self.header.head += self.journal.d2end(self.header.head);
-        } else {
-            let off = self.journal.file_off(self.header.head);
-            iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
-
-            let size = iter_try!(self.journal.file.read_u32::<LittleEndian>());
-            if size == 0 {
-                self.header.head += self.journal.d2end(self.header.head);
-            }
-        }
+        let mut new_head = self.header.head;
+        self.journal.advance_offset(&mut new_head);
+        self.header.head = new_head;
 
         let off = self.journal.file_off(self.header.head);
         iter_try!(self.journal.file.seek(SeekFrom::Start(off)));
@@ -152,23 +143,42 @@ where
 }
 
 impl Journal {
-    pub fn new(file: File) -> Result<Self, Error> {
-        Ok(Journal {
-            header: JournalHeader { head: 0, tail: 0 },
-            trans_ctr: AtomicUsize::new(0),
+    pub fn open(mut file: File, recover: bool) -> Result<Self, Error> {
+        file.seek(SeekFrom::Start(0))?;
+        let header = deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+        let mut j = Journal {
+            header: header,
+            trans_ctr: 0,
             size: file.metadata()?.len() - *HEADER_SIZE,
             file: file,
-        })
-    }
+        };
 
+        let off = j.file_off(j.header.tail + 4);
+        let mut tx_max = j.file.read_u32::<LittleEndian>()?;
+        loop {
+            let off = j.file_off(j.header.tail + 4);
+            j.file.seek(SeekFrom::Start(off))?;
+            let next_tx = j.file.read_u32::<LittleEndian>()?;
+            if tx_max + 1 != next_tx {
+                break;
+            }
+            tx_max = next_tx;
+            let mut new_tail = j.header.tail;
+            j.advance_offset(&mut new_tail)?;
+        }
+
+        Ok(j)
+    }
     pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
         const ZERO_SIZE: [u8; 4] = [0; 4];
         let mut e = JournalEntry {
             fsize: 0,
-            trans_id: self.trans_ctr.fetch_add(1, Ordering::Relaxed) as u32,
+            trans_id: self.trans_ctr as u32,
             inner: entry,
             rsize: 0,
         };
+        self.trans_ctr += 1;
         let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
         e.fsize = esize as u32;
         // println!(
@@ -191,22 +201,10 @@ impl Journal {
                     "Journal is too small for this entry",
                 ));
             }
-            let h2end = self.d2end(self.header.head);
-            let fsize = if h2end < 4 {
-                h2end
-            } else {
-                let off = self.file_off(self.header.head);
-                self.file.seek(SeekFrom::Start(off))?;
-                let s = self.file.read_u32::<LittleEndian>()?;
-                if s == 0 {
-                    h2end
-                } else {
-                    s as u64
-                }
-            };
-            //println!("fsize {}, head {}", fsize, self.header.head);
-            self.header.head += fsize as u64;
-            free_space += fsize as u64;
+            let mut new_head = self.header.head;
+            self.advance_offset(&mut new_head)?;
+            free_space += new_head - self.header.head;
+            self.header.head = new_head;
         }
         e.rsize = (esize + pad) as u32;
 
@@ -227,6 +225,25 @@ impl Journal {
             self.write_header()?;
         }
 
+        Ok(())
+    }
+
+    // Advances arbitrary pointer to buffer by one entry, pointer must be aligned to the end of the previous entry or start of the file
+    fn advance_offset(&mut self, off: &mut u64) -> Result<(), Error> {
+        let h2end = self.d2end(*off);
+        let fsize = if h2end < 4 {
+            h2end
+        } else {
+            let off = self.file_off(*off);
+            self.file.seek(SeekFrom::Start(off))?;
+            let s = self.file.read_u32::<LittleEndian>()?;
+            if s == 0 {
+                h2end
+            } else {
+                s as u64
+            }
+        };
+        *off += fsize;
         Ok(())
     }
 

@@ -243,7 +243,7 @@ fn open_journal(size: usize) -> Result<Journal, io::Error> {
         .create(true)
         .open("test.fj")?;
     f.set_len(size as u64)?;
-    Journal::new(f)
+    Journal::open(f, true)
 }
 
 pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
