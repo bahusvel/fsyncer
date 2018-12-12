@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types)]
 #![allow(private_in_public)]
+
 use common::*;
 use errno::errno;
 use libc::*;
@@ -9,16 +10,6 @@ use std::fs::File;
 use std::io::{Error, ErrorKind};
 use std::os::unix::io::FromRawFd;
 use walkdir::DirEntryExt;
-
-macro_rules! is_variant {
-    ($val:expr, $variant:path) => {
-        if let $variant(_) = $val {
-            true
-        } else {
-            false
-        }
-    };
-}
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum JournalCall {

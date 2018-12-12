@@ -30,12 +30,6 @@ struct xmp_dirp {
     offset: off_t,
 }
 
-macro_rules! trans_ppath {
-    ($path:expr) => {
-        translate_path(CStr::from_ptr($path), &SERVER_PATH)
-    };
-}
-
 pub unsafe extern "C" fn xmp_opendir(path: *const c_char, fi: *mut fuse_file_info) -> c_int {
     let mut d = Box::new(xmp_dirp {
         offset: 0,

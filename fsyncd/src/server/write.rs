@@ -7,12 +7,6 @@ use std::ffi::CStr;
 use std::ptr;
 use std::slice;
 
-macro_rules! trans_ppath {
-    ($path:expr) => {
-        translate_path(CStr::from_ptr($path), &SERVER_PATH)
-    };
-}
-
 pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
     let real_path = trans_ppath!(path);
     let call = VFSCall::mknod(mknod {

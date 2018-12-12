@@ -1,3 +1,9 @@
+macro_rules! trans_ppath {
+    ($path:expr) => {
+        translate_path(CStr::from_ptr($path), &SERVER_PATH)
+    };
+}
+
 mod client;
 mod fusemain;
 mod fuseops;

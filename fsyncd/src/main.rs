@@ -26,6 +26,37 @@ extern crate serde;
 extern crate walkdir;
 extern crate zstd;
 
+#[macro_export]
+macro_rules! iter_try {
+    ($e:expr) => {
+        match $e {
+            Err(e) => return Some(Err(e)),
+            Ok(e) => e,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($e:expr),+) => {
+        $(
+            print!(concat!(stringify!($e), "={:?} "), $e);
+        )*
+        println!();
+    };
+}
+
+#[macro_export]
+macro_rules! is_variant {
+    ($val:expr, $variant:path) => {
+        if let $variant(_) = $val {
+            true
+        } else {
+            false
+        }
+    };
+}
+
 mod client;
 mod common;
 mod server;
