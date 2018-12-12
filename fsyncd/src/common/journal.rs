@@ -16,13 +16,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const HEADER_FLUSH_FREQUENCY: usize = 1000;
 
 lazy_static! {
-    static ref HEADER_SIZE: u64 = serialized_size(&JournalHeader { tail: 0, head: 0 }).unwrap();
+    static ref HEADER_SIZE: u64 = serialized_size(&JournalHeader {
+        tail: 0,
+        head: 0,
+        trans_ctr: 0
+    }).unwrap();
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct JournalHeader {
     tail: u64,
     head: u64,
+    trans_ctr: u32,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -35,7 +40,6 @@ struct JournalEntry<T> {
 
 pub struct Journal {
     header: JournalHeader,
-    trans_ctr: usize,
     size: u64,
     file: File,
 }
@@ -62,6 +66,15 @@ macro_rules! iter_try {
     };
 }
 
+macro_rules! debug {
+    ($($e:expr),+) => {
+        $(
+            print!(concat!(stringify!($e), "={} "), $e);
+        )*
+        println!();
+    };
+}
+
 impl<'a, T: Debug> Iterator for JournalIterator<'a, Forward, T>
 where
     for<'de> T: Deserialize<'de>,
@@ -73,7 +86,7 @@ where
         }
 
         let mut new_head = self.header.head;
-        self.journal.advance_offset(&mut new_head);
+        iter_try!(self.journal.advance_offset(&mut new_head));
         self.header.head = new_head;
 
         let off = self.journal.file_off(self.header.head);
@@ -143,43 +156,67 @@ where
 }
 
 impl Journal {
-    pub fn open(mut file: File, recover: bool) -> Result<Self, Error> {
-        file.seek(SeekFrom::Start(0))?;
-        let header = deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    pub fn open(mut file: File, new: bool) -> Result<Self, Error> {
+        let header = if new {
+            JournalHeader {
+                head: 0,
+                tail: 0,
+                trans_ctr: 0,
+            }
+        } else {
+            file.seek(SeekFrom::Start(0))?;
+            deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?
+        };
 
         let mut j = Journal {
             header: header,
-            trans_ctr: 0,
             size: file.metadata()?.len() - *HEADER_SIZE,
             file: file,
         };
 
-        let off = j.file_off(j.header.tail + 4);
-        let mut tx_max = j.file.read_u32::<LittleEndian>()?;
-        loop {
-            let off = j.file_off(j.header.tail + 4);
-            j.file.seek(SeekFrom::Start(off))?;
+        if new {
+            return Ok(j);
+        }
+
+        println!("Traversing the journal {:?}", j.header);
+
+        let mut tx_max = j.header.trans_ctr - 1; // Because the ctr has been advanced before flush
+        let mut new_tail = j.header.tail;
+        // Only traverse up to header flush frequency
+        for _ in 0..HEADER_FLUSH_FREQUENCY {
+            j.seek(new_tail + 4)?;
             let next_tx = j.file.read_u32::<LittleEndian>()?;
-            if tx_max + 1 != next_tx {
+            println!("Next tx {} old tx {}", next_tx, tx_max);
+            // Allows for overflow to happen
+            if next_tx <= tx_max && next_tx != tx_max + 1 {
                 break;
             }
             tx_max = next_tx;
-            let mut new_tail = j.header.tail;
-            j.advance_offset(&mut new_tail)?;
+            j.skip_entry(&mut new_tail)?;
         }
+
+        j.header.tail = new_tail;
+        j.header.trans_ctr = tx_max + 1;
+
+        // TODO head recovery
+        // Head must be somewhere not too far in front of the tail, or it is at the beggining of the file because journal hasn't looped yet. The problem is, there is no way to know how far in front of the tail it is. To resolve this I should write some kind of marker after the tail indiciating the distance to the head, or simply every time I allocate head space flush the header prior to writing the journal entry.
+
+        //Yes lets do the last option.
 
         Ok(j)
     }
+
     pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
         const ZERO_SIZE: [u8; 4] = [0; 4];
         let mut e = JournalEntry {
             fsize: 0,
-            trans_id: self.trans_ctr as u32,
+            trans_id: self.header.trans_ctr as u32,
             inner: entry,
             rsize: 0,
         };
-        self.trans_ctr += 1;
+        self.header.trans_ctr += 1;
         let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+
         e.fsize = esize as u32;
         // println!(
         // "esize {}, tail {}, head {}",
@@ -193,16 +230,18 @@ impl Journal {
         };
         let mut free_space = self.size - (self.header.tail - self.header.head);
 
+        assert!(
+            self.size > esize + pad,
+            "Journal is too small for this entry"
+        );
+
         while free_space < esize + pad {
             //println!("{} <= {} + {}", free_space, esize, pad);
             if self.header.head == self.header.tail {
-                return Err(Error::new(
-                    ErrorKind::UnexpectedEof,
-                    "Journal is too small for this entry",
-                ));
+                panic!("Ran into tail while freeing up space, but journal is large enough to fit the entry")
             }
             let mut new_head = self.header.head;
-            self.advance_offset(&mut new_head)?;
+            self.skip_entry(&mut new_head)?;
             free_space += new_head - self.header.head;
             self.header.head = new_head;
         }
@@ -228,22 +267,47 @@ impl Journal {
         Ok(())
     }
 
-    // Advances arbitrary pointer to buffer by one entry, pointer must be aligned to the end of the previous entry or start of the file
+    fn seek(&mut self, off: u64) -> Result<(), Error> {
+        let o = self.file_off(off);
+        self.file.seek(SeekFrom::Start(o))?;
+        Ok(())
+    }
+
+    // Advances arbitrary pointer to buffer from the end of one entry to the beginning of the next
     fn advance_offset(&mut self, off: &mut u64) -> Result<(), Error> {
         let h2end = self.d2end(*off);
-        let fsize = if h2end < 4 {
-            h2end
+        if h2end < 4 {
+            *off += h2end
         } else {
-            let off = self.file_off(*off);
-            self.file.seek(SeekFrom::Start(off))?;
+            let o = self.file_off(*off);
+            self.file.seek(SeekFrom::Start(o))?;
             let s = self.file.read_u32::<LittleEndian>()?;
             if s == 0 {
-                h2end
-            } else {
-                s as u64
+                *off += h2end
             }
         };
-        *off += fsize;
+        Ok(())
+    }
+
+    // Skips the next entry
+    fn skip_entry(&mut self, off: &mut u64) -> Result<(), Error> {
+        let h2end = self.d2end(*off);
+        if h2end < 4 {
+            *off += h2end;
+        } else {
+            let o = self.file_off(*off);
+            self.file.seek(SeekFrom::Start(o))?;
+            let s = self.file.read_u32::<LittleEndian>()?;
+            if s == 0 {
+                *off += h2end;
+            } else {
+                *off += s as u64;
+                return Ok(());
+            }
+        };
+        let o = self.file_off(*off);
+        self.file.seek(SeekFrom::Start(o))?;
+        *off += self.file.read_u32::<LittleEndian>()? as u64;
         Ok(())
     }
 
@@ -286,7 +350,7 @@ impl Journal {
 }
 
 #[test]
-fn journal_test() {
+fn journal_rw() {
     fn inner() -> Result<(), Error> {
         let f = OpenOptions::new()
             .read(true)
@@ -294,15 +358,28 @@ fn journal_test() {
             .create(true)
             .open("test.fj")?;
         f.set_len(1024)?;
-        let mut j = Journal::new(f)?;
+        let mut j = Journal::open(f, true)?;
         for _ in 0..100 {
             j.write_entry("Hello")?;
         }
         for e in j.read_reverse::<String>() {
             println!("{:?}", e?);
         }
+        println!("Header {:?}", j.header);
         Ok(())
     }
+    inner().unwrap();
+}
+
+#[test]
+fn journal_recover() {
+    fn inner() -> Result<(), Error> {
+        let f = File::open("test.fj")?;
+        let mut j = Journal::open(f, false)?;
+        println!("{:?}", j.header);
+        Ok(())
+    }
+
     inner().unwrap();
 }
 
@@ -315,7 +392,7 @@ fn journal_write(b: &mut Bencher) {
             .create(true)
             .open("test.fj")?;
         f.set_len(1024 * 1024 * 1024)?;
-        Journal::new(f)
+        Journal::open(f, true)
     }
     let buf = [1; 4197];
     let mut j = inner().unwrap();
