@@ -3,12 +3,15 @@ extern crate test;
 
 #[cfg(test)]
 use self::test::Bencher;
+#[cfg(test)]
+use std::{fs::OpenOptions, io::Read};
+
 use bincode::{deserialize_from, serialize_into, serialized_size};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::fs::{File, OpenOptions};
-use std::io::{Error, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::fs::File;
+use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::os::unix::fs::FileExt;
 
@@ -115,17 +118,22 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf: [u8; 4] = [0; 4];
         if self.block_buffer.len() == 0 {
-            if self.header.head == self.header.tail {
+            if self.header.head == self.header.tail || self.header.tail == 0 {
                 return None;
             }
 
-            debug!(self.header.head, self.header.tail);
+            //debug!(self.header.head, self.header.tail);
 
-            self.header.tail = align_down(self.header.tail, BLOCK_SIZE);
-            let mut decode_tail = self.header.tail;
-            debug!(decode_tail);
+            //self.header.tail = align_down(self.header.tail, BLOCK_SIZE);
+            let mut decode_tail = if self.header.tail % BLOCK_SIZE != 0 {
+                align_down(self.header.tail, BLOCK_SIZE)
+            } else {
+                self.header.tail - BLOCK_SIZE
+            };
+
+            //debug!(decode_tail);
             loop {
-                if align_up_always(decode_tail, BLOCK_SIZE) - decode_tail < 4 {
+                if self.header.tail - decode_tail < 4 {
                     break;
                 }
                 iter_try!(
@@ -137,17 +145,24 @@ where
                     break;
                 }
                 let fsize = LittleEndian::read_u32(&buf[..]) as u64;
+                //debug!(fsize, decode_tail, align_up_always(decode_tail, BLOCK_SIZE));
                 assert!(fsize <= align_up_always(decode_tail, BLOCK_SIZE) - decode_tail);
                 iter_try!(self.journal.seek(decode_tail));
                 let entry: JournalEntry<T> = iter_try!(
                     deserialize_from(&mut self.journal.file)
                         .map_err(|e| Error::new(ErrorKind::Other, e))
                 );
-                decode_tail += entry.fsize as u64;
+                decode_tail += fsize as u64;
                 self.block_buffer.push(entry.inner);
             }
-            if self.header.tail != 0 && self.header.tail != self.header.head {
-                self.header.tail -= BLOCK_SIZE;
+
+            if self.header.tail % BLOCK_SIZE != 0 {
+                // Partial block read
+                self.header.tail = align_down(self.header.tail, BLOCK_SIZE);
+            } else {
+                if self.header.tail != 0 && self.header.tail != self.header.head {
+                    self.header.tail -= BLOCK_SIZE;
+                }
             }
         }
 
@@ -182,7 +197,6 @@ impl Journal {
 
         let mut tx_max = j.header.trans_ctr - 1; // Because the ctr has been advanced before flush
         let mut new_tail = j.header.tail;
-        // Only traverse up to header flush frequency
         loop {
             if new_tail > align_up_always(j.header.tail, BLOCK_SIZE) {
                 println!("Traversing past block boundary");
@@ -198,7 +212,7 @@ impl Journal {
             }
             // FIXME next_tx is not neccessarily correct, it may be leftover data from the previous block, I need to validate this entry.
             let next_tx = j.file.read_u32::<LittleEndian>()?;
-            println!("Next tx {} old tx {}", next_tx, tx_max);
+            //println!("Next tx {} old tx {}", next_tx, tx_max);
             // Allows for overflow to happen
             if next_tx != tx_max + 1 {
                 break;
@@ -209,6 +223,8 @@ impl Journal {
 
         j.header.tail = new_tail;
         j.header.trans_ctr = tx_max + 1;
+
+        debug!(j.header);
 
         Ok(j)
     }
@@ -241,7 +257,9 @@ impl Journal {
 
         if space_in_block < esize {
             if space_in_block >= 4 {
-                self.file.write_all(&ZERO_SIZE[..])?;
+                //println!("Writing zero {}", self.header.tail);
+                self.file
+                    .write_all_at(&ZERO_SIZE[..], self.file_off(self.header.tail))?;
             }
             self.header.tail = align_up_always(self.header.tail, BLOCK_SIZE as u64);
             // Journal is full, will move head

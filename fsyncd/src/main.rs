@@ -59,14 +59,15 @@ macro_rules! is_variant {
 
 mod client;
 mod common;
+mod journal;
 mod server;
 
 use std::process::exit;
 
 use clap::{App, Arg, ArgGroup, ErrorKind, SubCommand};
-use client::client_main;
-use client::Client;
+use client::{client_main, Client};
 use common::{ClientMode, CompMode};
+use journal::viewer_main;
 use server::{display_fuse_help, server_main};
 
 #[cfg(feature = "profile")]
@@ -167,6 +168,15 @@ fn main() {
                         .default_value("off")
                         .possible_values(&["bilog", "off"]),
                 ).arg(
+                    Arg::with_name("journal-path")
+                        .long("journal-path")
+                        .takes_value(true)
+                        .default_value("test.fj")
+                        .required_ifs(&[
+                            ("bilog","journal"),
+                            ("undo", "journal")
+                        ]),
+                ).arg(
                     Arg::with_name("journal-size")
                         .long("journal-size")
                         .takes_value(true)
@@ -188,6 +198,22 @@ fn main() {
                         .help("Sets the interval in seconds for periodic flush for synchronous clients, 0 disables flushing altogether")
                         .takes_value(true)
                 ),
+        ).subcommand(
+            SubCommand::with_name("logview").arg(
+                Arg::with_name("journal-path")
+                    .long("journal-path")
+                    .takes_value(true)
+                    .default_value("test.fj")
+                    .required(true),
+            ).arg(
+                Arg::with_name("direction")
+                    .long("direction")
+                    .short("d")
+                    .takes_value(true)
+                    .possible_values(&["forward", "reverse"])
+                    .default_value("reverse")
+                    .required(true),
+            ),
         ).subcommand(
             SubCommand::with_name("checksum").arg(
                 Arg::with_name("mount-path")
@@ -224,6 +250,9 @@ fn main() {
         }
         Some("client") => {
             client_main(matches);
+        }
+        Some("logview") => {
+            viewer_main(matches);
         }
         Some("checksum") => {
             use common::hash_metadata;

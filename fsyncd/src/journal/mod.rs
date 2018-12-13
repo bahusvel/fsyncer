@@ -1,15 +1,23 @@
 #![allow(non_camel_case_types)]
 #![allow(private_in_public)]
 
+mod bilog;
+mod store;
+mod viewer;
+
+pub use self::store::*;
+pub use self::viewer::viewer_main;
+
+pub use self::bilog::BilogItem;
 use common::*;
 use errno::errno;
 use libc::*;
-use std::ffi::CString;
-use std::fs;
-use std::fs::File;
+use std::borrow::Cow;
+use std::ffi::{CStr, CString};
+use std::fs::{self, File};
 use std::io::{Error, ErrorKind};
 use std::os::unix::io::FromRawFd;
-use walkdir::DirEntryExt;
+use walkdir::{DirEntryExt, WalkDir};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum JournalCall {
@@ -21,37 +29,6 @@ pub enum JournalCall {
     log_file(log_file),
     log_xattr(log_xattr),
     log_write(log_write),
-}
-
-impl JournalCall {
-    pub fn gen_bilog(self, fspath: &str) -> Result<JournalCall, Error> {
-        Ok(match self {
-            JournalCall::log_chmod(c) => {
-                JournalCall::log_chmod(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_chown(c) => {
-                JournalCall::log_chown(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_utimens(c) => {
-                JournalCall::log_utimens(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_rename(c) => {
-                JournalCall::log_rename(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_dir(c) => {
-                JournalCall::log_dir(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_file(c) => {
-                JournalCall::log_file(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_xattr(c) => {
-                JournalCall::log_xattr(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-            JournalCall::log_write(c) => {
-                JournalCall::log_write(LogItem::gen_bilog(c.current_state(fspath)?, c))
-            }
-        })
-    }
 }
 
 impl<'a, 'b> From<&'b VFSCall<'a>> for JournalCall {
@@ -132,6 +109,28 @@ impl<'a, 'b> From<&'b VFSCall<'a>> for JournalCall {
     }
 }
 
+impl LogItem for JournalCall {
+    fn current_state(&self, fspath: &str) -> Result<Self, Error> {
+        Ok(match self {
+            JournalCall::log_chmod(c) => JournalCall::log_chmod(c.current_state(fspath)?),
+            JournalCall::log_chown(c) => JournalCall::log_chown(c.current_state(fspath)?),
+            JournalCall::log_utimens(c) => JournalCall::log_utimens(c.current_state(fspath)?),
+            JournalCall::log_rename(c) => JournalCall::log_rename(c.current_state(fspath)?),
+            JournalCall::log_dir(c) => JournalCall::log_dir(c.current_state(fspath)?),
+            JournalCall::log_file(c) => JournalCall::log_file(c.current_state(fspath)?),
+            JournalCall::log_xattr(c) => JournalCall::log_xattr(c.current_state(fspath)?),
+            JournalCall::log_write(c) => JournalCall::log_write(c.current_state(fspath)?),
+        })
+    }
+}
+
+pub trait LogItem {
+    fn current_state(&self, fspath: &str) -> Result<Self, Error>
+    where
+        Self: Sized;
+    //fn description(&self) -> String;
+}
+
 fn translate_and_stat(path: &CStr, fspath: &str) -> Result<stat, Error> {
     use std::mem;
     let real_path = translate_path(path, &fspath);
@@ -154,13 +153,6 @@ fn find_hardlink(ino: u64, intree: &str) -> Result<Option<String>, Error> {
     return Ok(None);
 }
 
-pub trait LogItem {
-    fn current_state(&self, fspath: &str) -> Result<Self, Error>
-    where
-        Self: Sized;
-    fn gen_bilog(oldstate: Self, newstate: Self) -> Self;
-}
-
 //Auto transforms
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct log_chmod(chmod<'static>);
@@ -172,12 +164,6 @@ impl LogItem for log_chmod {
             path: self.0.path.clone(),
             mode: stbuf.st_mode,
         }))
-    }
-    fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
-        log_chmod(chmod {
-            path: newstate.0.path,
-            mode: newstate.0.mode ^ oldstate.0.mode,
-        })
     }
 }
 
@@ -192,13 +178,6 @@ impl LogItem for log_chown {
             uid: stbuf.st_uid,
             gid: stbuf.st_gid,
         }))
-    }
-    fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
-        log_chown(chown {
-            path: newstate.0.path,
-            uid: newstate.0.uid ^ oldstate.0.uid,
-            gid: newstate.0.gid ^ newstate.0.gid,
-        })
     }
 }
 
@@ -222,21 +201,6 @@ impl LogItem for log_utimens {
             ],
         }))
     }
-    fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
-        log_utimens(utimens {
-            path: newstate.0.path,
-            timespec: [
-                enc_timespec {
-                    tv_sec: newstate.0.timespec[0].tv_sec ^ oldstate.0.timespec[0].tv_sec,
-                    tv_nsec: newstate.0.timespec[0].tv_nsec ^ oldstate.0.timespec[0].tv_nsec,
-                },
-                enc_timespec {
-                    tv_sec: newstate.0.timespec[1].tv_sec ^ oldstate.0.timespec[1].tv_sec,
-                    tv_nsec: newstate.0.timespec[1].tv_nsec ^ oldstate.0.timespec[1].tv_nsec,
-                },
-            ],
-        })
-    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -245,9 +209,6 @@ struct log_rename(rename<'static>);
 impl LogItem for log_rename {
     fn current_state(&self, _fspath: &str) -> Result<Self, Error> {
         Ok(self.clone())
-    }
-    fn gen_bilog(_oldstate: Self, newstate: Self) -> Self {
-        newstate
     }
 }
 
@@ -269,9 +230,6 @@ impl LogItem for log_dir {
             path: self.0.path.clone(),
             mode: stbuf.st_mode,
         }))
-    }
-    fn gen_bilog(oldstate: Self, _newstate: Self) -> Self {
-        oldstate
     }
 }
 
@@ -363,17 +321,10 @@ impl LogItem for log_file {
                     panic!("log_file does not understand {:x} file type", m & S_IFMT);
                 }
             }
-            Err(ref err) if err.kind() == io::ErrorKind::NotFound => Ok(log_file::unlink(unlink {
+            Err(ref err) if err.kind() == ErrorKind::NotFound => Ok(log_file::unlink(unlink {
                 path: Cow::Owned(CString::from(self.file_path())),
             })), //file does not exist, creating
             Err(err) => Err(err),
-        }
-    }
-    fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
-        if is_variant!(newstate, log_file::unlink) {
-            oldstate
-        } else {
-            newstate
         }
     }
 }
@@ -424,17 +375,6 @@ impl LogItem for log_xattr {
             value: Some(Vec::from(&val_buf[..len as usize])),
         })
     }
-    fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
-        log_xattr {
-            path: newstate.path,
-            name: newstate.name,
-            value: Some(if newstate.value.is_none() {
-                oldstate.value.unwrap()
-            } else {
-                xor_largest_buf(newstate.value.unwrap(), oldstate.value.unwrap())
-            }),
-        }
-    }
 }
 
 /*
@@ -448,23 +388,6 @@ struct log_write {
     offset: int64_t,
     size: int64_t,
     buf: Vec<u8>,
-}
-
-fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
-    assert!(new.len() >= old.len());
-    for i in 0..old.len() {
-        new[i] ^= old[i];
-    }
-}
-
-fn xor_largest_buf(mut new: Vec<u8>, mut old: Vec<u8>) -> Vec<u8> {
-    if new.len() >= old.len() {
-        xor_buf(&mut new, &old);
-        new
-    } else {
-        xor_buf(&mut old, &new);
-        old
-    }
 }
 
 impl LogItem for log_write {
@@ -503,18 +426,9 @@ impl LogItem for log_write {
             )
         };
         if res == -1 {
-            return Err(io::Error::from(errno()));
+            return Err(Error::from(errno()));
         }
 
         Ok(current)
-    }
-    fn gen_bilog(oldstate: Self, mut newstate: Self) -> Self {
-        xor_buf(&mut newstate.buf, &oldstate.buf);
-        log_write {
-            path: newstate.path,
-            offset: newstate.offset,
-            size: oldstate.size ^ newstate.size,
-            buf: newstate.buf,
-        }
     }
 }

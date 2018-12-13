@@ -14,6 +14,7 @@ use self::client::{Client, ClientStatus};
 use self::fusemain::fuse_main;
 use clap::ArgMatches;
 use common::*;
+use journal::{BilogItem, Journal, JournalCall, LogItem};
 
 use libc::{c_char, c_int};
 use std::fs::{self, OpenOptions};
@@ -137,12 +138,16 @@ pub fn pre_op(call: &VFSCall) {
     if unsafe { JOURNAL.is_none() } {
         return;
     }
-    let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
-    j.write_entry(
-        JournalCall::from(call)
-            .gen_bilog(unsafe { &SERVER_PATH })
-            .expect("Failed to generate bilog"),
-    ).expect("Failed to write journal entry");
+    let newstate = JournalCall::from(call);
+    let oldstate = newstate
+        .current_state(unsafe { &SERVER_PATH })
+        .expect("Failed to retrieve current state");
+    let bilog = BilogItem::gen_bilog(oldstate, newstate);
+    {
+        // Reduce the time journal lock is held
+        let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
+        j.write_entry(bilog).expect("Failed to write journal entry");
+    }
 }
 
 pub fn post_op(call: &VFSCall, ret: i32) -> i32 {

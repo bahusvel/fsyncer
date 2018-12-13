@@ -273,8 +273,7 @@ impl Client {
                 .entry(tid)
                 .or_insert(Arc::new(ClientResponse::new()))
                 .clone()
-        }
-        .wait()
+        }.wait()
     }
 }
 

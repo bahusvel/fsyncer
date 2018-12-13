@@ -1,11 +1,7 @@
 mod encoded;
-mod journal;
-mod log;
 mod ops;
 
 pub use self::encoded::*;
-pub use self::journal::*;
-pub use self::log::*;
 pub use self::ops::*;
 
 use std::borrow::Cow;
