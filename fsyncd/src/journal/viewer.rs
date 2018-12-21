@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use journal::{Journal, JournalCall};
+use journal::{BilogItem, Journal, JournalCall};
 use std::fs::File;
 use std::io::Error;
 
@@ -18,7 +18,14 @@ pub fn viewer_main(matches: ArgMatches) {
         _ => unreachable!(),
     };
 
+    let verbose = viewer_matches.is_present("verbose");
+
     for entry in iter {
-        println!("{:?}", entry.expect("Failed to read journal entry"))
+        println!(
+            "{}",
+            entry
+                .expect("Failed to read journal entry")
+                .describe_bilog(verbose)
+        )
     }
 }

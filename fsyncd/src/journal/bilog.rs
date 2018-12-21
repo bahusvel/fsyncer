@@ -3,6 +3,7 @@ use journal::*;
 
 pub trait BilogItem: LogItem {
     fn gen_bilog(oldstate: Self, newstate: Self) -> Self;
+    fn describe_bilog(&self, detail: bool) -> String;
 }
 
 impl BilogItem for JournalCall {
@@ -38,6 +39,18 @@ impl BilogItem for JournalCall {
             ),
         }
     }
+    fn describe_bilog(&self, detail: bool) -> String {
+        match self {
+            JournalCall::log_chmod(o) => o.describe_bilog(detail),
+            JournalCall::log_chown(o) => o.describe_bilog(detail),
+            JournalCall::log_utimens(o) => o.describe_bilog(detail),
+            JournalCall::log_rename(o) => o.describe_bilog(detail),
+            JournalCall::log_dir(o) => o.describe_bilog(detail),
+            JournalCall::log_file(o) => o.describe_bilog(detail),
+            JournalCall::log_xattr(o) => o.describe_bilog(detail),
+            JournalCall::log_write(o) => o.describe_bilog(detail),
+        }
+    }
 }
 
 fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
@@ -64,6 +77,13 @@ impl BilogItem for log_chmod {
             mode: newstate.0.mode ^ oldstate.0.mode,
         })
     }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!("{:?} changed permissions", self.0.path)
+        }
+    }
 }
 
 impl BilogItem for log_chown {
@@ -73,6 +93,13 @@ impl BilogItem for log_chown {
             uid: newstate.0.uid ^ oldstate.0.uid,
             gid: newstate.0.gid ^ newstate.0.gid,
         })
+    }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!("{:?} changed onwership", self.0.path)
+        }
     }
 }
 
@@ -92,17 +119,38 @@ impl BilogItem for log_utimens {
             ],
         })
     }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!("{:?} changed mtime/ctime", self.0.path)
+        }
+    }
 }
 
 impl BilogItem for log_rename {
     fn gen_bilog(_oldstate: Self, newstate: Self) -> Self {
         newstate
     }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!("{:?} renamed to {:?}", self.0.from, self.0.to)
+        }
+    }
 }
 
 impl BilogItem for log_dir {
     fn gen_bilog(oldstate: Self, _newstate: Self) -> Self {
         oldstate
+    }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!("{:?} created or removed directory", self.0.path)
+        }
     }
 }
 
@@ -112,6 +160,20 @@ impl BilogItem for log_file {
             oldstate
         } else {
             newstate
+        }
+    }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            let file_type = match self {
+                log_file::symlink(_) => "a symlink",
+                log_file::link(_) => "a hardlink",
+                log_file::node(_) => "a node",
+                log_file::file(_) => "a plain file",
+                log_file::unlink(_) => "an unkown file type",
+            };
+            format!("{:?} created or removed as {}", self.file_path(), file_type)
         }
     }
 }
@@ -128,6 +190,16 @@ impl BilogItem for log_xattr {
             }),
         }
     }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!(
+                "{:?} set, changed or removed extended attribute {:?}",
+                self.path, self.name,
+            )
+        }
+    }
 }
 
 impl BilogItem for log_write {
@@ -138,6 +210,16 @@ impl BilogItem for log_write {
             offset: newstate.offset,
             size: oldstate.size ^ newstate.size,
             buf: newstate.buf,
+        }
+    }
+    fn describe_bilog(&self, detail: bool) -> String {
+        if detail {
+            format!("{:?}", self)
+        } else {
+            format!(
+                "{:?} wrote or extended the file at offset {}",
+                self.path, self.offset
+            )
         }
     }
 }

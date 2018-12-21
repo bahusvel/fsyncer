@@ -124,6 +124,10 @@ impl LogItem for JournalCall {
     }
 }
 
+pub trait FormatableEntry {
+    fn describe(&self, detail: bool) -> String;
+}
+
 pub trait LogItem {
     fn current_state(&self, fspath: &str) -> Result<Self, Error>
     where

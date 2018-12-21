@@ -213,6 +213,9 @@ fn main() {
                     .possible_values(&["forward", "reverse"])
                     .default_value("reverse")
                     .required(true),
+            ).arg(
+                Arg::with_name("verbose")
+                    .long("verbose"),
             ),
         ).subcommand(
             SubCommand::with_name("checksum").arg(
@@ -261,7 +264,8 @@ fn main() {
                 matches
                     .value_of("mount-path")
                     .expect("No destination specified"),
-            ).expect("Hash failed");
+            )
+            .expect("Hash failed");
             println!("{:x}", hash);
         }
         Some("control") => {
@@ -286,7 +290,8 @@ fn main() {
                 CompMode::empty(),
                 buffer,
                 |_| 0,
-            ).expect("Failed to initialize client");
+            )
+            .expect("Failed to initialize client");
 
             match control_matches.value_of("cmd").unwrap() {
                 "cork" => {
@@ -298,7 +303,8 @@ fn main() {
                     client.uncork_server()
                 }
                 _ => unreachable!(),
-            }.expect("Failed to execute command server");
+            }
+            .expect("Failed to execute command server");
         }
         _ => unreachable!(),
     }

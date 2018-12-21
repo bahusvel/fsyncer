@@ -1,13 +1,16 @@
 #[cfg(test)]
 extern crate test;
 
+extern crate crc;
+
 #[cfg(test)]
 use self::test::Bencher;
 #[cfg(test)]
 use std::{fs::OpenOptions, io::Read};
 
-use bincode::{deserialize_from, serialize_into, serialized_size};
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+use self::crc::crc32;
+use bincode::{deserialize, deserialize_from, serialize_into, serialized_size};
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::File;
@@ -22,7 +25,8 @@ lazy_static! {
         tail: 0,
         head: 0,
         trans_ctr: 0
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -37,12 +41,14 @@ struct JournalEntry<T> {
     fsize: u32,
     trans_id: u32,
     inner: T,
+    crc32: u32,
 }
 
 pub struct Journal {
     header: JournalHeader,
     size: u64,
     file: File,
+    sbuf: Vec<u8>,
 }
 
 pub trait Direction {}
@@ -83,11 +89,10 @@ where
         if align_up_always(self.header.head, BLOCK_SIZE) - self.header.head < 4 {
             self.header.head = align_up_always(self.header.head, BLOCK_SIZE);
         } else {
-            iter_try!(
-                self.journal
-                    .file
-                    .read_exact_at(&mut buf[..], self.journal.file_off(self.header.head))
-            );
+            iter_try!(self
+                .journal
+                .file
+                .read_exact_at(&mut buf[..], self.journal.file_off(self.header.head)));
             if buf == [0; 4] {
                 self.header.head = align_up_always(self.header.head, BLOCK_SIZE);
             }
@@ -95,9 +100,9 @@ where
 
         iter_try!(self.journal.seek(self.header.head));
 
-        let entry: JournalEntry<T> = iter_try!(
-            deserialize_from(&mut self.journal.file).map_err(|e| Error::new(ErrorKind::Other, e))
-        );
+        let entry: JournalEntry<T> =
+            iter_try!(deserialize_from(&mut self.journal.file)
+                .map_err(|e| Error::new(ErrorKind::Other, e)));
 
         // println!(
         //     "head {}, tail {}, entry {:?}",
@@ -136,22 +141,40 @@ where
                 if self.header.tail - decode_tail < 4 {
                     break;
                 }
-                iter_try!(
-                    self.journal
-                        .file
-                        .read_exact_at(&mut buf[..], self.journal.file_off(decode_tail))
-                );
+                iter_try!(self
+                    .journal
+                    .file
+                    .read_exact_at(&mut buf[..], self.journal.file_off(decode_tail)));
                 if buf == [0; 4] {
                     break;
                 }
                 let fsize = LittleEndian::read_u32(&buf[..]) as u64;
                 //debug!(fsize, decode_tail, align_up_always(decode_tail, BLOCK_SIZE));
-                assert!(fsize <= align_up_always(decode_tail, BLOCK_SIZE) - decode_tail);
+                if fsize > align_up_always(decode_tail, BLOCK_SIZE) - decode_tail {
+                    debug!(fsize, decode_tail, align_up_always(decode_tail, BLOCK_SIZE));
+                    return Some(Err(Error::new(ErrorKind::Other, "Entry too large")));
+                }
                 iter_try!(self.journal.seek(decode_tail));
-                let entry: JournalEntry<T> = iter_try!(
-                    deserialize_from(&mut self.journal.file)
-                        .map_err(|e| Error::new(ErrorKind::Other, e))
-                );
+                let mut buf = Vec::with_capacity(fsize as usize);
+                unsafe {
+                    buf.set_len(fsize as usize);
+                }
+                iter_try!(self
+                    .journal
+                    .file
+                    .read_exact_at(&mut buf[..], self.journal.file_off(decode_tail)));
+
+                let crc_recorded = LittleEndian::read_u32(&buf[buf.len() - 4..]);
+                let crc_computed = crc32::checksum_ieee(&buf[..buf.len() - 4]);
+
+                if crc_recorded != crc_computed {
+                    debug!(crc_recorded, crc_computed);
+                    return Some(Err(Error::new(ErrorKind::Other, "Entry checksum mismatch")));
+                }
+
+                let entry: JournalEntry<T> =
+                    iter_try!(deserialize(&buf).map_err(|e| Error::new(ErrorKind::Other, e)));
+
                 decode_tail += fsize as u64;
                 self.block_buffer.push(entry.inner);
             }
@@ -187,6 +210,7 @@ impl Journal {
             header: header,
             size: align_down(file.metadata()?.len() - *HEADER_SIZE, BLOCK_SIZE),
             file: file,
+            sbuf: Vec::new(),
         };
 
         if new {
@@ -235,6 +259,7 @@ impl Journal {
             fsize: 0,
             trans_id: self.header.trans_ctr as u32,
             inner: entry,
+            crc32: 0,
         };
         let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
 
@@ -269,10 +294,22 @@ impl Journal {
             self.write_header()?;
         }
 
-        let mut buf = Vec::with_capacity(esize as usize);
-        serialize_into(&mut buf, &e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        if self.sbuf.capacity() < esize as usize {
+            self.sbuf = Vec::with_capacity(esize as usize);
+        }
+
+        unsafe { self.sbuf.set_len(0) };
+
+        serialize_into(&mut self.sbuf, &e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+        let nlen = self.sbuf.len() - 4;
+        unsafe { self.sbuf.set_len(nlen) };
+
+        let crc32 = crc32::checksum_ieee(&self.sbuf[..]);
+        self.sbuf.write_u32::<LittleEndian>(crc32)?;
+
         self.file
-            .write_all_at(&buf[..], self.file_off(self.header.tail))?;
+            .write_all_at(&self.sbuf, self.file_off(self.header.tail))?;
         self.header.tail += esize;
         self.header.trans_ctr += 1;
 
