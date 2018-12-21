@@ -1,5 +1,65 @@
 CFLAGS= -g -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
 
+ifneq ($(foreground), no)
+	FUSE_FLAGS += -f
+endif
+
+ifneq ($(backtrace), no)
+	ENV += RUST_BACKTRACE=1
+endif
+
+ifneq ($(profile),)
+	CARGO_BUILD_FLAGS = --release
+	SERVER_FLAGS += --flush-interval 0
+	ifeq ($(profile), pprof)
+	CARGO_BUILD_FLAGS += --features profile
+	endif
+	ifeq ($(profile), perf)
+		FUSE_FLAGS = -o allow_root
+		POST_CMD = (sudo perf record -e 'syscalls:sys_enter_writev' -p `pidof fsyncd` || true) && killall fsyncd
+	endif
+	ifeq ($(profile), callgrind)
+		FUSE_FLAGS += -f -o allow_root
+		EXEC_CMD = valgrind --tool=callgrind
+	endif
+endif
+
+ifeq ($(release), no)
+	FSYNCD_BIN = "target/debug/fsyncd"
+else 
+	CARGO_BUILD_FLAGS += --release
+	FSYNCD_BIN = "target/release/fsyncd"
+endif
+
+ifeq ($(journal), bilog)
+	SERVER_FLAGS += --journal=bilog 
+endif
+
+ifneq ($(journal),) 
+	ifneq ($(journal_size),)
+		JOURNAL_SIZE = $(journal_size)
+	else 
+		JOURNAL_SIZE = 1M
+	endif
+	SERVER_FLAGS += --journal-size $(JOURNAL_SIZE)
+endif
+
+ifneq ($(connect),)
+	CLIENT_FLAGS += $(connect)
+else
+	CLIENT_FLAGS += 127.0.0.1
+endif
+
+ifneq ($(sync),)
+	CLIENT_FLAGS += --sync=$(sync)
+else
+	CLIENT_FLAGS += --sync=async
+endif
+
+ifneq ($(stream),)
+	CLIENT_FLAGS ++ --stream-compressor=$(stream)
+endif
+
 dirs:
 	mkdir test_src || true
 	mkdir test_path || true
@@ -15,41 +75,29 @@ test_ll: dirs ll_passthrough
 clean:
 	cd fsyncd && cargo clean
 
+build_fsyncd:
+	cd fsyncd && cargo build $(CARGO_BUILD_FLAGS)
+
+fs: build_fsyncd dirs
+	fusermount3 -u -z test_src || true
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)
+	$(POST_CMD)
+
+client: build_fsyncd dirs
+	rm -rf test_dst || true
+	cp -rax .fsyncer-test_src test_dst
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client `realpath ./test_dst` $(CLIENT_FLAGS)
+	$(POST_CMD)
+
+cmd: build_fsyncd dirs
+	ifeq ($(command),)
+		exit
+	endif
+	$(FSYNCD_BIN) control localhost $(command)
+
+logview: build_fsyncd
+	$(FSYNCD_BIN) logview 
+
 compile_tests:
 	gcc test/sync_test.c -o test/sync_test
 	gcc test/direct_test.c -o test/direct_test
-
-profile_server: dirs
-	fusermount3 -u -z test_src || true
-	cd fsyncd && RUST_BACKTRACE=1 cargo run --release --features profile -- server --flush-interval 0 ../test_src -- -f -o allow_root
-
-
-profile_client: dirs
-	rm -rf test_dst || true
-	cp -rax .fsyncer-test_src test_dst
-	cd fsyncd && RUST_BACKTRACE=1 cargo run --release --features profile -- client `realpath ../test_dst` 127.0.0.1 --sync=async --stream-compressor=lz4
-
-test_fs: dirs
-	fusermount3 -u -z test_src || true
-	cd fsyncd && RUST_BACKTRACE=1 cargo run --release -- server --journal bilog --journal-size 1M ../test_src -- -f
-
-perf_fs: dirs
-	fusermount3 -u -z test_src || true
-	cd fsyncd && cargo build --release
-	target/release/fsyncd server --flush-interval 0 test_src -- -o allow_root
-	sudo perf record -e 'syscalls:sys_enter_writev' -p `pidof fsyncd` || true
-	killall fsyncd
-
-callgrind_fs: dirs
-	fusermount3 -u -z test_src || true
-	cd fsyncd && cargo build --release
-	valgrind --tool=callgrind target/release/fsyncd server --flush-interval 0 test_src -- -f -o allow_root
-	killall fsyncd
-
-test_client:
-	rm -rf test_dst || true
-	cp -rax .fsyncer-test_src test_dst
-	cd fsyncd && RUST_BACKTRACE=1 cargo run --release -- client `realpath ../test_dst` 127.0.0.1 --sync=async --stream-compressor=default
-
-test_cork:
-	cd fsyncd && RUST_BACKTRACE=1 cargo run -- control localhost cork
