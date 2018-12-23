@@ -122,17 +122,25 @@ impl LogItem for JournalCall {
             JournalCall::log_write(c) => JournalCall::log_write(c.current_state(fspath)?),
         })
     }
-}
-
-pub trait FormatableEntry {
-    fn describe(&self, detail: bool) -> String;
+    fn affected_paths(&self) -> Vec<&CStr> {
+        match self {
+            JournalCall::log_chmod(c) => c.affected_paths(),
+            JournalCall::log_chown(c) => c.affected_paths(),
+            JournalCall::log_utimens(c) => c.affected_paths(),
+            JournalCall::log_rename(c) => c.affected_paths(),
+            JournalCall::log_dir(c) => c.affected_paths(),
+            JournalCall::log_file(c) => c.affected_paths(),
+            JournalCall::log_xattr(c) => c.affected_paths(),
+            JournalCall::log_write(c) => c.affected_paths(),
+        }
+    }
 }
 
 pub trait LogItem {
     fn current_state(&self, fspath: &str) -> Result<Self, Error>
     where
         Self: Sized;
-    //fn description(&self) -> String;
+    fn affected_paths(&self) -> Vec<&CStr>;
 }
 
 fn translate_and_stat(path: &CStr, fspath: &str) -> Result<stat, Error> {
@@ -169,6 +177,9 @@ impl LogItem for log_chmod {
             mode: stbuf.st_mode,
         }))
     }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&*self.0.path]
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -182,6 +193,9 @@ impl LogItem for log_chown {
             uid: stbuf.st_uid,
             gid: stbuf.st_gid,
         }))
+    }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&*self.0.path]
     }
 }
 
@@ -205,6 +219,9 @@ impl LogItem for log_utimens {
             ],
         }))
     }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&*self.0.path]
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -213,6 +230,9 @@ struct log_rename(rename<'static>);
 impl LogItem for log_rename {
     fn current_state(&self, _fspath: &str) -> Result<Self, Error> {
         Ok(self.clone())
+    }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&*self.0.from, &*self.0.to]
     }
 }
 
@@ -234,6 +254,9 @@ impl LogItem for log_dir {
             path: self.0.path.clone(),
             mode: stbuf.st_mode,
         }))
+    }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&*self.0.path]
     }
 }
 
@@ -331,6 +354,9 @@ impl LogItem for log_file {
             Err(err) => Err(err),
         }
     }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![self.file_path()]
+    }
 }
 
 /*
@@ -378,6 +404,9 @@ impl LogItem for log_xattr {
             name: self.name.clone(),
             value: Some(Vec::from(&val_buf[..len as usize])),
         })
+    }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&self.path]
     }
 }
 
@@ -434,5 +463,8 @@ impl LogItem for log_write {
         }
 
         Ok(current)
+    }
+    fn affected_paths(&self) -> Vec<&CStr> {
+        vec![&self.path]
     }
 }

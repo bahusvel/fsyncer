@@ -199,9 +199,14 @@ fn main() {
                         .takes_value(true)
                 ),
         ).subcommand(
-            SubCommand::with_name("logview").arg(
+            SubCommand::with_name("journal").subcommand(
+                SubCommand::with_name("view"),
+            ).subcommand(
+                SubCommand::with_name("replay"),
+            ).arg(
                 Arg::with_name("journal-path")
                     .long("journal-path")
+                    .short("p")
                     .takes_value(true)
                     .default_value("test.fj")
                     .required(true),
@@ -216,6 +221,15 @@ fn main() {
             ).arg(
                 Arg::with_name("verbose")
                     .long("verbose"),
+            ).arg(
+                Arg::with_name("filter")
+                    .long("filter")
+                    .short("f")
+                    .takes_value(true),
+            ).arg(
+                Arg::with_name("inverse")
+                    .long("inverse")
+                    .short("i")
             ),
         ).subcommand(
             SubCommand::with_name("checksum").arg(
@@ -254,7 +268,7 @@ fn main() {
         Some("client") => {
             client_main(matches);
         }
-        Some("logview") => {
+        Some("journal") => {
             viewer_main(matches);
         }
         Some("checksum") => {

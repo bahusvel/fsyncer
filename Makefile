@@ -75,28 +75,28 @@ test_ll: dirs ll_passthrough
 clean:
 	cd fsyncd && cargo clean
 
-build_fsyncd:
+build:
 	cd fsyncd && cargo build $(CARGO_BUILD_FLAGS)
 
-fs: build_fsyncd dirs
+fs: build dirs
 	fusermount3 -u -z test_src || true
 	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)
 	$(POST_CMD)
 
-client: build_fsyncd dirs
+client: build dirs
 	rm -rf test_dst || true
 	cp -rax .fsyncer-test_src test_dst
 	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client `realpath ./test_dst` $(CLIENT_FLAGS)
 	$(POST_CMD)
 
-cmd: build_fsyncd dirs
+cmd: build dirs
 	ifeq ($(command),)
 		exit
 	endif
 	$(FSYNCD_BIN) control localhost $(command)
 
-logview: build_fsyncd
-	$(FSYNCD_BIN) logview 
+journal: build
+	$(FSYNCD_BIN) journal 
 
 compile_tests:
 	gcc test/sync_test.c -o test/sync_test

@@ -48,6 +48,7 @@ pub struct Journal {
     header: JournalHeader,
     size: u64,
     file: File,
+    sync: bool,
     sbuf: Vec<u8>,
 }
 
@@ -194,28 +195,30 @@ where
 }
 
 impl Journal {
-    pub fn open(mut file: File, new: bool) -> Result<Self, Error> {
-        let header = if new {
-            JournalHeader {
+    pub fn new(file: File, sync: bool) -> Result<Self, Error> {
+        Ok(Journal {
+            header: JournalHeader {
                 head: 0,
                 tail: 0,
                 trans_ctr: 0,
-            }
-        } else {
-            file.seek(SeekFrom::Start(0))?;
-            deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?
-        };
+            },
+            size: align_down(file.metadata()?.len() - *HEADER_SIZE, BLOCK_SIZE),
+            file: file,
+            sbuf: Vec::new(),
+            sync,
+        })
+    }
+    pub fn open(mut file: File, sync: bool) -> Result<Self, Error> {
+        file.seek(SeekFrom::Start(0))?;
+        let header = deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?;
 
         let mut j = Journal {
             header: header,
             size: align_down(file.metadata()?.len() - *HEADER_SIZE, BLOCK_SIZE),
             file: file,
             sbuf: Vec::new(),
+            sync,
         };
-
-        if new {
-            return Ok(j);
-        }
 
         println!("Traversing the journal {:?}", j.header);
 
@@ -313,6 +316,10 @@ impl Journal {
         self.header.tail += esize;
         self.header.trans_ctr += 1;
 
+        if self.sync {
+            self.flush()?;
+        }
+
         Ok(())
     }
 
@@ -366,7 +373,7 @@ fn journal_rw() {
             .create(true)
             .open("test.fj")?;
         f.set_len(1024 + *HEADER_SIZE)?;
-        let mut j = Journal::open(f, true)?;
+        let mut j = Journal::new(f, false)?;
         for _ in 0..100 {
             j.write_entry("Hello")?;
         }
@@ -400,7 +407,7 @@ fn journal_write(b: &mut Bencher) {
             .create(true)
             .open("test.fj")?;
         f.set_len(1024 * 1024 * 1024)?;
-        Journal::open(f, true)
+        Journal::new(f, false)
     }
     let buf = [1; 4197];
     let mut j = inner().unwrap();
