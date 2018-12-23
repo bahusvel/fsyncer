@@ -39,26 +39,28 @@ impl<'a, 'b> From<&'b VFSCall<'a>> for JournalCall {
                 mode: m.mode,
                 rdev: m.rdev,
             })),
-            VFSCall::mkdir(m) => JournalCall::log_dir(log_dir(mkdir {
-                path: Cow::Owned(m.path.clone().into_owned()),
+            VFSCall::mkdir(m) => JournalCall::log_dir(log_dir {
+                path: m.path.clone().into_owned(),
                 mode: m.mode,
-            })),
+                dir_exists: false,
+            }),
             VFSCall::unlink(u) => JournalCall::log_file(log_file::unlink(unlink {
                 path: Cow::Owned(u.path.clone().into_owned()),
             })),
-            VFSCall::rmdir(r) => JournalCall::log_dir(log_dir(mkdir {
-                path: Cow::Owned(r.path.clone().into_owned()),
+            VFSCall::rmdir(r) => JournalCall::log_dir(log_dir {
+                path: r.path.clone().into_owned(),
                 mode: 0,
-            })),
+                dir_exists: true,
+            }),
             VFSCall::symlink(s) => JournalCall::log_file(log_file::symlink(symlink {
                 from: Cow::Owned(s.from.clone().into_owned()),
                 to: Cow::Owned(s.to.clone().into_owned()),
             })),
-            VFSCall::rename(r) => JournalCall::log_rename(log_rename(rename {
-                from: Cow::Owned(r.from.clone().into_owned()),
-                to: Cow::Owned(r.to.clone().into_owned()),
-                flags: r.flags,
-            })),
+            VFSCall::rename(r) => JournalCall::log_rename(log_rename {
+                from: r.from.clone().into_owned(),
+                to: r.to.clone().into_owned(),
+                from_exists: true,
+            }),
             VFSCall::link(l) => JournalCall::log_file(log_file::link(link {
                 from: Cow::Owned(l.from.clone().into_owned()),
                 to: Cow::Owned(l.to.clone().into_owned()),
@@ -225,14 +227,18 @@ impl LogItem for log_utimens {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-struct log_rename(rename<'static>);
+struct log_rename {
+    from: CString,
+    to: CString,
+    from_exists: bool,
+}
 
 impl LogItem for log_rename {
     fn current_state(&self, _fspath: &str) -> Result<Self, Error> {
         Ok(self.clone())
     }
     fn affected_paths(&self) -> Vec<&CStr> {
-        vec![&*self.0.from, &*self.0.to]
+        vec![&self.from, &self.to]
     }
 }
 
@@ -242,21 +248,26 @@ impl LogItem for log_rename {
 */
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-struct log_dir(mkdir<'static>);
+struct log_dir {
+    path: CString,
+    mode: uint32_t,
+    dir_exists: bool,
+}
 
 impl LogItem for log_dir {
     fn current_state(&self, fspath: &str) -> Result<Self, Error> {
-        if self.0.mode != 0 {
+        if self.mode != 0 {
             return Ok(self.clone());
         }
-        let stbuf = translate_and_stat(&self.0.path, fspath)?;
-        Ok(log_dir(mkdir {
-            path: self.0.path.clone(),
+        let stbuf = translate_and_stat(&self.path, fspath)?;
+        Ok(log_dir {
+            path: self.path.clone(),
             mode: stbuf.st_mode,
-        }))
+            dir_exists: true,
+        })
     }
     fn affected_paths(&self) -> Vec<&CStr> {
-        vec![&*self.0.path]
+        vec![&*self.path]
     }
 }
 
