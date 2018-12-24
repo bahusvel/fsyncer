@@ -1,5 +1,6 @@
 use common::*;
 use journal::*;
+use serde::{Deserialize, Serialize};
 use std::io::Error;
 
 pub trait BilogItem: LogItem {
@@ -8,40 +9,526 @@ pub trait BilogItem: LogItem {
     fn apply_bilog(&self, fspath: &str, current_state: &Self) -> i32;
 }
 //  idealistic type to express these things
-//use std::marker::PhantomData;
+use std::marker::PhantomData;
 
-// trait BilogState {}
-// struct Old {}
-// impl BilogState for Old {}
-// struct New {}
-// impl BilogState for New {}
-// struct Xor {}
-// impl BilogState for Xor {}
+trait BilogState {}
+struct Old {}
+impl BilogState for Old {}
+struct New {}
+impl BilogState for New {}
+#[derive(Debug, Clone)]
+struct Xor {}
+impl BilogState for Xor {}
+trait NewS {}
+trait OldS {}
+trait XorS {}
 
-// #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-// struct bilog_chmod<S: BilogState> {
-//     path: CString,
-//     mode: mode_t,
-//     s: PhantomData<S>,
-// }
+trait Bilog: XorS {
+    type N: NewS;
+    type O: OldS;
+    type X: XorS;
+    fn new(call: &VFSCall) -> Self::N;
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X;
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a>;
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error>;
+}
 
-// trait NewState {}
-// impl NewState for bilog_chmod<New> {}
+trait JournalEntry<'a>: Serialize + Deserialize<'a> + Clone {
+    fn from_vfscall(call: VFSCall) -> Result<Self, Error>;
+    fn display(&self, detail: bool) -> String;
+    fn apply(&self) -> Result<VFSCall, Error>;
+}
 
-// trait ProperBilog: Sized {
-//     type N: NewState;
-//     type O;
-//     type X;
-//     fn from_vfscall(call: VFSCall) -> Self::N;
-//     fn gen_bilog(o: Self::O, n: Self::N) -> Self::X;
-//     fn appy_bilog(x: Self::X, o: Self::O) -> Self::N;
-// }
-// /*
-// impl ProperBilog for bilog_chmod {
-//     type N = bilog_chmod<New>;
-//     type O = bilog_chmod<Old>;
-//     type X = bilog_chmod<Xor>;
-// }*/
+#[derive(Serialize, Deserialize, Debug, Clone)]
+enum BilogEntry {
+    chmod(bilog_chmod<Xor>),
+    chown(bilog_chown<Xor>),
+    utimens(bilog_utimens<Xor>),
+    rename(bilog_rename<Xor>),
+    dir(bilog_dir<Xor>),
+    symlink(bilog_symlink<Xor>),
+    link(bilog_link<Xor>),
+    node(bilog_node<Xor>),
+    file(bilog_file<Xor>),
+    truncate(bilog_truncate<Xor>),
+    write(bilog_write<Xor>),
+    xattr(bilog_xattr<Xor>),
+}
+
+impl<'a> JournalEntry<'a> for BilogEntry {
+    /*
+    fn from_vfscall(call: &VFSCall) -> Result<Self, Error> {
+        Ok(match call {
+            VFSCall::mknod(m) => BilogEntry::node(bilog_node {
+                path: m.path.clone().into_owned(),
+                mode: m.mode,
+                rdev: m.rdev,
+            }),
+            VFSCall::mkdir(m) => BilogEntry::dir(bilog_dir {
+                path: m.path.clone().into_owned(),
+                mode: m.mode,
+                dir_exists: false,
+            }),
+            VFSCall::unlink(u) => BilogEntry::log_file(log_file::unlink(unlink {
+                path: Cow::Owned(u.path.clone().into_owned()),
+            })),
+            VFSCall::rmdir(r) => BilogEntry::dir(bilog_dir {
+                path: r.path.clone().into_owned(),
+                mode: 0,
+                dir_exists: true,
+            }),
+            VFSCall::symlink(s) => BilogEntry::symlink(bilog_symlink {
+                from: s.from.clone().into_owned(),
+                to: s.to.clone().into_owned(),
+            }),
+            VFSCall::rename(r) => BilogEntry::rename(bilog_rename {
+                from: r.from.clone().into_owned(),
+                to: r.to.clone().into_owned(),
+                from_exists: true,
+            }),
+            VFSCall::link(l) => BilogEntry::link(bilog_link {
+                from: l.from.clone().into_owned(),
+                to: l.to.clone().into_owned(),
+            }),
+            VFSCall::chmod(c) => BilogEntry::log_chmod(log_chmod(chmod {
+                path: Cow::Owned(c.path.clone().into_owned()),
+                mode: c.mode,
+            })),
+            VFSCall::chown(c) => BilogEntry::log_chown(log_chown(chown {
+                path: Cow::Owned(c.path.clone().into_owned()),
+                uid: c.uid,
+                gid: c.gid,
+            })),
+            VFSCall::truncate(t) => BilogEntry::log_write(log_write {
+                path: t.path.clone().into_owned(),
+                offset: 0,
+                size: t.size,
+                buf: Vec::new(),
+            }),
+            VFSCall::write(w) => BilogEntry::log_write(log_write {
+                path: w.path.clone().into_owned(),
+                offset: w.offset,
+                size: w.offset + w.buf.len() as i64,
+                buf: w.buf.clone().into_owned(),
+            }),
+            VFSCall::setxattr(s) => BilogEntry::log_xattr(log_xattr {
+                path: s.path.clone().into_owned(),
+                name: s.name.clone().into_owned(),
+                value: Some(s.value.clone().into_owned()),
+            }),
+            VFSCall::removexattr(r) => BilogEntry::log_xattr(log_xattr {
+                path: r.path.clone().into_owned(),
+                name: r.name.clone().into_owned(),
+                value: None,
+            }),
+            VFSCall::create(c) => BilogEntry::log_file(log_file::file(create {
+                path: Cow::Owned(c.path.clone().into_owned()),
+                mode: c.mode,
+                flags: c.flags,
+            })),
+            VFSCall::utimens(u) => BilogEntry::log_utimens(log_utimens(utimens {
+                path: Cow::Owned(u.path.clone().into_owned()),
+                timespec: u.timespec.clone(),
+            })),
+            VFSCall::fallocate(_fallocate) => panic!("Not implemented"),
+            VFSCall::fsync(_fsync) => panic!("Not an IO call"),
+        })
+    }
+    */
+    fn display(&self, detail: bool) -> String {}
+    fn apply(&self) -> Result<VFSCall, Error> {}
+}
+
+macro_rules! bilog_entry {
+    ($name:ident {$($field:ident: $ft:ty,)*}) => {
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+        pub struct $name<S: BilogState> {
+            $(
+                pub $field: $ft,
+            )*
+            s: PhantomData<S>,
+        }
+        impl NewS for $name<New> {}
+        impl OldS for $name<Old> {}
+        impl XorS for $name<Xor> {}
+    };
+    ($name:ident {$($field:ident: $ft:ty),*}) => {
+        bilog_entry!($name { $($field: $ft,)*});
+    }
+}
+
+macro_rules! path_bilog {
+    ($name:ident {$($field:ident: $ft:ty),*}) => {
+         bilog_entry!($name {path:  CString, $($field: $ft,)* });
+    }
+}
+
+path_bilog!(bilog_chmod { mode: mode_t });
+impl Bilog for bilog_chmod<Xor> {
+    type N = bilog_chmod<New>;
+    type O = bilog_chmod<Old>;
+    type X = bilog_chmod<Xor>;
+    fn new(call: &VFSCall) -> Self::N {
+        if let VFSCall::chmod(c) = call {
+            bilog_chmod {
+                path: c.path.clone().into_owned(),
+                mode: c.mode,
+                s: PhantomData,
+            }
+        } else {
+            panic!("Cannot generate from {:?}", call)
+        }
+    }
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X {
+        bilog_chmod {
+            path: n.path,
+            mode: n.mode ^ o.mode,
+            s: PhantomData,
+        }
+    }
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
+        VFSCall::chmod(chmod {
+            path: Cow::Borrowed(&x.path),
+            mode: x.mode ^ o.mode,
+        })
+    }
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error> {
+        let path = new.map(|n| n.path).unwrap_or(xor.map(|x| x.path).unwrap());
+        let stbuf = translate_and_stat(&path, fspath)?;
+        Ok(bilog_chmod {
+            path: path.clone(),
+            mode: stbuf.st_mode,
+            s: PhantomData,
+        })
+    }
+}
+path_bilog!(bilog_chown {
+    uid: uint32_t,
+    gid: uint32_t
+});
+impl Bilog for bilog_chown<Xor> {
+    type N = bilog_chown<New>;
+    type O = bilog_chown<Old>;
+    type X = bilog_chown<Xor>;
+    fn new(call: &VFSCall) -> Self::N {
+        if let VFSCall::chown(c) = call {
+            bilog_chown {
+                path: c.path.clone().into_owned(),
+                uid: c.uid,
+                gid: c.gid,
+                s: PhantomData,
+            }
+        } else {
+            panic!("Cannot generate from {:?}", call)
+        }
+    }
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X {
+        bilog_chown {
+            path: n.path,
+            uid: n.uid ^ o.uid,
+            gid: n.gid ^ o.gid,
+            s: PhantomData,
+        }
+    }
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
+        VFSCall::chown(chown {
+            path: Cow::Borrowed(&x.path),
+            uid: x.uid ^ o.uid,
+            gid: x.gid ^ o.gid,
+        })
+    }
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error> {
+        let path = new.map(|n| n.path).unwrap_or(xor.map(|x| x.path).unwrap());
+        let stbuf = translate_and_stat(&path, fspath)?;
+        Ok(bilog_chown {
+            path: path.clone(),
+            uid: stbuf.st_uid,
+            gid: stbuf.st_gid,
+            s: PhantomData,
+        })
+    }
+}
+path_bilog!(bilog_utimens {
+    timespec: [enc_timespec; 2]
+});
+impl Bilog for bilog_utimens<Xor> {
+    type N = bilog_utimens<New>;
+    type O = bilog_utimens<Old>;
+    type X = bilog_utimens<Xor>;
+    fn new(call: &VFSCall) -> Self::N {
+        if let VFSCall::utimens(c) = call {
+            bilog_utimens {
+                path: c.path.clone().into_owned(),
+                timespec: c.timespec,
+                s: PhantomData,
+            }
+        } else {
+            panic!("Cannot generate from {:?}", call)
+        }
+    }
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X {
+        bilog_utimens {
+            path: n.path,
+            timespec: [
+                n.timespec[0].xor(&o.timespec[0]),
+                n.timespec[1].xor(&o.timespec[1]),
+            ],
+            s: PhantomData,
+        }
+    }
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
+        VFSCall::utimens(utimens {
+            path: Cow::Borrowed(&x.path),
+            timespec: [
+                x.timespec[0].xor(&o.timespec[0]),
+                x.timespec[1].xor(&o.timespec[1]),
+            ],
+        })
+    }
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error> {
+        let path = new.map(|n| n.path).unwrap_or(xor.map(|x| x.path).unwrap());
+        let stbuf = translate_and_stat(&path, fspath)?;
+        Ok(bilog_utimens {
+            path: path.clone(),
+            timespec: [
+                enc_timespec {
+                    tv_sec: stbuf.st_atime,
+                    tv_nsec: stbuf.st_atime_nsec,
+                },
+                enc_timespec {
+                    tv_sec: stbuf.st_mtime,
+                    tv_nsec: stbuf.st_mtime_nsec,
+                },
+            ],
+            s: PhantomData,
+        })
+    }
+}
+bilog_entry!(bilog_rename {
+    from: CString,
+    to: CString,
+    from_exists: bool
+});
+impl Bilog for bilog_rename<Xor> {
+    type N = bilog_rename<New>;
+    type O = bilog_rename<Old>;
+    type X = bilog_rename<Xor>;
+    fn new(call: &VFSCall) -> Self::N {
+        if let VFSCall::rename(c) = call {
+            bilog_rename {
+                from: c.from.clone().into_owned(),
+                to: c.to.clone().into_owned(),
+                from_exists: true,
+                s: PhantomData,
+            }
+        } else {
+            panic!("Cannot generate from {:?}", call)
+        }
+    }
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X {
+        bilog_rename {
+            from: o.from,
+            to: o.to,
+            from_exists: true,
+            s: PhantomData,
+        }
+    }
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
+        if o.from_exists {
+            VFSCall::rename(rename {
+                from: Cow::Borrowed(&x.from),
+                to: Cow::Borrowed(&x.to),
+                flags: 0,
+            })
+        } else {
+            VFSCall::rename(rename {
+                from: Cow::Borrowed(&x.to),
+                to: Cow::Borrowed(&x.from),
+                flags: 0,
+            })
+        }
+    }
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error> {
+        let from = new.map(|n| n.from).unwrap_or(xor.map(|x| x.from).unwrap());
+        let to = new.map(|n| n.to).unwrap_or(xor.map(|x| x.to).unwrap());
+        Ok(bilog_rename {
+            from,
+            to,
+            from_exists: true,
+            s: PhantomData,
+        })
+    }
+}
+path_bilog!(bilog_dir {
+    mode: uint32_t,
+    dir_exists: bool
+});
+impl Bilog for bilog_dir<Xor> {
+    type N = bilog_dir<New>;
+    type O = bilog_dir<Old>;
+    type X = bilog_dir<Xor>;
+    fn new(call: &VFSCall) -> Self::N {
+        match call {
+            VFSCall::rmdir(r) => bilog_dir {
+                path: r.path.clone().into_owned(),
+                mode: 0,
+                dir_exists: true,
+                s: PhantomData,
+            },
+            VFSCall::mkdir(m) => bilog_dir {
+                path: m.path.clone().into_owned(),
+                mode: m.mode,
+                dir_exists: false,
+                s: PhantomData,
+            },
+            _ => panic!("Cannot generate from {:?}", call),
+        }
+    }
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X {
+        bilog_dir {
+            path: o.path,
+            mode: if n.dir_exists { o.mode } else { n.mode },
+            dir_exists: true,
+            s: PhantomData,
+        }
+    }
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
+        if o.dir_exists {
+            VFSCall::rmdir(rmdir {
+                path: Cow::Borrowed(&x.path),
+            })
+        } else {
+            VFSCall::mkdir(mkdir {
+                path: Cow::Borrowed(&x.path),
+                mode: x.mode,
+            })
+        }
+    }
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error> {
+        let path = new.map(|n| n.path).unwrap_or(xor.map(|x| x.path).unwrap());
+        let stbuf = translate_and_stat(&path, fspath);
+        if let Err(e) = stbuf {
+            if e.kind() == ErrorKind::NotFound {
+                return Ok(bilog_dir {
+                    path,
+                    mode: 0,
+                    dir_exists: false,
+                    s: PhantomData,
+                });
+            }
+        }
+        let stbuf = stbuf?;
+        Ok(bilog_dir {
+            path,
+            mode: stbuf.st_mode,
+            dir_exists: true,
+            s: PhantomData,
+        })
+    }
+}
+bilog_entry!(bilog_symlink {
+    from: CString,
+    to: CString,
+    to_exists: bool
+});
+
+impl Bilog for bilog_symlink<Xor> {
+    type N = bilog_symlink<New>;
+    type O = bilog_symlink<Old>;
+    type X = bilog_symlink<Xor>;
+    fn new(call: &VFSCall) -> Self::N {
+        match call {
+            VFSCall::symlink(s) => bilog_symlink {
+                from: s.from.clone().into_owned(),
+                to: s.to.clone().into_owned(),
+                to_exists: false,
+                s: PhantomData,
+            },
+            VFSCall::unlink(u) => bilog_symlink {
+                from: CString::new("").unwrap(),
+                to: u.path.clone().into_owned(),
+                to_exists: true,
+                s: PhantomData,
+            },
+            _ => panic!("Cannot generate from {:?}", call),
+        }
+    }
+    fn xor(o: &Self::O, n: &Self::N) -> Self::X {
+        bilog_symlink {
+            from: o.from,
+            to: o.to,
+            to_exists: true,
+            s: PhantomData,
+        }
+    }
+    fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
+        if o.to_exists {
+            VFSCall::unlink(unlink {
+                path: Cow::Borrowed(&x.to),
+            })
+        } else {
+            VFSCall::symlink(symlink {
+                from: Cow::Borrowed(&x.from),
+                to: Cow::Borrowed(&x.to),
+            })
+        }
+    }
+    fn old(new: Option<&Self::N>, xor: Option<&Self::X>, fspath: &str) -> Result<Self::O, Error> {
+        let from = new.map(|n| n.from).unwrap_or(xor.map(|x| x.from).unwrap());
+        let to = new.map(|n| n.to).unwrap_or(xor.map(|x| x.to).unwrap());
+        let stbuf = translate_and_stat(&to, fspath);
+        if let Err(e) = stbuf {
+            if e.kind() == ErrorKind::NotFound {
+                return Ok(bilog_symlink {
+                    from: CString::new("").unwrap(),
+                    to: to,
+                    to_exists: false,
+                    s: PhantomData,
+                });
+            }
+        }
+        let stbuf = stbuf?;
+        Ok(bilog_symlink {
+            from,
+            to,
+            from_exists: true,
+            s: PhantomData,
+        })
+    }
+}
+bilog_entry!(bilog_link {
+    from: CString,
+    to: CString,
+    to_exists: bool
+});
+path_bilog!(bilog_node {
+    mode: uint32_t,
+    rdev: uint64_t,
+    exists: bool
+});
+path_bilog!(bilog_file {
+    mode: uint32_t,
+    exists: bool
+});
+path_bilog!( bilog_truncate {
+    size: int64_t,
+    buf: Vec<u8>
+});
+path_bilog!( bilog_write {
+    offset: int64_t,
+    buf: Vec<u8>
+});
+path_bilog!( bilog_xattr {
+    name: CString,
+    value: Option<Vec<u8>>
+});
+
+/*
+impl ProperBilog for bilog_chmod {
+    type N = bilog_chmod<New>;
+    type O = bilog_chmod<Old>;
+    type X = bilog_chmod<Xor>;
+}*/
 impl BilogItem for JournalCall {
     fn gen_bilog(oldstate: Self, newstate: Self) -> Self {
         match (oldstate, newstate) {
@@ -356,6 +843,20 @@ impl BilogItem for log_write {
                 "{:?} wrote or extended the file at offset {}",
                 self.path, self.offset
             )
+        }
+    }
+    fn apply_bilog(&self, fspath: &str, current_state: &Self) -> i32 {
+        let path = translate_path(&self.path, fspath);
+        let nsize = self.size ^ current_state.size;
+        if (nsize > current_state.size && self.buf.len() == 0) || nsize < current_state.size {
+            // The operation is an extension or trimming truncate
+            xmp_truncate(path.as_ptr(), nsize, -1)
+        } else {
+            // The operation is a write than extends the file or a normal write
+            // Need to compute the overlapping componenet of the buffer
+            let mut nbuf = self.buf.clone();
+            xor_buf(&mut nbuf, &current_state.buf);
+            xmp_write(path.as_ptr(), nbuf.as_ptr(), nbuf.len(), self.offset, -1)
         }
     }
 }
