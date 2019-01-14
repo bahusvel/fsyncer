@@ -2,7 +2,7 @@ extern crate regex;
 
 use self::regex::Regex;
 use clap::ArgMatches;
-use journal::{BilogItem, Journal, JournalCall, LogItem};
+use journal::{BilogEntry, Journal, JournalEntry};
 use std::fs::File;
 use std::io::Error;
 
@@ -16,8 +16,8 @@ pub fn viewer_main(matches: ArgMatches) {
     let mut j = Journal::open(f, false).expect("Failed to recover journal");
 
     let iter = match viewer_matches.value_of("direction").unwrap() {
-        "reverse" => Box::new(j.read_reverse()) as Box<Iterator<Item = Result<JournalCall, Error>>>,
-        "forward" => Box::new(j.read_forward()) as Box<Iterator<Item = Result<JournalCall, Error>>>,
+        "reverse" => Box::new(j.read_reverse()) as Box<Iterator<Item = Result<BilogEntry, Error>>>,
+        "forward" => Box::new(j.read_forward()) as Box<Iterator<Item = Result<BilogEntry, Error>>>,
         _ => unreachable!(),
     };
 
@@ -48,7 +48,7 @@ pub fn viewer_main(matches: ArgMatches) {
     match viewer_matches.subcommand_name() {
         Some("view") => {
             for entry in filtered {
-                println!("{}", entry.describe_bilog(verbose))
+                println!("{}", entry.describe(verbose))
             }
         }
         Some("replay") => {}

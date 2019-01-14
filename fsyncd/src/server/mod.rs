@@ -14,7 +14,7 @@ use self::client::{Client, ClientStatus};
 use self::fusemain::fuse_main;
 use clap::ArgMatches;
 use common::*;
-use journal::{BilogItem, Journal, JournalCall, LogItem};
+use journal::{BilogEntry, Journal, JournalEntry};
 
 use libc::{c_char, c_int};
 use std::fs::{self, OpenOptions};
@@ -138,11 +138,8 @@ pub fn pre_op(call: &VFSCall) {
     if unsafe { JOURNAL.is_none() } {
         return;
     }
-    let newstate = JournalCall::from(call);
-    let oldstate = newstate
-        .current_state(unsafe { &SERVER_PATH })
-        .expect("Failed to retrieve current state");
-    let bilog = BilogItem::gen_bilog(oldstate, newstate);
+    let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH })
+        .expect("Failed to generate journal entry from vfscall");
     {
         // Reduce the time journal lock is held
         let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
@@ -287,7 +284,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 backing_store.clone(),
                 dont_check,
                 buffer_size,
-            ).expect("Failed handling client");
+            )
+            .expect("Failed handling client");
             SYNC_LIST.write().unwrap().push(client);
         }
     });
@@ -320,7 +318,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let args = vec![
         "fsyncd".to_string(),
         server_matches.value_of("mount-path").unwrap().to_string(),
-    ].into_iter()
+    ]
+    .into_iter()
     .chain(env::args().skip_while(|v| v != "--").skip(1))
     .map(|arg| CString::new(arg).unwrap())
     .collect::<Vec<CString>>();

@@ -1,6 +1,7 @@
 #![feature(libc)]
 #![feature(const_string_new)]
 #![feature(test)]
+#![feature(concat_idents)]
 #![feature(rw_exact_all_at)]
 
 #[cfg(feature = "profile")]
