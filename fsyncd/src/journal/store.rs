@@ -222,11 +222,7 @@ impl Journal {
 
         println!("Traversing the journal {:?}", j.header);
 
-        let mut tx_max = if j.header.trans_ctr == 0 {
-            0
-        } else {
-            j.header.trans_ctr - 1
-        }; // Because the ctr has been advanced before flush
+        let mut tx_max = j.header.trans_ctr as i64 - 1; // Because the ctr has been advanced before flush
         let mut new_tail = j.header.tail;
         loop {
             if new_tail > align_up_always(j.header.tail, BLOCK_SIZE) {
@@ -247,14 +243,15 @@ impl Journal {
             let next_tx = j.file.read_u32::<LittleEndian>()?;
             //println!("Next tx {} old tx {}", next_tx, tx_max);
             // Allows for overflow to happen
-            if next_tx != tx_max + 1 {
+            if next_tx != (tx_max + 1) as u32 {
+                debug!(next_tx, tx_max + 1);
                 break;
             }
-            tx_max = next_tx;
+            tx_max = next_tx as i64;
         }
 
         j.header.tail = new_tail;
-        j.header.trans_ctr = tx_max + 1;
+        j.header.trans_ctr = (tx_max + 1) as u32;
 
         debug!(j.header);
 

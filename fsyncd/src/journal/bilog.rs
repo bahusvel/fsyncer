@@ -148,6 +148,7 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                 let old = bilog_utimens::old(Either::Left(&new), fspath)?;
                 BilogEntry::utimens(bilog_utimens::xor(&old, &new))
             }
+            VFSCall::truncating_write { .. } => panic!("Not a fuse syscall"),
             VFSCall::fallocate(_) => panic!("Not implemented"),
             VFSCall::fsync(_) => panic!("Not an IO call"),
         })
@@ -960,9 +961,10 @@ impl Bilog for bilog_truncate<Xor> {
         })
     }
 }
-path_bilog!( bilog_write {
+path_bilog!(bilog_write {
     offset: int64_t,
-    buf: Vec<u8>
+    buf: Vec<u8>,
+    length: int64_t
 });
 impl Bilog for bilog_write<Xor> {
     type N = bilog_write<New>;
@@ -974,6 +976,7 @@ impl Bilog for bilog_write<Xor> {
                 path: c.path.clone().into_owned(),
                 offset: c.offset,
                 buf: c.buf.clone().into_owned(),
+                length: 0,
                 s: PhantomData,
             }
         } else {
@@ -983,10 +986,15 @@ impl Bilog for bilog_write<Xor> {
     fn xor(o: &Self::O, n: &Self::N) -> Self::X {
         let mut buf = n.buf.clone();
         xor_buf(&mut buf, &o.buf);
+        let mut nsize = n.offset + n.buf.len() as i64;
+        if nsize < o.length {
+            nsize = o.length;
+        }
         bilog_write {
             path: n.path.clone(),
-            offset: o.offset,
+            offset: n.offset,
             buf: buf,
+            length: nsize ^ o.length,
             s: PhantomData,
         }
     }
@@ -999,11 +1007,24 @@ impl Bilog for bilog_write<Xor> {
             xor_buf(&mut xbuf, &o.buf);
             Cow::Owned(xbuf)
         };
-        VFSCall::write(write {
-            path: Cow::Borrowed(&x.path),
-            offset: x.offset,
-            buf: buf,
-        })
+        if x.length ^ o.length >= o.length {
+            // New length will be same or longer
+            VFSCall::write(write {
+                path: Cow::Borrowed(&x.path),
+                offset: x.offset,
+                buf: buf,
+            })
+        } else {
+            // New length will be shorter
+            VFSCall::truncating_write {
+                write: write {
+                    path: Cow::Borrowed(&x.path),
+                    offset: x.offset,
+                    buf: buf,
+                },
+                length: o.length ^ x.length,
+            }
+        }
     }
     fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
@@ -1028,6 +1049,7 @@ impl Bilog for bilog_write<Xor> {
             path: path.clone(),
             offset: offset,
             buf: buf,
+            length: osize as i64,
             s: PhantomData,
         })
     }

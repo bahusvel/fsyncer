@@ -138,6 +138,7 @@ pub fn pre_op(call: &VFSCall) {
     if unsafe { JOURNAL.is_none() } {
         return;
     }
+    //println!("writing journal event {:?}", call);
     let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH })
         .expect("Failed to generate journal entry from vfscall");
     {

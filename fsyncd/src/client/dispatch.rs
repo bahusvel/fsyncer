@@ -60,6 +60,21 @@ pub unsafe fn dispatch(call: &VFSCall, root: &str) -> c_int {
             let path = translate_path(&path, root);
             xmp_write(path.as_ptr(), buf.as_ptr(), buf.len(), *offset, -1)
         }
+        VFSCall::truncating_write {
+            write: write { path, buf, offset },
+            length,
+        } => {
+            let path = translate_path(&path, root);
+            let res = xmp_write(path.as_ptr(), buf.as_ptr(), buf.len(), *offset, -1);
+            if res < 0 {
+                return res;
+            }
+            let tres = xmp_truncate(path.as_ptr(), *length, -1);
+            if tres < 0 {
+                return tres;
+            }
+            res
+        }
         VFSCall::fallocate(fallocate {
             path,
             mode,

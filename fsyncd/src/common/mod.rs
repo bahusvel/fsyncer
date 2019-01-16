@@ -4,6 +4,7 @@ mod ops;
 pub use self::encoded::*;
 pub use self::ops::*;
 
+use libc::int64_t;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -112,6 +113,7 @@ pub enum VFSCall<'a> {
     create(create<'a>),
     utimens(utimens<'a>),
     fsync(fsync<'a>),
+    truncating_write { write: write<'a>, length: int64_t },
 }
 
 use std::ffi::{CStr, CString};

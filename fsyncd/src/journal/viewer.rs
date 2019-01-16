@@ -61,9 +61,10 @@ pub fn viewer_main(matches: ArgMatches) {
                 let vfscall = entry
                     .apply(&path)
                     .expect("Failed to generate bilog vfscall");
-                debug!(vfscall);
+                entry.describe(false);
+                //debug!(vfscall);
                 let res = unsafe { dispatch(&vfscall, path) };
-                if res != 0 {
+                if res < 0 {
                     panic!(
                         "Failed to apply bilog entry {:?} error {}({})",
                         entry,
