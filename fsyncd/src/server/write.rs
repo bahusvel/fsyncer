@@ -1,5 +1,6 @@
 use common::*;
 use libc::*;
+use server::fusemain::fuse_get_context;
 use server::fuseops::fuse_file_info;
 use server::{post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
@@ -9,26 +10,38 @@ use std::slice;
 
 pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
     let real_path = trans_ppath!(path);
+    let context = fuse_get_context();
     let call = VFSCall::mknod(mknod {
         path: Cow::Borrowed(CStr::from_ptr(path)),
         mode,
         rdev,
+        uid: (*context).uid,
+        gid: (*context).gid,
     });
 
     pre_op(&call);
-    let res = xmp_mknod(real_path.as_ptr(), mode, rdev);
+    let res = xmp_mknod(
+        real_path.as_ptr(),
+        mode,
+        rdev,
+        (*context).uid,
+        (*context).gid,
+    );
     post_op(&call, res)
 }
 
 pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
     let real_path = trans_ppath!(path);
+    let context = fuse_get_context();
     let call = VFSCall::mkdir(mkdir {
         path: Cow::Borrowed(CStr::from_ptr(path)),
         mode,
+        uid: (*context).uid,
+        gid: (*context).gid,
     });
 
     pre_op(&call);
-    let res = xmp_mkdir(real_path.as_ptr(), mode);
+    let res = xmp_mkdir(real_path.as_ptr(), mode, (*context).uid, (*context).gid);
     post_op(&call, res)
 }
 
@@ -56,13 +69,16 @@ pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
 
 pub unsafe extern "C" fn do_symlink(from: *const c_char, to: *const c_char) -> c_int {
     let real_to = trans_ppath!(to);
+    let context = fuse_get_context();
     let call = VFSCall::symlink(symlink {
         from: Cow::Borrowed(CStr::from_ptr(from)),
         to: Cow::Borrowed(CStr::from_ptr(to)),
+        uid: (*context).uid,
+        gid: (*context).gid,
     });
 
     pre_op(&call);
-    let res = xmp_symlink(from, real_to.as_ptr());
+    let res = xmp_symlink(from, real_to.as_ptr(), (*context).uid, (*context).gid);
     post_op(&call, res)
 }
 
@@ -86,13 +102,21 @@ pub unsafe extern "C" fn do_rename(from: *const c_char, to: *const c_char, flags
 pub unsafe extern "C" fn do_link(from: *const c_char, to: *const c_char) -> c_int {
     let real_from = trans_ppath!(from);
     let real_to = trans_ppath!(to);
+    let context = fuse_get_context();
     let call = VFSCall::link(link {
         from: Cow::Borrowed(CStr::from_ptr(from)),
         to: Cow::Borrowed(CStr::from_ptr(to)),
+        uid: (*context).uid,
+        gid: (*context).gid,
     });
 
     pre_op(&call);
-    let res = xmp_link(real_from.as_ptr(), real_to.as_ptr());
+    let res = xmp_link(
+        real_from.as_ptr(),
+        real_to.as_ptr(),
+        (*context).uid,
+        (*context).gid,
+    );
     post_op(&call, res)
 }
 
@@ -246,16 +270,26 @@ pub unsafe extern "C" fn do_create(
 ) -> c_int {
     assert!(!fi.is_null());
     let real_path = trans_ppath!(path);
+    let context = fuse_get_context();
 
     let call = VFSCall::create(create {
         path: Cow::Borrowed(CStr::from_ptr(path)),
         mode,
         flags: (*fi).flags,
+        uid: (*context).uid,
+        gid: (*context).gid,
     });
 
     pre_op(&call);
     let mut fd = 0;
-    let res = xmp_create(real_path.as_ptr(), mode, &mut fd, (*fi).flags);
+    let res = xmp_create(
+        real_path.as_ptr(),
+        mode,
+        &mut fd,
+        (*fi).flags,
+        (*context).uid,
+        (*context).gid,
+    );
     (*fi).fh = fd as u64;
     //println!("Created {:?} {}", real_path, fd);
     post_op(&call, res)

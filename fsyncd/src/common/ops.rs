@@ -7,7 +7,13 @@ pub fn neg_errno() -> i32 {
     -errno
 }
 
-pub unsafe fn xmp_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int {
+pub unsafe fn xmp_mknod(
+    path: *const c_char,
+    mode: mode_t,
+    rdev: dev_t,
+    uid: uint32_t,
+    gid: uint32_t,
+) -> c_int {
     let res = if mode & S_IFIFO == S_IFIFO {
         mkfifo(path, mode)
     } else {
@@ -16,13 +22,13 @@ pub unsafe fn xmp_mknod(path: *const c_char, mode: mode_t, rdev: dev_t) -> c_int
     if res == -1 {
         return neg_errno();
     }
-    0
+    xmp_chown(path, uid, gid, -1)
 }
-pub unsafe fn xmp_mkdir(path: *const c_char, mode: mode_t) -> c_int {
+pub unsafe fn xmp_mkdir(path: *const c_char, mode: mode_t, uid: uint32_t, gid: uint32_t) -> c_int {
     if mkdir(path, mode) == -1 {
         return neg_errno();
     }
-    0
+    xmp_chown(path, uid, gid, -1)
 }
 pub unsafe fn xmp_unlink(path: *const c_char) -> c_int {
     if unlink(path) == -1 {
@@ -36,11 +42,16 @@ pub unsafe fn xmp_rmdir(path: *const c_char) -> c_int {
     }
     0
 }
-pub unsafe fn xmp_symlink(from: *const c_char, to: *const c_char) -> c_int {
+pub unsafe fn xmp_symlink(
+    from: *const c_char,
+    to: *const c_char,
+    uid: uint32_t,
+    gid: uint32_t,
+) -> c_int {
     if symlink(from, to) == -1 {
         return neg_errno();
     }
-    0
+    xmp_chown(to, uid, gid, -1)
 }
 pub unsafe fn xmp_rename(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int {
     if flags != 0 {
@@ -51,11 +62,16 @@ pub unsafe fn xmp_rename(from: *const c_char, to: *const c_char, flags: c_uint) 
     }
     0
 }
-pub unsafe fn xmp_link(from: *const c_char, to: *const c_char) -> c_int {
+pub unsafe fn xmp_link(
+    from: *const c_char,
+    to: *const c_char,
+    uid: uint32_t,
+    gid: uint32_t,
+) -> c_int {
     if link(from, to) == -1 {
         return neg_errno();
     }
-    0
+    xmp_chown(to, uid, gid, -1)
 }
 pub unsafe fn xmp_chmod(path: *const c_char, mode: mode_t, fd: c_int) -> c_int {
     let res = if path.is_null() {
@@ -169,12 +185,19 @@ pub unsafe fn xmp_removexattr(path: *const c_char, name: *const c_char) -> c_int
     }
     0
 }
-pub unsafe fn xmp_create(path: *const c_char, mode: mode_t, fd: *mut c_int, flags: c_int) -> c_int {
+pub unsafe fn xmp_create(
+    path: *const c_char,
+    mode: mode_t,
+    fd: *mut c_int,
+    flags: c_int,
+    uid: uint32_t,
+    gid: uint32_t,
+) -> c_int {
     *fd = open(path, flags, mode);
     if *fd == -1 {
         return neg_errno();
     }
-    0
+    xmp_chown(path, uid, gid, -1)
 }
 pub unsafe fn xmp_utimens(path: *const c_char, ts: *const timespec, fd: c_int) -> c_int {
     let res = if path.is_null() {

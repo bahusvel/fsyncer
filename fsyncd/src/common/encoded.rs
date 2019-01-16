@@ -27,10 +27,16 @@ macro_rules! path_syscall {
 
 path_syscall!(mknod {
     mode: uint32_t,
-    rdev: uint64_t
+    rdev: uint64_t,
+    uid: uint32_t,
+    gid: uint32_t
 });
 
-path_syscall!(mkdir { mode: uint32_t });
+path_syscall!(mkdir {
+    mode: uint32_t,
+    uid: uint32_t,
+    gid: uint32_t
+});
 
 path_syscall!(unlink {});
 
@@ -41,6 +47,8 @@ path_syscall!(fsync { isdatasync: c_int });
 encoded_syscall!(symlink {
     from: Cow<'a, CStr>,
     to: Cow<'a, CStr>,
+    uid: uint32_t,
+    gid: uint32_t
 });
 
 encoded_syscall!(rename {
@@ -52,6 +60,8 @@ encoded_syscall!(rename {
 encoded_syscall!(link {
     from: Cow<'a, CStr>,
     to: Cow<'a, CStr>,
+    uid: uint32_t,
+    gid: uint32_t
 });
 
 path_syscall!(chmod { mode: uint32_t });
@@ -84,7 +94,9 @@ path_syscall!(removexattr { name: Cow<'a, CStr> });
 
 path_syscall!(create {
     mode: uint32_t,
-    flags: int32_t
+    flags: int32_t,
+    uid: uint32_t,
+    gid: uint32_t
 });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]

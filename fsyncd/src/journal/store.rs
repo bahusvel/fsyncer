@@ -222,7 +222,11 @@ impl Journal {
 
         println!("Traversing the journal {:?}", j.header);
 
-        let mut tx_max = j.header.trans_ctr - 1; // Because the ctr has been advanced before flush
+        let mut tx_max = if j.header.trans_ctr == 0 {
+            0
+        } else {
+            j.header.trans_ctr - 1
+        }; // Because the ctr has been advanced before flush
         let mut new_tail = j.header.tail;
         loop {
             if new_tail > align_up_always(j.header.tail, BLOCK_SIZE) {
@@ -234,9 +238,11 @@ impl Journal {
             }
             j.seek(new_tail)?;
             let fsize = j.file.read_u32::<LittleEndian>()?;
+            //debug!(fsize);
             if fsize == 0 {
                 break; // last entry in the block
             }
+            new_tail += fsize as u64;
             // FIXME next_tx is not neccessarily correct, it may be leftover data from the previous block, I need to validate this entry.
             let next_tx = j.file.read_u32::<LittleEndian>()?;
             //println!("Next tx {} old tx {}", next_tx, tx_max);
@@ -245,7 +251,6 @@ impl Journal {
                 break;
             }
             tx_max = next_tx;
-            new_tail += fsize as u64;
         }
 
         j.header.tail = new_tail;

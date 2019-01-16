@@ -16,6 +16,17 @@ extern "C" {
         op_size: size_t,
         private_data: *const c_void,
     ) -> c_int;
+    pub fn fuse_get_context() -> *const fuse_context;
+}
+
+#[repr(C)]
+pub struct fuse_context {
+    fuse: *const c_void,
+    pub uid: uid_t,
+    pub gid: gid_t,
+    pub pid: pid_t,
+    private_data: *const c_void,
+    pub umask: mode_t,
 }
 
 pub unsafe extern "C" fn xmp_init(conn: *mut fuse_conn_info, cfg: *mut fuse_config) -> *mut c_void {

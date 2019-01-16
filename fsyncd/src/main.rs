@@ -169,6 +169,9 @@ fn main() {
                         .default_value("off")
                         .possible_values(&["bilog", "off"]),
                 ).arg(
+                    Arg::with_name("journal-sync")
+                        .long("journal-sync")
+                ).arg(
                     Arg::with_name("journal-path")
                         .long("journal-path")
                         .takes_value(true)
@@ -200,35 +203,41 @@ fn main() {
                         .takes_value(true)
                 ),
         ).subcommand(
-            SubCommand::with_name("journal").subcommand(
-                SubCommand::with_name("view"),
+            SubCommand::with_name("journal")
+            .subcommand(
+                SubCommand::with_name("view")
+                .arg(
+                    Arg::with_name("verbose")
+                    .long("verbose"),
+                ),
             ).subcommand(
-                SubCommand::with_name("replay"),
+                SubCommand::with_name("replay")
+                .arg(
+                    Arg::with_name("backing-store")
+                        .short("b")
+                        .long("backing-store")
+                        .help("Explicitly specifies which directory server should use to store files")
+                        .takes_value(true)
+                        .required(true),
+                )
             ).arg(
                 Arg::with_name("journal-path")
                     .long("journal-path")
-                    .short("p")
+                    .short("j")
                     .takes_value(true)
                     .default_value("test.fj")
                     .required(true),
             ).arg(
-                Arg::with_name("direction")
-                    .long("direction")
-                    .short("d")
-                    .takes_value(true)
-                    .possible_values(&["forward", "reverse"])
-                    .default_value("reverse")
-                    .required(true),
-            ).arg(
-                Arg::with_name("verbose")
-                    .long("verbose"),
+                Arg::with_name("reverse")
+                    .long("reverse")
+                    .short("r"),
             ).arg(
                 Arg::with_name("filter")
                     .long("filter")
                     .short("f")
                     .takes_value(true),
             ).arg(
-                Arg::with_name("inverse")
+                Arg::with_name("inverse-filter")
                     .long("inverse")
                     .short("i")
             ),

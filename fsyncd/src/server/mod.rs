@@ -244,14 +244,27 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     Ok((mount_path, backing_store))
 }
 
-fn open_journal(size: usize) -> Result<Journal, io::Error> {
+fn open_journal(path: &str, size: u64, sync: bool) -> Result<Journal, io::Error> {
+    let exists = Path::new(path).exists();
     let f = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("test.fj")?;
-    f.set_len(size as u64)?;
-    Journal::open(f, true)
+        .open(path)?;
+    if exists {
+        if f.metadata()
+            .expect("Failed to retrieve file metadata")
+            .len()
+            < size
+        {
+            panic!("Refusing to shrink journal size")
+        }
+        f.set_len(size)?;
+        Journal::open(f, sync)
+    } else {
+        f.set_len(size)?;
+        Journal::new(f, sync)
+    }
 }
 
 pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
@@ -303,11 +316,16 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
 
     let journal_size = parse_human_size(server_matches.value_of("journal-size").unwrap())
         .expect("Invalid format for journal-size");
+    let journal_sync = server_matches.is_present("journal-sync");
 
     match server_matches.value_of("journal").unwrap() {
         "bilog" => unsafe {
+            let journal_path = server_matches
+                .value_of("journal-path")
+                .expect("Journal path must be set in bilog mode");
             JOURNAL = Some(Mutex::new(
-                open_journal(journal_size).expect("Failed to open journal"),
+                open_journal(journal_path, journal_size as u64, journal_sync)
+                    .expect("Failed to open journal"),
             ))
         },
         "off" => {}

@@ -1,6 +1,6 @@
 mod dispatch;
 
-use self::dispatch::dispatch;
+pub use self::dispatch::dispatch;
 use bincode::deserialize;
 use bincode::{serialize_into, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
