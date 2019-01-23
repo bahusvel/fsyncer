@@ -4,13 +4,14 @@ use journal::*;
 extern crate either;
 
 use self::either::Either;
+use journal::FileStore;
 use std::cmp::min;
 use std::ffi::OsStr;
 use std::io::Error;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
+use std::sync::Mutex;
 
-//  idealistic type to express these things
 use std::marker::PhantomData;
 
 pub trait BilogState {}
@@ -46,20 +47,37 @@ pub enum BilogEntry {
     link(bilog_link<Xor>),
     node(bilog_node<Xor>),
     file(bilog_file<Xor>),
+    filestore { path: CString, token: u64 },
     truncate(bilog_truncate<Xor>),
     write(bilog_write<Xor>),
     xattr(bilog_xattr<Xor>),
 }
 
+lazy_static! {
+    static ref FILESTORE: Mutex<Option<FileStore>> = Mutex::new(None);
+}
+
 impl<'a> JournalEntry<'a> for BilogEntry {
     fn from_vfscall(call: &VFSCall, fspath: &str) -> Result<Self, Error> {
         Ok(match call {
-            VFSCall::mknod(_) => {
-                let new = bilog_node::new(call);
-                let old = bilog_node::old(Either::Left(&new), fspath)?;
-                BilogEntry::node(bilog_node::xor(&old, &new))
-            }
-            VFSCall::mkdir(_) | VFSCall::rmdir(_) => {
+            VFSCall::mknod(s) => BilogEntry::node(bilog_node {
+                path: s.path.clone().into_owned(),
+                mode: s.mode,
+                rdev: s.rdev,
+                exists: true,
+                uid: s.uid,
+                gid: s.gid,
+                s: PhantomData,
+            }),
+            VFSCall::mkdir(m) => BilogEntry::dir(bilog_dir {
+                path: m.path.clone().into_owned(),
+                mode: m.mode,
+                uid: m.uid,
+                gid: m.gid,
+                dir_exists: true,
+                s: PhantomData,
+            }),
+            VFSCall::rmdir(_) => {
                 let new = bilog_dir::new(call);
                 let old = bilog_dir::old(Either::Left(&new), fspath)?;
                 BilogEntry::dir(bilog_dir::xor(&old, &new))
@@ -77,10 +95,25 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                         let new = bilog_link::new(call);
                         let old = bilog_link::old(Either::Left(&new), fspath)?;
                         BilogEntry::link(bilog_link::xor(&old, &new))
-                    } else {
+                    } else if stbuf.st_size == 0 {
+                        // empty normal file
                         let new = bilog_file::new(call);
                         let old = bilog_file::old(Either::Left(&new), fspath)?;
                         BilogEntry::file(bilog_file::xor(&old, &new))
+                    } else {
+                        // normal file
+                        let mut fstore = FILESTORE.lock().unwrap();
+                        if fstore.is_none() || !fstore.as_ref().unwrap().path().starts_with(fspath)
+                        {
+                            *fstore = Some(FileStore::new(String::from(fspath))?);
+                        }
+
+                        let path = translate_path(&u.path, fspath).into_string().unwrap();
+                        let token = fstore.as_mut().unwrap().store(path)?;
+                        BilogEntry::filestore {
+                            path: u.path.clone().into_owned(),
+                            token,
+                        }
                     }
                 } else if is_type(m, S_IFLNK) {
                     let new = bilog_symlink::new(call);
@@ -98,21 +131,28 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                     panic!("Unknown file type deleted");
                 }
             }
-            VFSCall::symlink(_) => {
-                let new = bilog_symlink::new(call);
-                let old = bilog_symlink::old(Either::Left(&new), fspath)?;
-                BilogEntry::symlink(bilog_symlink::xor(&old, &new))
-            }
-            VFSCall::rename(_) => {
-                let new = bilog_rename::new(call);
-                let old = bilog_rename::old(Either::Left(&new), fspath)?;
-                BilogEntry::rename(bilog_rename::xor(&old, &new))
-            }
-            VFSCall::link(_) => {
-                let new = bilog_link::new(call);
-                let old = bilog_link::old(Either::Left(&new), fspath)?;
-                BilogEntry::link(bilog_link::xor(&old, &new))
-            }
+            VFSCall::symlink(s) => BilogEntry::symlink(bilog_symlink {
+                from: s.from.clone().into_owned(),
+                to: s.to.clone().into_owned(),
+                uid: s.uid,
+                gid: s.gid,
+                to_exists: true,
+                s: PhantomData,
+            }),
+            VFSCall::rename(c) => BilogEntry::rename(bilog_rename {
+                from: c.from.clone().into_owned(),
+                to: c.to.clone().into_owned(),
+                from_exists: true,
+                s: PhantomData,
+            }),
+            VFSCall::link(s) => BilogEntry::link(bilog_link {
+                from: s.from.clone().into_owned(),
+                to: s.to.clone().into_owned(),
+                to_exists: true,
+                uid: s.uid,
+                gid: s.gid,
+                s: PhantomData,
+            }),
             VFSCall::chmod(_) => {
                 let new = bilog_chmod::new(call);
                 let old = bilog_chmod::old(Either::Left(&new), fspath)?;
@@ -138,11 +178,14 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                 let old = bilog_xattr::old(Either::Left(&new), fspath)?;
                 BilogEntry::xattr(bilog_xattr::xor(&old, &new))
             }
-            VFSCall::create(_) => {
-                let new = bilog_file::new(call);
-                let old = bilog_file::old(Either::Left(&new), fspath)?;
-                BilogEntry::file(bilog_file::xor(&old, &new))
-            }
+            VFSCall::create(s) => BilogEntry::file(bilog_file {
+                path: s.path.clone().into_owned(),
+                mode: s.mode,
+                exists: false,
+                uid: s.uid,
+                gid: s.gid,
+                s: PhantomData,
+            }),
             VFSCall::utimens(_) => {
                 let new = bilog_utimens::new(call);
                 let old = bilog_utimens::old(Either::Left(&new), fspath)?;
@@ -167,6 +210,9 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             BilogEntry::link(c) => format!("{:?} created or removed link", c.to),
             BilogEntry::node(c) => format!("{:?} created or removed special file", c.path),
             BilogEntry::file(c) => format!("{:?} created or removed normal file", c.path),
+            BilogEntry::filestore { path, .. } => {
+                format!("{:?} recovered or deleted filestore file", path)
+            }
             BilogEntry::truncate(c) => format!("{:?} truncated or extended file", c.path),
             BilogEntry::write(c) => format!("{:?} changed contents at offset {}", c.path, c.offset),
             BilogEntry::xattr(c) => format!(
@@ -186,6 +232,7 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             BilogEntry::link(c) => vec![&c.to],
             BilogEntry::node(c) => vec![&c.path],
             BilogEntry::file(c) => vec![&c.path],
+            BilogEntry::filestore { path, .. } => vec![&path],
             BilogEntry::truncate(c) => vec![&c.path],
             BilogEntry::write(c) => vec![&c.path],
             BilogEntry::xattr(c) => vec![&c.path],
@@ -228,6 +275,13 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             BilogEntry::file(x) => {
                 let current = bilog_file::old(Either::Right(x), fspath)?;
                 Ok(bilog_file::apply(x, &current))
+            }
+            BilogEntry::filestore { path, token } => {
+                let mut fstore = FILESTORE.lock().unwrap();
+                if fstore.is_none() || !fstore.as_ref().unwrap().path().starts_with(fspath) {
+                    *fstore = Some(FileStore::new(String::from(fspath))?);
+                }
+                fstore.as_ref().unwrap().recover(*token, path)
             }
             BilogEntry::truncate(x) => {
                 let current = bilog_truncate::old(Either::Right(x), fspath)?;
@@ -419,25 +473,11 @@ impl Bilog for bilog_rename<Xor> {
     type N = bilog_rename<New>;
     type O = bilog_rename<Old>;
     type X = bilog_rename<Xor>;
-    fn new(call: &VFSCall) -> Self::N {
-        if let VFSCall::rename(c) = call {
-            bilog_rename {
-                from: c.from.clone().into_owned(),
-                to: c.to.clone().into_owned(),
-                from_exists: true,
-                s: PhantomData,
-            }
-        } else {
-            panic!("Cannot generate from {:?}", call)
-        }
+    fn new(_: &VFSCall) -> Self::N {
+        panic!("Stub method, dont call it")
     }
-    fn xor(o: &Self::O, _: &Self::N) -> Self::X {
-        bilog_rename {
-            from: o.from.clone(),
-            to: o.to.clone(),
-            from_exists: true,
-            s: PhantomData,
-        }
+    fn xor(_: &Self::O, _: &Self::N) -> Self::X {
+        panic!("Stub method, dont call it")
     }
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> VFSCall<'a> {
         if o.from_exists {
@@ -483,14 +523,6 @@ impl Bilog for bilog_dir<Xor> {
                 uid: 0,
                 gid: 0,
                 dir_exists: true,
-                s: PhantomData,
-            },
-            VFSCall::mkdir(m) => bilog_dir {
-                path: m.path.clone().into_owned(),
-                mode: m.mode,
-                uid: m.uid,
-                gid: m.gid,
-                dir_exists: false,
                 s: PhantomData,
             },
             _ => panic!("Cannot generate from {:?}", call),
@@ -558,14 +590,6 @@ impl Bilog for bilog_symlink<Xor> {
     type X = bilog_symlink<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::symlink(s) => bilog_symlink {
-                from: s.from.clone().into_owned(),
-                to: s.to.clone().into_owned(),
-                uid: s.uid,
-                gid: s.gid,
-                to_exists: false,
-                s: PhantomData,
-            },
             VFSCall::unlink(u) => bilog_symlink {
                 from: CString::new("").unwrap(),
                 to: u.path.clone().into_owned(),
@@ -642,14 +666,6 @@ impl Bilog for bilog_link<Xor> {
     type X = bilog_link<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::link(s) => bilog_link {
-                from: s.from.clone().into_owned(),
-                to: s.to.clone().into_owned(),
-                to_exists: false,
-                uid: s.uid,
-                gid: s.gid,
-                s: PhantomData,
-            },
             VFSCall::unlink(u) => bilog_link {
                 from: CString::new("").unwrap(),
                 to: u.path.clone().into_owned(),
@@ -733,15 +749,6 @@ impl Bilog for bilog_node<Xor> {
     type X = bilog_node<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::mknod(s) => bilog_node {
-                path: s.path.clone().into_owned(),
-                mode: s.mode,
-                rdev: s.rdev,
-                exists: false,
-                uid: s.uid,
-                gid: s.gid,
-                s: PhantomData,
-            },
             VFSCall::unlink(u) => bilog_node {
                 path: u.path.clone().into_owned(),
                 mode: 0,
@@ -809,6 +816,7 @@ impl Bilog for bilog_node<Xor> {
         })
     }
 }
+
 path_bilog!(bilog_file {
     mode: uint32_t,
     exists: bool,
@@ -821,14 +829,6 @@ impl Bilog for bilog_file<Xor> {
     type X = bilog_file<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::create(s) => bilog_file {
-                path: s.path.clone().into_owned(),
-                mode: s.mode,
-                exists: false,
-                uid: s.uid,
-                gid: s.gid,
-                s: PhantomData,
-            },
             VFSCall::unlink(u) => bilog_file {
                 path: u.path.clone().into_owned(),
                 mode: 0,

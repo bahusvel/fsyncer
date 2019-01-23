@@ -105,6 +105,13 @@ macro_rules! is_variant {
             false
         }
     };
+    ($val:expr, $variant:path, struct) => {
+        if let $variant { .. } = $val {
+            true
+        } else {
+            false
+        }
+    };
 }
 
 fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Result<(), io::Error> {
@@ -133,10 +140,10 @@ fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Resul
     }
 }
 
-pub fn pre_op(call: &VFSCall) {
+pub fn pre_op(call: &VFSCall) -> Option<c_int> {
     // This is safe, journal is only initialized once.
     if unsafe { JOURNAL.is_none() } {
-        return;
+        return None;
     }
     //println!("writing journal event {:?}", call);
     let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH })
@@ -144,8 +151,16 @@ pub fn pre_op(call: &VFSCall) {
     {
         // Reduce the time journal lock is held
         let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
-        j.write_entry(bilog).expect("Failed to write journal entry");
+        j.write_entry(&bilog)
+            .expect("Failed to write journal entry");
     }
+
+    if is_variant!(bilog, BilogEntry::filestore, struct) {
+        // Bypass real unlink when using filestore
+        return Some(0);
+    }
+
+    None
 }
 
 pub fn post_op(call: &VFSCall, ret: i32) -> i32 {

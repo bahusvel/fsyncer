@@ -19,7 +19,9 @@ pub unsafe extern "C" fn do_mknod(path: *const c_char, mode: mode_t, rdev: dev_t
         gid: (*context).gid,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_mknod(
         real_path.as_ptr(),
         mode,
@@ -40,7 +42,9 @@ pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
         gid: (*context).gid,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_mkdir(real_path.as_ptr(), mode, (*context).uid, (*context).gid);
     post_op(&call, res)
 }
@@ -51,7 +55,9 @@ pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
         path: Cow::Borrowed(CStr::from_ptr(path)),
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_unlink(real_path.as_ptr());
     post_op(&call, res)
 }
@@ -62,7 +68,9 @@ pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
         path: Cow::Borrowed(CStr::from_ptr(path)),
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_rmdir(real_path.as_ptr());
     post_op(&call, res)
 }
@@ -77,7 +85,9 @@ pub unsafe extern "C" fn do_symlink(from: *const c_char, to: *const c_char) -> c
         gid: (*context).gid,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_symlink(from, real_to.as_ptr(), (*context).uid, (*context).gid);
     post_op(&call, res)
 }
@@ -94,7 +104,9 @@ pub unsafe extern "C" fn do_rename(from: *const c_char, to: *const c_char, flags
         flags,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_rename(real_from.as_ptr(), real_to.as_ptr(), flags);
     post_op(&call, res)
 }
@@ -110,7 +122,9 @@ pub unsafe extern "C" fn do_link(from: *const c_char, to: *const c_char) -> c_in
         gid: (*context).gid,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_link(
         real_from.as_ptr(),
         real_to.as_ptr(),
@@ -130,7 +144,9 @@ pub unsafe extern "C" fn do_chmod(
         mode,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_chmod(real_path.as_ptr(), mode, -1)
@@ -152,7 +168,9 @@ pub unsafe extern "C" fn do_chown(
         gid,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_chown(real_path.as_ptr(), uid, gid, -1)
@@ -172,7 +190,9 @@ pub unsafe extern "C" fn do_truncate(
         size,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_truncate(real_path.as_ptr(), size, -1)
@@ -195,7 +215,9 @@ pub unsafe extern "C" fn do_write(
         offset,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_write(real_path.as_ptr(), buf, size, offset, -1)
@@ -219,7 +241,9 @@ pub unsafe extern "C" fn do_fallocate(
         length,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_fallocate(real_path.as_ptr(), mode, offset, length, -1)
@@ -246,7 +270,9 @@ pub unsafe extern "C" fn do_setxattr(
 
     //println!("setxattr {:?}", call);
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_setxattr(real_path.as_ptr(), name, value, size, flags);
     post_op(&call, res)
 }
@@ -258,7 +284,9 @@ pub unsafe extern "C" fn do_removexattr(path: *const c_char, name: *const c_char
         name: Cow::Borrowed(CStr::from_ptr(name)),
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = xmp_removexattr(real_path.as_ptr(), name);
     post_op(&call, res)
 }
@@ -280,7 +308,9 @@ pub unsafe extern "C" fn do_create(
         gid: (*context).gid,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let mut fd = 0;
     let res = xmp_create(
         real_path.as_ptr(),
@@ -305,7 +335,9 @@ pub unsafe extern "C" fn do_utimens(
         timespec: [(*ts).into(), (*ts.offset(1)).into()],
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_utimens(real_path.as_ptr(), ts, -1)
@@ -326,7 +358,9 @@ pub unsafe extern "C" fn do_fsync(
         isdatasync: isdatasync,
     });
 
-    pre_op(&call);
+    if let Some(r) = pre_op(&call) {
+        return r;
+    }
     let res = if fi.is_null() {
         let real_path = trans_ppath!(path);
         xmp_fsync(real_path.as_ptr(), isdatasync, -1)

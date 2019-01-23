@@ -2,12 +2,14 @@
 #![allow(private_in_public)]
 
 mod bilog;
+mod filestore;
 mod store;
 mod viewer;
 
 pub use self::bilog::BilogEntry;
 pub use self::store::*;
 pub use self::viewer::viewer_main;
+pub use self::filestore::FileStore;
 
 use common::*;
 use errno::errno;
