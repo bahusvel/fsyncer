@@ -7,6 +7,7 @@ use self::either::Either;
 use journal::FileStore;
 use std::cmp::min;
 use std::ffi::OsStr;
+use std::fs::read_link;
 use std::io::Error;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
@@ -85,12 +86,16 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             VFSCall::unlink(u) => {
                 #[inline(always)]
                 fn is_type(mode: uint32_t, ftype: uint32_t) -> bool {
-                    mode & ftype == ftype
+                    mode & S_IFMT == ftype
                 }
                 let stbuf = translate_and_stat(&u.path, fspath)?;
                 let m = stbuf.st_mode;
 
-                if is_type(m, S_IFREG) {
+                if is_type(m, S_IFLNK) {
+                    let new = bilog_symlink::new(call);
+                    let old = bilog_symlink::old(Either::Left(&new), fspath)?;
+                    BilogEntry::symlink(bilog_symlink::xor(&old, &new))
+                } else if is_type(m, S_IFREG) {
                     if stbuf.st_nlink > 1 {
                         let new = bilog_link::new(call);
                         let old = bilog_link::old(Either::Left(&new), fspath)?;
@@ -103,10 +108,11 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                     } else {
                         // normal file
                         let mut fstore = FILESTORE.lock().unwrap();
-                        if fstore.is_none() || !fstore.as_ref().unwrap().path().starts_with(fspath)
-                        {
+                        if fstore.is_none() || fstore.as_ref().unwrap().vfsroot() != fspath {
                             *fstore = Some(FileStore::new(String::from(fspath))?);
                         }
+
+                        //println!("here");
 
                         let path = translate_path(&u.path, fspath).into_string().unwrap();
                         let token = fstore.as_mut().unwrap().store(path)?;
@@ -115,10 +121,6 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                             token,
                         }
                     }
-                } else if is_type(m, S_IFLNK) {
-                    let new = bilog_symlink::new(call);
-                    let old = bilog_symlink::old(Either::Left(&new), fspath)?;
-                    BilogEntry::symlink(bilog_symlink::xor(&old, &new))
                 } else if is_type(m, S_IFBLK)
                     || is_type(m, S_IFCHR)
                     || is_type(m, S_IFIFO)
@@ -278,7 +280,7 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             }
             BilogEntry::filestore { path, token } => {
                 let mut fstore = FILESTORE.lock().unwrap();
-                if fstore.is_none() || !fstore.as_ref().unwrap().path().starts_with(fspath) {
+                if fstore.is_none() || fstore.as_ref().unwrap().vfsroot() != fspath {
                     *fstore = Some(FileStore::new(String::from(fspath))?);
                 }
                 fstore.as_ref().unwrap().recover(*token, path)
@@ -603,7 +605,11 @@ impl Bilog for bilog_symlink<Xor> {
     }
     fn xor(o: &Self::O, n: &Self::N) -> Self::X {
         bilog_symlink {
-            from: o.from.clone(),
+            from: if o.to_exists {
+                o.from.clone()
+            } else {
+                n.from.clone()
+            },
             to: o.to.clone(),
             to_exists: true,
             uid: o.uid ^ n.uid,
@@ -626,7 +632,6 @@ impl Bilog for bilog_symlink<Xor> {
         }
     }
     fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
-        let from = r.either(|n| n.from.clone(), |x| x.from.clone());
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         let stbuf = translate_and_stat(&to, fspath);
         if let Err(e) = stbuf {
@@ -643,8 +648,11 @@ impl Bilog for bilog_symlink<Xor> {
             return Err(e);
         }
         let stbuf = stbuf?;
+        let real_path = translate_path(&to, fspath);
+        let from = read_link(real_path.to_str().unwrap())?;
+
         Ok(bilog_symlink {
-            from,
+            from: CString::new(from.to_str().unwrap()).unwrap(),
             to,
             to_exists: true,
             uid: stbuf.st_uid,
@@ -679,7 +687,11 @@ impl Bilog for bilog_link<Xor> {
     }
     fn xor(o: &Self::O, n: &Self::N) -> Self::X {
         bilog_link {
-            from: o.from.clone(),
+            from: if o.to_exists {
+                o.from.clone()
+            } else {
+                n.from.clone()
+            },
             to: o.to.clone(),
             to_exists: true,
             uid: o.uid ^ n.uid,
