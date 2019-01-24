@@ -1,15 +1,18 @@
 #![allow(non_camel_case_types)]
 #![allow(private_in_public)]
 
+extern crate crc;
+
 mod bilog;
 mod filestore;
 mod store;
 mod viewer;
 
 pub use self::bilog::BilogEntry;
+pub use self::crc::crc32;
+pub use self::filestore::FileStore;
 pub use self::store::*;
 pub use self::viewer::viewer_main;
-pub use self::filestore::FileStore;
 
 use common::*;
 use errno::errno;

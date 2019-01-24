@@ -1,16 +1,14 @@
 #[cfg(test)]
 extern crate test;
 
-extern crate crc;
-
 #[cfg(test)]
 use self::test::Bencher;
 #[cfg(test)]
 use std::{fs::OpenOptions, io::Read};
 
-use self::crc::crc32;
 use bincode::{deserialize, deserialize_from, serialize_into, serialized_size};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
+use journal::crc32;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::File;

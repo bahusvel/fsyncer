@@ -99,7 +99,7 @@ path_syscall!(create {
     gid: uint32_t
 });
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 pub struct enc_timespec {
     pub tv_sec: int64_t,
     pub tv_nsec: int64_t,

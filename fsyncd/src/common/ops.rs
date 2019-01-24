@@ -51,7 +51,10 @@ pub unsafe fn xmp_symlink(
     if symlink(from, to) == -1 {
         return neg_errno();
     }
-    xmp_chown(to, uid, gid, -1)
+    if lchown(to, uid, gid) == -1 {
+        return neg_errno();
+    }
+    0
 }
 pub unsafe fn xmp_rename(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int {
     if flags != 0 {

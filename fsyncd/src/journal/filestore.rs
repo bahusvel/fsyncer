@@ -72,7 +72,6 @@ impl FileStore {
             uid: stbuf.uid(),
             gid: stbuf.gid(),
         }))
-        //fs::hard_link(format!("{}{}", self.path, token), &path)
     }
     pub fn delete(&mut self, path: String) -> Result<u64, Error> {
         let size = fs::symlink_metadata(&path)?.len();
