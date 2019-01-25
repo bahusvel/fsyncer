@@ -15,6 +15,7 @@ use std::fs::File;
 use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::os::unix::fs::FileExt;
+use std::time::{Duration, SystemTime};
 
 const BLOCK_SIZE: u64 = 1024 * 128;
 
@@ -35,11 +36,26 @@ struct JournalHeader {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-struct JournalEntry<T> {
+pub enum EntryContent<T> {
+    Payload(T),
+    Time(SystemTime),
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct StoreEntry<T> {
     fsize: u32,
     trans_id: u32,
-    inner: T,
+    inner: EntryContent<T>,
     crc32: u32,
+}
+
+impl<T> StoreEntry<T> {
+    pub fn trans_id(&self) -> u32 {
+        self.trans_id
+    }
+    pub fn contents(&self) -> &EntryContent<T> {
+        &self.inner
+    }
 }
 
 pub struct Journal {
@@ -48,9 +64,10 @@ pub struct Journal {
     file: File,
     sync: bool,
     sbuf: Vec<u8>,
+    last_time: SystemTime,
 }
 
-pub trait Direction {}
+pub trait Direction: Sized {}
 pub struct Forward;
 impl Direction for Forward {}
 pub struct Reverse;
@@ -61,7 +78,7 @@ pub struct JournalIterator<'a, D: Direction, T> {
     inner_t: PhantomData<T>,
     header: JournalHeader,
     journal: &'a mut Journal,
-    block_buffer: Vec<T>,
+    block_buffer: Vec<StoreEntry<T>>,
 }
 
 #[inline(always)]
@@ -78,7 +95,7 @@ impl<'a, T: Debug> Iterator for JournalIterator<'a, Forward, T>
 where
     for<'de> T: Deserialize<'de>,
 {
-    type Item = Result<T, Error>;
+    type Item = Result<StoreEntry<T>, Error>;
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf: [u8; 4] = [0; 4];
         if self.header.head == self.header.tail {
@@ -99,7 +116,7 @@ where
 
         iter_try!(self.journal.seek(self.header.head));
 
-        let entry: JournalEntry<T> =
+        let entry: StoreEntry<T> =
             iter_try!(deserialize_from(&mut self.journal.file)
                 .map_err(|e| Error::new(ErrorKind::Other, e)));
 
@@ -110,15 +127,15 @@ where
 
         self.header.head += entry.fsize as u64;
 
-        Some(Ok(entry.inner))
+        Some(Ok(entry))
     }
 }
 
-impl<'a, T: Debug> Iterator for JournalIterator<'a, Reverse, T>
+impl<'a, T: Debug + Sized> Iterator for JournalIterator<'a, Reverse, T>
 where
     for<'de> T: Deserialize<'de>,
 {
-    type Item = Result<T, Error>;
+    type Item = Result<StoreEntry<T>, Error>;
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf: [u8; 4] = [0; 4];
         if self.block_buffer.len() == 0 {
@@ -171,11 +188,11 @@ where
                     return Some(Err(Error::new(ErrorKind::Other, "Entry checksum mismatch")));
                 }
 
-                let entry: JournalEntry<T> =
+                let entry: StoreEntry<T> =
                     iter_try!(deserialize(&buf).map_err(|e| Error::new(ErrorKind::Other, e)));
 
                 decode_tail += fsize as u64;
-                self.block_buffer.push(entry.inner);
+                self.block_buffer.push(entry);
             }
 
             if self.header.tail % BLOCK_SIZE != 0 {
@@ -204,6 +221,7 @@ impl Journal {
             file: file,
             sbuf: Vec::new(),
             sync,
+            last_time: SystemTime::now(),
         })
     }
     pub fn open(mut file: File, sync: bool) -> Result<Self, Error> {
@@ -216,6 +234,7 @@ impl Journal {
             file: file,
             sbuf: Vec::new(),
             sync,
+            last_time: SystemTime::now(),
         };
 
         println!("Traversing the journal {:?}", j.header);
@@ -256,14 +275,8 @@ impl Journal {
         Ok(j)
     }
 
-    pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
+    fn write_inner<T: Serialize>(&mut self, mut e: StoreEntry<T>) -> Result<(), Error> {
         const ZERO_SIZE: [u8; 4] = [0; 4];
-        let mut e = JournalEntry {
-            fsize: 0,
-            trans_id: self.header.trans_ctr as u32,
-            inner: entry,
-            crc32: 0,
-        };
         let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
 
         //println!("Writing to journal {}", esize);
@@ -321,6 +334,30 @@ impl Journal {
         }
 
         Ok(())
+    }
+
+    pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
+        let now = SystemTime::now();
+        if now
+            .duration_since(self.last_time)
+            .expect("System clock anomaly")
+            > Duration::from_secs(1)
+        {
+            let ctr = self.header.trans_ctr as u32;
+            self.write_inner::<T>(StoreEntry {
+                fsize: 0,
+                trans_id: ctr,
+                inner: EntryContent::Time(now),
+                crc32: 0,
+            })?;
+        }
+        let e = StoreEntry {
+            fsize: 0,
+            trans_id: self.header.trans_ctr as u32,
+            inner: EntryContent::Payload(entry),
+            crc32: 0,
+        };
+        self.write_inner(e)
     }
 
     fn seek(&mut self, off: u64) -> Result<(), Error> {

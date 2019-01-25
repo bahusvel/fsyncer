@@ -17,15 +17,19 @@ use std::sync::Mutex;
 
 use std::marker::PhantomData;
 
+lazy_static! {
+    static ref FILESTORE: Mutex<Option<FileStore>> = Mutex::new(None);
+}
+
 pub trait BilogState {}
 #[derive(Hash)]
-struct Old {}
+enum Old {}
 impl BilogState for Old {}
 #[derive(Hash)]
-struct New {}
+enum New {}
 impl BilogState for New {}
 #[derive(Debug, Clone)]
-struct Xor {}
+enum Xor {}
 impl BilogState for Xor {}
 trait NewS {}
 trait OldS {}
@@ -58,8 +62,54 @@ pub enum BilogEntry {
     xattr(bilog_xattr<Xor>),
 }
 
-lazy_static! {
-    static ref FILESTORE: Mutex<Option<FileStore>> = Mutex::new(None);
+macro_rules! bilog_entry {
+    ($name:ident {$($field:ident: $ft:ty,)*}) => {
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
+        pub struct $name<S: BilogState> {
+            $(
+                pub $field: $ft,
+            )*
+            s: PhantomData<S>,
+        }
+        impl NewS for $name<New> {}
+        impl OldS for $name<Old> {}
+        impl XorS for $name<Xor> {}
+    };
+    ($name:ident {$($field:ident: $ft:ty),*}) => {
+        bilog_entry!($name { $($field: $ft,)*});
+    }
+}
+
+macro_rules! path_bilog {
+    ($name:ident {$($field:ident: $ft:ty),*}) => {
+         bilog_entry!($name {path:  CString, $($field: $ft,)* });
+    }
+}
+
+macro_rules! set_csum {
+    ($val:expr) => {{
+        let mut s = $val;
+        s.checksum = s.crc32();
+        s
+    }};
+}
+macro_rules! hash_crc32 {
+    ( $( $val:expr ),+ ) => {
+        {
+            let mut h = crc32::Digest::new(crc32::IEEE);
+            $(
+                $val.hash(&mut h);
+            )*
+            h.finish() as u32
+        }
+    }
+}
+
+fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
+    assert!(new.len() >= old.len());
+    for i in 0..old.len() {
+        new[i] ^= old[i];
+    }
 }
 
 impl<'a> JournalEntry<'a> for BilogEntry {
@@ -312,48 +362,6 @@ impl<'a> JournalEntry<'a> for BilogEntry {
     }
 }
 
-macro_rules! bilog_entry {
-    ($name:ident {$($field:ident: $ft:ty,)*}) => {
-        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-        pub struct $name<S: BilogState> {
-            $(
-                pub $field: $ft,
-            )*
-            s: PhantomData<S>,
-        }
-        impl NewS for $name<New> {}
-        impl OldS for $name<Old> {}
-        impl XorS for $name<Xor> {}
-    };
-    ($name:ident {$($field:ident: $ft:ty),*}) => {
-        bilog_entry!($name { $($field: $ft,)*});
-    }
-}
-
-macro_rules! path_bilog {
-    ($name:ident {$($field:ident: $ft:ty),*}) => {
-         bilog_entry!($name {path:  CString, $($field: $ft,)* });
-    }
-}
-
-macro_rules! set_csum {
-    ($val:expr) => {{
-        let mut s = $val;
-        s.checksum = s.crc32();
-        s
-    }};
-}
-macro_rules! hash_crc32 {
-    ( $( $val:expr ),+ ) => {
-        {
-            let mut h = crc32::Digest::new(crc32::IEEE);
-            $(
-                $val.hash(&mut h);
-            )*
-            h.finish() as u32
-        }
-    }
-}
 path_bilog!(bilog_chmod {
     mode: mode_t,
     checksum: u32
@@ -1322,12 +1330,5 @@ impl Bilog for bilog_xattr<Xor> {
             checksum: 0,
             s: PhantomData,
         }))
-    }
-}
-
-fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
-    assert!(new.len() >= old.len());
-    for i in 0..old.len() {
-        new[i] ^= old[i];
     }
 }
