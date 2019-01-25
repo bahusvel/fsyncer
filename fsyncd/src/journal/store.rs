@@ -350,6 +350,7 @@ impl Journal {
                 inner: EntryContent::Time(now),
                 crc32: 0,
             })?;
+            self.last_time = now;
         }
         let e = StoreEntry {
             fsize: 0,

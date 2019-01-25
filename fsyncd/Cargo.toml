@@ -26,10 +26,9 @@ crc = "1.8.1"
 regex = "1.1.0"
 libc = "0.2.45"
 either = "1.5.0"
-
-
-cpuprofiler = {version="0.0.3", optional=true}
-nix = {version="0.11.0", optional=true}
+chrono = "0.4.6"
+cpuprofiler = { version="0.0.3", optional=true }
+nix = { version="0.11.0", optional=true }
 
 [build-dependencies]
 cc = "1.0"

@@ -1,5 +1,7 @@
+extern crate chrono;
 extern crate regex;
 
+use self::chrono::{DateTime, Local};
 use self::regex::Regex;
 use clap::ArgMatches;
 use client::dispatch;
@@ -55,7 +57,7 @@ pub fn viewer_main(matches: ArgMatches) {
                     EntryContent::Payload(e) => {
                         println!("{}\t{}", entry.trans_id(), e.describe(verbose))
                     }
-                    EntryContent::Time(t) => println!("{:?}", t),
+                    EntryContent::Time(t) => println!("{}", DateTime::<Local>::from(*t)),
                 }
             }
         }
@@ -80,7 +82,9 @@ pub fn viewer_main(matches: ArgMatches) {
                             );
                         }
                     }
-                    EntryContent::Time(t) => println!("Replaying events from {:?}", t),
+                    EntryContent::Time(t) => {
+                        println!("Replaying events from {}", DateTime::<Local>::from(*t))
+                    }
                 }
             }
         }
