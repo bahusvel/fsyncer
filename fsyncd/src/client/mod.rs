@@ -15,6 +15,7 @@ use std::io;
 use std::io::{Read, Write};
 use std::mem::size_of;
 use std::net::TcpStream;
+use std::path::Path;
 use zstd;
 
 pub struct Client<F: Fn(&VFSCall) -> i32> {
@@ -153,9 +154,11 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
 pub fn client_main(matches: ArgMatches) {
     println!("Calculating destination hash...");
     let client_matches = matches.subcommand_matches("client").unwrap();
-    let client_path = client_matches
-        .value_of("mount-path")
-        .expect("Destination not specified");
+    let client_path = Path::new(
+        client_matches
+            .value_of("mount-path")
+            .expect("Destination not specified"),
+    );
 
     let dsthash = hash_metadata(client_path).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);

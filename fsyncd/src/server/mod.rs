@@ -1,6 +1,6 @@
 macro_rules! trans_ppath {
     ($path:expr) => {
-        translate_path(CStr::from_ptr($path), &SERVER_PATH)
+        translate_path(CStr::from_ptr($path), &SERVER_PATH.as_ref().unwrap())
     };
 }
 
@@ -14,7 +14,7 @@ use self::client::{Client, ClientStatus};
 use self::fusemain::fuse_main;
 use clap::ArgMatches;
 use common::*;
-use journal::{BilogEntry, Journal, JournalEntry};
+use journal::{BilogEntry, Journal, JournalConfig, JournalEntry};
 
 use libc::{c_char, c_int};
 use std::fs::{self, OpenOptions};
@@ -27,7 +27,7 @@ use std::{
     time::Duration,
 };
 
-pub static mut SERVER_PATH: String = String::new();
+pub static mut SERVER_PATH: Option<PathBuf> = None;
 static mut JOURNAL: Option<Mutex<Journal>> = None;
 
 lazy_static! {
@@ -97,23 +97,6 @@ pub fn uncork_server() {
     println!("Uncork done");
 }
 
-macro_rules! is_variant {
-    ($val:expr, $variant:path) => {
-        if let $variant(_) = $val {
-            true
-        } else {
-            false
-        }
-    };
-    ($val:expr, $variant:path, struct) => {
-        if let $variant { .. } = $val {
-            true
-        } else {
-            false
-        }
-    };
-}
-
 fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Result<(), io::Error> {
     match client.mode {
         ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC | ClientMode::MODE_FLUSHSYNC => {
@@ -146,7 +129,7 @@ pub fn pre_op(call: &VFSCall) -> Option<c_int> {
         return None;
     }
     //println!("writing journal event {:?}", call);
-    let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH })
+    let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH.as_ref().unwrap() })
         .expect("Failed to generate journal entry from vfscall");
     {
         // Reduce the time journal lock is held
@@ -260,26 +243,27 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     Ok((mount_path, backing_store))
 }
 
-fn open_journal(path: &str, size: u64, sync: bool) -> Result<Journal, io::Error> {
+fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, io::Error> {
     let exists = Path::new(path).exists();
     let f = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open(path)?;
+
     if exists {
         if f.metadata()
             .expect("Failed to retrieve file metadata")
             .len()
-            < size
+            < c.journal_size
         {
             panic!("Refusing to shrink journal size")
         }
-        f.set_len(size)?;
-        Journal::open(f, sync)
+        f.set_len(c.journal_size)?;
+        Journal::open(f, c)
     } else {
-        f.set_len(size)?;
-        Journal::new(f, sync)
+        f.set_len(c.journal_size)?;
+        Journal::new(f, c)
     }
 }
 
@@ -288,7 +272,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let (mount_path, backing_store) = figure_out_paths(&server_matches)?;
     println!("{:?}, {:?}", mount_path, backing_store);
     unsafe {
-        SERVER_PATH = String::from(backing_store.to_str().unwrap());
+        SERVER_PATH = Some(backing_store.clone());
     }
 
     // FIXME use net2::TcpBuilder to set SO_REUSEADDR
@@ -335,14 +319,21 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     let journal_sync = server_matches.is_present("journal-sync");
 
     match server_matches.value_of("journal").unwrap() {
-        "bilog" => unsafe {
+        "bilog" => {
             let journal_path = server_matches
                 .value_of("journal-path")
                 .expect("Journal path must be set in bilog mode");
+
+            let c = JournalConfig {
+                journal_size: journal_size as u64,
+                sync: journal_sync,
+                vfsroot: unsafe { SERVER_PATH.as_ref().unwrap().clone() },
+                filestore_size: 1024 * 1024 * 1024,
+            };
+            unsafe {
             JOURNAL = Some(Mutex::new(
-                open_journal(journal_path, journal_size as u64, journal_sync)
-                    .expect("Failed to open journal"),
-            ))
+                open_journal(journal_path, c).expect("Failed to open journal"),
+            )) }
         },
         "off" => {}
         _ => panic!("Unknown journal type"),

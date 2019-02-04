@@ -56,6 +56,13 @@ macro_rules! is_variant {
             false
         }
     };
+    ($val:expr, $variant:path, struct) => {
+        if let $variant { .. } = $val {
+            true
+        } else {
+            false
+        }
+    };
 }
 
 mod client;
@@ -70,6 +77,7 @@ use client::{client_main, Client};
 use common::{ClientMode, CompMode};
 use journal::viewer_main;
 use server::{display_fuse_help, server_main};
+use std::path::Path;
 
 #[cfg(feature = "profile")]
 extern "C" fn stop_profiler(_: i32) {
@@ -284,11 +292,11 @@ fn main() {
         Some("checksum") => {
             use common::hash_metadata;
             let matches = matches.subcommand_matches("checksum").unwrap();
-            let hash = hash_metadata(
+            let hash = hash_metadata(Path::new(
                 matches
                     .value_of("mount-path")
                     .expect("No destination specified"),
-            )
+            ))
             .expect("Hash failed");
             println!("{:x}", hash);
         }

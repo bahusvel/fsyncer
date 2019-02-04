@@ -6,9 +6,12 @@ use self::test::Bencher;
 #[cfg(test)]
 use std::{fs::OpenOptions, io::Read};
 
+use common::ffi::*;
+
 use bincode::{deserialize, deserialize_from, serialize_into, serialized_size};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use journal::crc32;
+use journal::filestore::FileStore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::File;
@@ -58,6 +61,13 @@ impl<T> StoreEntry<T> {
     }
 }
 
+pub struct JournalConfig {
+    pub sync: bool,
+    pub journal_size: u64,
+    pub filestore_size: u64,
+    pub vfsroot: PathBuf,
+}
+
 pub struct Journal {
     header: JournalHeader,
     size: u64,
@@ -65,6 +75,7 @@ pub struct Journal {
     sync: bool,
     sbuf: Vec<u8>,
     last_time: SystemTime,
+    fstore: FileStore,
 }
 
 pub trait Direction: Sized {}
@@ -210,7 +221,13 @@ where
 }
 
 impl Journal {
-    pub fn new(file: File, sync: bool) -> Result<Self, Error> {
+    pub fn new(file: File, c: JournalConfig) -> Result<Self, Error> {
+        let JournalConfig {
+            sync,
+            filestore_size,
+            vfsroot,
+            ..
+        } = c;
         Ok(Journal {
             header: JournalHeader {
                 head: 0,
@@ -222,9 +239,17 @@ impl Journal {
             sbuf: Vec::new(),
             sync,
             last_time: SystemTime::now(),
+            fstore: FileStore::new(&vfsroot, filestore_size)?,
         })
     }
-    pub fn open(mut file: File, sync: bool) -> Result<Self, Error> {
+    pub fn open(mut file: File, c: JournalConfig) -> Result<Self, Error> {
+        let JournalConfig {
+            sync,
+            filestore_size,
+            vfsroot,
+            ..
+        } = c;
+
         file.seek(SeekFrom::Start(0))?;
         let header = deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?;
 
@@ -235,6 +260,7 @@ impl Journal {
             sbuf: Vec::new(),
             sync,
             last_time: SystemTime::now(),
+            fstore: FileStore::new(&vfsroot, filestore_size)?,
         };
 
         println!("Traversing the journal {:?}", j.header);
@@ -359,6 +385,10 @@ impl Journal {
             crc32: 0,
         };
         self.write_inner(e)
+    }
+
+    pub fn fstore(&mut self) -> &mut FileStore {
+        &mut self.fstore
     }
 
     fn seek(&mut self, off: u64) -> Result<(), Error> {

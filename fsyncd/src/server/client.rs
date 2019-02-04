@@ -86,7 +86,7 @@ impl Client {
 
         if init.mode != ClientMode::MODE_CONTROL && (!dontcheck) {
             println!("Calculating source hash...");
-            let srchash = hash_metadata(storage_path.to_str().unwrap()).expect("Hash check failed");
+            let srchash = hash_metadata(&storage_path).expect("Hash check failed");
             println!("Source hash is {:x}", srchash);
             if init.dsthash != srchash {
                 println!(
@@ -273,7 +273,8 @@ impl Client {
                 .entry(tid)
                 .or_insert(Arc::new(ClientResponse::new()))
                 .clone()
-        }.wait()
+        }
+        .wait()
     }
 }
 

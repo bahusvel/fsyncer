@@ -1,3 +1,4 @@
+use common::ffi::*;
 use common::*;
 use journal::*;
 
@@ -7,11 +8,9 @@ use self::either::Either;
 use journal::crc32;
 use journal::FileStore;
 use std::cmp::min;
-use std::ffi::OsStr;
 use std::fs::read_link;
 use std::hash::{Hash, Hasher};
 use std::io::Error;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
 use std::sync::Mutex;
 
@@ -42,7 +41,7 @@ trait Bilog: XorS {
     fn new(call: &VFSCall) -> Self::N;
     fn xor(o: &Self::O, n: &Self::N) -> Self::X;
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String>;
-    fn old(Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error>;
+    fn old(Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error>;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -113,7 +112,14 @@ fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
 }
 
 impl<'a> JournalEntry<'a> for BilogEntry {
-    fn from_vfscall(call: &VFSCall, fspath: &str) -> Result<Self, Error> {
+    fn journal(mut self, j: &mut Journal) -> Result<(), Error> {
+        if let BilogEntry::filestore { path, .. } = self {
+            let token = FileStore::store(j, path.to_path())?;
+            self = BilogEntry::filestore { path, token }
+        }
+        j.write_entry(self)
+    }
+    fn from_vfscall(call: &VFSCall, fspath: &Path) -> Result<Self, Error> {
         Ok(match call {
             VFSCall::mknod(s) => BilogEntry::node(bilog_node {
                 path: s.path.clone().into_owned(),
@@ -161,16 +167,9 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                         BilogEntry::file(bilog_file::xor(&old, &new))
                     } else {
                         // normal file
-                        let mut fstore = FILESTORE.lock().unwrap();
-                        if fstore.is_none() || fstore.as_ref().unwrap().vfsroot() != fspath {
-                            *fstore = Some(FileStore::new(String::from(fspath))?);
-                        }
-
-                        let path = translate_path(&u.path, fspath).into_string().unwrap();
-                        let token = fstore.as_mut().unwrap().store(path)?;
                         BilogEntry::filestore {
                             path: u.path.clone().into_owned(),
-                            token,
+                            token: 0,
                         }
                     }
                 } else if is_type(m, S_IFBLK)
@@ -275,24 +274,24 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             ),
         }
     }
-    fn affected_paths(&self) -> Vec<&CStr> {
+    fn affected_paths(&self) -> Vec<&Path> {
         match self {
-            BilogEntry::chmod(c) => vec![&c.path],
-            BilogEntry::chown(c) => vec![&c.path],
-            BilogEntry::utimens(c) => vec![&c.path],
-            BilogEntry::rename(c) => vec![&c.from, &c.to],
-            BilogEntry::dir(c) => vec![&c.path],
-            BilogEntry::symlink(c) => vec![&c.to],
-            BilogEntry::link(c) => vec![&c.to],
-            BilogEntry::node(c) => vec![&c.path],
-            BilogEntry::file(c) => vec![&c.path],
-            BilogEntry::filestore { path, .. } => vec![&path],
-            BilogEntry::truncate(c) => vec![&c.path],
-            BilogEntry::write(c) => vec![&c.path],
-            BilogEntry::xattr(c) => vec![&c.path],
+            BilogEntry::chmod(c) => vec![&c.path.to_path()],
+            BilogEntry::chown(c) => vec![&c.path.to_path()],
+            BilogEntry::utimens(c) => vec![&c.path.to_path()],
+            BilogEntry::rename(c) => vec![&c.from.to_path(), &c.to.to_path()],
+            BilogEntry::dir(c) => vec![&c.path.to_path()],
+            BilogEntry::symlink(c) => vec![&c.to.to_path()],
+            BilogEntry::link(c) => vec![&c.to.to_path()],
+            BilogEntry::node(c) => vec![&c.path.to_path()],
+            BilogEntry::file(c) => vec![&c.path.to_path()],
+            BilogEntry::filestore { path, .. } => vec![&path.to_path()],
+            BilogEntry::truncate(c) => vec![&c.path.to_path()],
+            BilogEntry::write(c) => vec![&c.path.to_path()],
+            BilogEntry::xattr(c) => vec![&c.path.to_path()],
         }
     }
-    fn apply(&self, fspath: &str) -> Result<VFSCall, Error> {
+    fn apply(&self, fspath: &Path) -> Result<VFSCall, Error> {
         match self {
             BilogEntry::chmod(x) => {
                 let current = bilog_chmod::old(Either::Right(x), fspath)?;
@@ -334,11 +333,7 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                 let stbuf = translate_and_stat(&path, fspath);
                 match stbuf {
                     Err(ref e) if e.kind() == ErrorKind::NotFound => {
-                        let mut fstore = FILESTORE.lock().unwrap();
-                        if fstore.is_none() || fstore.as_ref().unwrap().vfsroot() != fspath {
-                            *fstore = Some(FileStore::new(String::from(fspath))?);
-                        }
-                        fstore.as_ref().unwrap().recover(*token, path)
+                        FileStore::recover(fspath, *token, path.to_path())
                     }
                     Err(e) => Err(e),
                     Ok(_) => Ok(VFSCall::unlink(unlink {
@@ -406,7 +401,7 @@ impl Bilog for bilog_chmod<Xor> {
             mode: x.mode ^ o.mode,
         }))
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath)?;
         Ok(set_csum!(bilog_chmod {
@@ -465,7 +460,7 @@ impl Bilog for bilog_chown<Xor> {
             gid: x.gid ^ o.gid,
         }))
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath)?;
         Ok(set_csum!(bilog_chown {
@@ -532,7 +527,7 @@ impl Bilog for bilog_utimens<Xor> {
             ],
         }))
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath)?;
         Ok(set_csum!(bilog_utimens {
@@ -582,7 +577,7 @@ impl Bilog for bilog_rename<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, _: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, _: &Path) -> Result<Self::O, Error> {
         let from = r.either(|n| n.from.clone(), |x| x.from.clone());
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         Ok(bilog_rename {
@@ -640,7 +635,7 @@ impl Bilog for bilog_dir<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath);
         match stbuf {
@@ -717,7 +712,7 @@ impl Bilog for bilog_symlink<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         let stbuf = translate_and_stat(&to, fspath);
         if let Err(e) = stbuf {
@@ -799,7 +794,7 @@ impl Bilog for bilog_link<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         let stbuf = translate_and_stat(&to, fspath);
 
@@ -823,7 +818,7 @@ impl Bilog for bilog_link<Xor> {
                 }
 
                 Ok(bilog_link {
-                    from: CString::new(from.unwrap()).unwrap(),
+                    from: from.unwrap().into_cstring(),
                     to,
                     to_exists: true,
                     uid: stbuf.st_uid,
@@ -885,7 +880,7 @@ impl Bilog for bilog_node<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath);
         if let Err(e) = stbuf {
@@ -963,7 +958,7 @@ impl Bilog for bilog_file<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         //debug!(new, xor);
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath);
@@ -1047,7 +1042,7 @@ impl Bilog for bilog_truncate<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath)?;
         let osize = stbuf.st_size;
@@ -1057,7 +1052,7 @@ impl Bilog for bilog_truncate<Xor> {
 
         if osize < nsize {
             let real_path = translate_path(&path, &fspath);
-            let f = File::open(OsStr::from_bytes(&real_path.to_bytes()))?;
+            let f = File::open(real_path.to_path())?;
 
             buf.reserve((nsize - osize) as usize);
             unsafe { buf.set_len((nsize - osize) as usize) };
@@ -1151,13 +1146,13 @@ impl Bilog for bilog_write<Xor> {
             }
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let offset = r.either(|n| n.offset, |x| x.offset);
         let write_len = r.either(|n| n.buf.len(), |x| x.buf.len());
         let real_path = translate_path(&path, fspath);
 
-        let f = File::open(OsStr::from_bytes(&real_path.to_bytes()))?;
+        let f = File::open(real_path.to_path())?;
         let osize = f.metadata()?.len();
 
         let mut buf = Vec::new();
@@ -1293,7 +1288,7 @@ impl Bilog for bilog_xattr<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &str) -> Result<Self::O, Error> {
+    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let name = r.either(|n| n.name.clone(), |x| x.name.clone());
         let real_path = translate_path(&path, &fspath);

@@ -1,7 +1,8 @@
 use common::*;
 use libc::*;
+use std::path::Path;
 
-pub unsafe fn dispatch(call: &VFSCall, root: &str) -> c_int {
+pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
     match call {
         VFSCall::mknod(mknod {
             path,

@@ -5,9 +5,10 @@ use self::chrono::{DateTime, Local};
 use self::regex::Regex;
 use clap::ArgMatches;
 use client::dispatch;
-use journal::{BilogEntry, EntryContent, Journal, JournalEntry, StoreEntry};
+use journal::{BilogEntry, EntryContent, Journal, JournalConfig, JournalEntry, StoreEntry};
 use std::fs::File;
 use std::io::Error;
+use std::path::Path;
 
 pub fn viewer_main(matches: ArgMatches) {
     let journal_matches = matches.subcommand_matches("journal").unwrap();
@@ -16,7 +17,19 @@ pub fn viewer_main(matches: ArgMatches) {
         .expect("Journal path not specified");
 
     let f = File::open(journal_path).expect("Failed to open journal file");
-    let mut j = Journal::open(f, false).expect("Failed to recover journal");
+    let c = JournalConfig {
+        sync: false,
+        journal_size: 0,
+        filestore_size: 0,
+        vfsroot: Path::new(
+            journal_matches
+                .subcommand_matches("replay")
+                .and_then(|r| r.value_of("backing-store"))
+                .unwrap_or(""),
+        )
+        .to_path_buf(),
+    };
+    let mut j = Journal::open(f, c).expect("Failed to recover journal");
 
     let iter = if journal_matches.is_present("reverse") {
         Box::new(j.read_reverse()) as Box<Iterator<Item = Result<StoreEntry<BilogEntry>, Error>>>
@@ -63,9 +76,12 @@ pub fn viewer_main(matches: ArgMatches) {
         }
         Some("replay") => {
             let replay_matches = journal_matches.subcommand_matches("replay").unwrap();
-            let path = replay_matches
-                .value_of("backing-store")
-                .expect("backing store is required for replay");
+            let path = Path::new(
+                replay_matches
+                    .value_of("backing-store")
+                    .expect("backing store is required for replay"),
+            );
+
             for entry in filtered {
                 match entry.contents() {
                     EntryContent::Payload(e) => {

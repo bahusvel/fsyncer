@@ -1,17 +1,17 @@
 mod encoded;
+pub mod ffi;
 mod ops;
 
 pub use self::encoded::*;
 pub use self::ops::*;
 
+use self::ffi::*;
 use libc::int64_t;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -61,7 +61,7 @@ bitflags! {
     }
 }
 
-pub fn hash_metadata(path: &str) -> Result<u64, io::Error> {
+pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
     for entry in WalkDir::new(path) {
@@ -117,9 +117,6 @@ pub enum VFSCall<'a> {
 }
 
 use std::ffi::{CStr, CString};
-pub fn translate_path(path: &CStr, root: &str) -> CString {
-    let mut vec = root.as_bytes().to_vec();
-    vec.extend_from_slice(path.to_bytes());
-    // It is impossible for the new string to contain a zero byte, hence bellow result may be unwrapped
-    CString::new(vec).unwrap()
+pub fn translate_path(path: &CStr, root: &Path) -> CString {
+    root.join(path.to_path()).into_cstring()
 }
