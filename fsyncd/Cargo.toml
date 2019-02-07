@@ -9,10 +9,11 @@ profile = ["cpuprofiler", "nix" ]
 
 [dependencies]
 net2 = "0.2"
-lazy_static = "1.0.0"
+lazy_static = "1.2.0"
 clap = "2.29.0"
 zstd = "0.4.14"
 dssc = { path = "../dssc" }
+iolimit = { path = "../iolimit" }
 bitflags = "1.0.1"
 walkdir = "2.0.1"
 futures = "0.1.18"

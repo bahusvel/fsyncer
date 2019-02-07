@@ -1,3 +1,6 @@
+extern crate iolimit;
+
+use self::iolimit::LimitWriter;
 use bincode::{deserialize_from, serialize, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use common::*;
@@ -73,7 +76,7 @@ impl Client {
         buffer_size: usize,
     ) -> Result<Self, io::Error> {
         println!("Received connection from client {:?}", stream.peer_addr());
-        stream.set_send_buffer_size(buffer_size * 1024 * 1024)?;
+        stream.set_send_buffer_size(buffer_size)?;
 
         let init = match Client::read_msg(&mut stream) {
             Ok(FsyncerMsg::InitMsg(msg)) => msg,
@@ -99,12 +102,14 @@ impl Client {
             }
         }
 
+        let limiter = LimitWriter::new(stream.try_clone()?, init.iolimit_bps);
+
         let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(zstd::stream::Encoder::new(stream.try_clone()?, 0)?) as Box<Write + Send>
+            Box::new(zstd::stream::Encoder::new(limiter, 0)?) as Box<Write + Send>
         } else if init.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(lz4::EncoderBuilder::new().build(stream.try_clone()?)?) as Box<Write + Send>
+            Box::new(lz4::EncoderBuilder::new().build(limiter)?) as Box<Write + Send>
         } else {
-            Box::new(stream.try_clone()?) as Box<Write + Send>
+            Box::new(limiter) as Box<Write + Send>
         };
 
         let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_CHUNKED)

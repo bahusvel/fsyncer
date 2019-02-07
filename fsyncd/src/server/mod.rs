@@ -285,10 +285,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     ))?;
 
     let dont_check = server_matches.is_present("dont-check");
-    let buffer_size = matches
-        .value_of("buffer")
-        .and_then(|b| b.parse().ok())
-        .expect("Buffer format incorrect");
+    let buffer_size =
+        parse_human_size(matches.value_of("buffer").unwrap()).expect("Buffer format incorrect");
 
     thread::spawn(move || {
         for stream in listener.incoming() {
@@ -331,10 +329,11 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 filestore_size: 1024 * 1024 * 1024,
             };
             unsafe {
-            JOURNAL = Some(Mutex::new(
-                open_journal(journal_path, c).expect("Failed to open journal"),
-            )) }
-        },
+                JOURNAL = Some(Mutex::new(
+                    open_journal(journal_path, c).expect("Failed to open journal"),
+                ))
+            }
+        }
         "off" => {}
         _ => panic!("Unknown journal type"),
     }

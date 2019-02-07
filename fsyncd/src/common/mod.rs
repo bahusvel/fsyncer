@@ -36,11 +36,12 @@ pub enum ClientMode {
     MODE_CONTROL,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct InitMsg {
     pub mode: ClientMode,
     pub dsthash: u64,
     pub compress: CompMode,
+    pub iolimit_bps: usize,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
