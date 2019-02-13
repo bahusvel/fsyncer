@@ -11,12 +11,13 @@
 #endif
 
 #include <fuse.h>
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -33,67 +34,32 @@ struct xmp_dirp {
 };
 
 int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-					   off_t offset, struct fuse_file_info *fi,
-					   enum fuse_readdir_flags flags) {
-	struct xmp_dirp *d = (struct xmp_dirp *)fi->fh;
+				off_t offset, struct fuse_file_info *fi) {
+	DIR *dp;
+	struct dirent *de;
 
-	(void)path;
-	if (offset != d->offset) {
-#ifndef __FreeBSD__
-		seekdir(d->dp, offset);
-#else
-		/* Subtract the one that we add when calling
-		   telldir() below */
-		seekdir(d->dp, offset - 1);
-#endif
-		d->entry = NULL;
-		d->offset = offset;
-	}
-	while (1) {
+	(void)offset;
+	(void)fi;
+
+	dp = opendir(path);
+	if (dp == NULL)
+		return -errno;
+
+	while ((de = readdir(dp)) != NULL) {
 		struct stat st;
-		off_t nextoff;
-		enum fuse_fill_dir_flags fill_flags = 0;
-
-		if (!d->entry) {
-			d->entry = readdir(d->dp);
-			if (!d->entry)
-				break;
-		}
-#ifdef HAVE_FSTATAT
-		if (flags & FUSE_READDIR_PLUS) {
-			int res;
-
-			res = fstatat(dirfd(d->dp), d->entry->d_name, &st,
-						  AT_SYMLINK_NOFOLLOW);
-			if (res != -1)
-				fill_flags |= FUSE_FILL_DIR_PLUS;
-		}
-#endif
-		if (!(fill_flags & FUSE_FILL_DIR_PLUS)) {
-			memset(&st, 0, sizeof(st));
-			st.st_ino = d->entry->d_ino;
-			st.st_mode = d->entry->d_type << 12;
-		}
-		nextoff = telldir(d->dp);
-#ifdef __FreeBSD__
-		/* Under FreeBSD, telldir() may return 0 the first time
-		   it is called. But for libfuse, an offset of zero
-		   means that offsets are not supported, so we shift
-		   everything by one. */
-		nextoff++;
-#endif
-		if (filler(buf, d->entry->d_name, &st, nextoff, fill_flags))
+		memset(&st, 0, sizeof(st));
+		st.st_ino = de->d_ino;
+		st.st_mode = de->d_type << 12;
+		if (filler(buf, de->d_name, &st, 0))
 			break;
-
-		d->entry = NULL;
-		d->offset = nextoff;
 	}
 
+	closedir(dp);
 	return 0;
 }
-
-int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
-						size_t size, off_t offset, struct fuse_file_info *fi) {
+/*
+int xmp_read_buf(const char *path, struct fuse_bufvec **bufp, size_t size,
+				 off_t offset, struct fuse_file_info *fi) {
 	struct fuse_bufvec *src;
 
 	(void)path;
@@ -111,4 +77,4 @@ int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
 	*bufp = src;
 
 	return 0;
-}
+}*/

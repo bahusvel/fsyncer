@@ -5,6 +5,7 @@ use server::SERVER_PATH;
 use std::ffi::CStr;
 use std::ptr;
 
+/*
 extern "C" {
     pub fn xmp_readdir(
         arg1: *const c_char,
@@ -22,12 +23,37 @@ extern "C" {
         arg2: *mut fuse_file_info,
     ) -> c_int;
 }
+*/
 
 #[repr(C)]
 struct xmp_dirp {
     dp: *mut DIR,
     entry: *mut dirent,
     offset: off_t,
+}
+
+pub unsafe extern "C" fn xmp_readdir(path: *const c_char, buf: *mut c_void, filler: fuse_fill_dir_t, offset: off_t, fi: *mut fuse_file_info) {
+	DIR *dp;
+	struct dirent *de;
+
+	(void)offset;
+	(void)fi;
+
+	dp = opendir(path);
+	if (dp == NULL)
+		return -errno;
+
+	while ((de = readdir(dp)) != NULL) {
+		struct stat st;
+		memset(&st, 0, sizeof(st));
+		st.st_ino = de->d_ino;
+		st.st_mode = de->d_type << 12;
+		if (filler(buf, de->d_name, &st, 0))
+			break;
+	}
+
+	closedir(dp);
+	return 0;
 }
 
 pub unsafe extern "C" fn xmp_opendir(path: *const c_char, fi: *mut fuse_file_info) -> c_int {
