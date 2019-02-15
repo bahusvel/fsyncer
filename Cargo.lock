@@ -270,6 +270,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dokan"
+version = "0.1.0"
+dependencies = [
+ "winapi 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "dssc"
 version = "0.1.0"
 dependencies = [

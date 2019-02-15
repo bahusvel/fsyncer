@@ -55,7 +55,7 @@ pub enum BilogEntry {
     link(bilog_link<Xor>),
     node(bilog_node<Xor>),
     file(bilog_file<Xor>),
-    filestore { path: CString, token: u64 },
+    filestore { path: PathBuf, token: u64 },
     truncate(bilog_truncate<Xor>),
     write(bilog_write<Xor>),
     xattr(bilog_xattr<Xor>),
@@ -81,7 +81,7 @@ macro_rules! bilog_entry {
 
 macro_rules! path_bilog {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
-         bilog_entry!($name {path:  CString, $($field: $ft,)* });
+         bilog_entry!($name {path:  PathBuf, $($field: $ft,)* });
     }
 }
 
@@ -276,19 +276,19 @@ impl<'a> JournalEntry<'a> for BilogEntry {
     }
     fn affected_paths(&self) -> Vec<&Path> {
         match self {
-            BilogEntry::chmod(c) => vec![&c.path.to_path()],
-            BilogEntry::chown(c) => vec![&c.path.to_path()],
-            BilogEntry::utimens(c) => vec![&c.path.to_path()],
-            BilogEntry::rename(c) => vec![&c.from.to_path(), &c.to.to_path()],
-            BilogEntry::dir(c) => vec![&c.path.to_path()],
-            BilogEntry::symlink(c) => vec![&c.to.to_path()],
-            BilogEntry::link(c) => vec![&c.to.to_path()],
-            BilogEntry::node(c) => vec![&c.path.to_path()],
-            BilogEntry::file(c) => vec![&c.path.to_path()],
-            BilogEntry::filestore { path, .. } => vec![&path.to_path()],
-            BilogEntry::truncate(c) => vec![&c.path.to_path()],
-            BilogEntry::write(c) => vec![&c.path.to_path()],
-            BilogEntry::xattr(c) => vec![&c.path.to_path()],
+            BilogEntry::chmod(c) => vec![&c.path],
+            BilogEntry::chown(c) => vec![&c.path],
+            BilogEntry::utimens(c) => vec![&c.path],
+            BilogEntry::rename(c) => vec![&c.from, &c.to],
+            BilogEntry::dir(c) => vec![&c.path],
+            BilogEntry::symlink(c) => vec![&c.to],
+            BilogEntry::link(c) => vec![&c.to],
+            BilogEntry::node(c) => vec![&c.path],
+            BilogEntry::file(c) => vec![&c.path],
+            BilogEntry::filestore { path, .. } => vec![&path],
+            BilogEntry::truncate(c) => vec![&c.path],
+            BilogEntry::write(c) => vec![&c.path],
+            BilogEntry::xattr(c) => vec![&c.path],
         }
     }
     fn apply(&self, fspath: &Path) -> Result<VFSCall, Error> {
@@ -548,8 +548,8 @@ impl Bilog for bilog_utimens<Xor> {
     }
 }
 bilog_entry!(bilog_rename {
-    from: CString,
-    to: CString,
+    from: PathBuf,
+    to: PathBuf,
     from_exists: bool
 });
 impl Bilog for bilog_rename<Xor> {
@@ -660,8 +660,8 @@ impl Bilog for bilog_dir<Xor> {
     }
 }
 bilog_entry!(bilog_symlink {
-    from: CString,
-    to: CString,
+    from: PathBuf,
+    to: PathBuf,
     to_exists: bool,
     uid: uint32_t,
     gid: uint32_t
@@ -674,7 +674,7 @@ impl Bilog for bilog_symlink<Xor> {
     fn new(call: &VFSCall) -> Self::N {
         match call {
             VFSCall::unlink(u) => bilog_symlink {
-                from: CString::new("").unwrap(),
+                from: PathBuf::new(),
                 to: u.path.clone().into_owned(),
                 uid: 0,
                 gid: 0,
@@ -718,7 +718,7 @@ impl Bilog for bilog_symlink<Xor> {
         if let Err(e) = stbuf {
             if e.kind() == ErrorKind::NotFound {
                 return Ok(bilog_symlink {
-                    from: CString::new("").unwrap(),
+                    from: PathBuf::new(),
                     to: to,
                     uid: 0,
                     gid: 0,
@@ -733,7 +733,7 @@ impl Bilog for bilog_symlink<Xor> {
         let from = read_link(real_path.to_str().unwrap())?;
 
         Ok(bilog_symlink {
-            from: CString::new(from.to_str().unwrap()).unwrap(),
+            from: from,
             to,
             to_exists: true,
             uid: stbuf.st_uid,
@@ -743,8 +743,8 @@ impl Bilog for bilog_symlink<Xor> {
     }
 }
 bilog_entry!(bilog_link {
-    from: CString,
-    to: CString,
+    from: PathBuf,
+    to: PathBuf,
     to_exists: bool,
     uid: uint32_t,
     gid: uint32_t
@@ -756,7 +756,7 @@ impl Bilog for bilog_link<Xor> {
     fn new(call: &VFSCall) -> Self::N {
         match call {
             VFSCall::unlink(u) => bilog_link {
-                from: CString::new("").unwrap(),
+                from: PathBuf::new(),
                 to: u.path.clone().into_owned(),
                 to_exists: true,
                 uid: 0,
@@ -800,7 +800,7 @@ impl Bilog for bilog_link<Xor> {
 
         match stbuf {
             Err(ref e) if e.kind() == ErrorKind::NotFound => Ok(bilog_link {
-                from: CString::new("").unwrap(),
+                from: PathBuf::new(),
                 to: to,
                 to_exists: false,
                 uid: 0,
@@ -818,7 +818,7 @@ impl Bilog for bilog_link<Xor> {
                 }
 
                 Ok(bilog_link {
-                    from: from.unwrap().into_cstring(),
+                    from: from.unwrap(),
                     to,
                     to_exists: true,
                     uid: stbuf.st_uid,

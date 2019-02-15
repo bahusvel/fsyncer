@@ -99,8 +99,8 @@ impl FileStore {
             fs::symlink_metadata(format!("{}/.fsyncer-deleted/{}", vfsroot.display(), token))?;
 
         Ok(VFSCall::link(link {
-            from: Cow::Owned(CString::new(rela_path).unwrap()),
-            to: Cow::Owned(path.to_path_buf().into_cstring()),
+            from: Cow::Owned(rela_path),
+            to: Cow::Owned(path.to_path_buf()),
             uid: stbuf.uid(),
             gid: stbuf.gid(),
         }))

@@ -1,17 +1,22 @@
 mod encoded;
 pub mod ffi;
-mod ops;
+
+metablock!(cfg(target_family="unix") {
+    mod ops_unix;
+    pub use self::ops_unix::*;
+});
+metablock!(cfg(target_family="windows") {
+    mod ops_windows;
+    pub use self::ops_windows::*;
+});
 
 pub use self::encoded::*;
-pub use self::ops::*;
-
 use self::ffi::*;
 use libc::int64_t;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -61,7 +66,10 @@ bitflags! {
     }
 }
 
+#[cfg(target_family = "unix")]
 pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
     for entry in WalkDir::new(path) {
@@ -80,6 +88,31 @@ pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
         stat.modified()?.hash(&mut hasher);
         stat.uid().hash(&mut hasher);
         stat.gid().hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
+#[cfg(target_os = "windows")]
+pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
+    use std::os::windows::fs::MetadataExt;
+
+    let mut hasher = DefaultHasher::new();
+    let empty = Path::new("");
+    for entry in WalkDir::new(path) {
+        let e = entry?;
+        let path = e.path().strip_prefix(path).unwrap();
+        if path == empty {
+            continue;
+        }
+        path.hash(&mut hasher);
+        e.file_type().hash(&mut hasher);
+        let stat = e.metadata()?;
+        stat.file_attributes().hash(&mut hasher);
+        if !stat.is_dir() {
+            stat.len().hash(&mut hasher);
+        }
+        stat.modified()?.hash(&mut hasher);
+        // TODO check ACLs
     }
     Ok(hasher.finish())
 }

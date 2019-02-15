@@ -1,8 +1,10 @@
 use common::*;
-use libc::*;
+use libc::c_int;
 use std::path::Path;
 
+#[cfg(target_family = "unix")]
 pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
+    use libc::*;
     match call {
         VFSCall::mknod(mknod {
             path,
@@ -145,4 +147,9 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             xmp_fsync(path.as_ptr(), *isdatasync, -1)
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
+    0
 }

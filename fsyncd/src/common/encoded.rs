@@ -4,6 +4,7 @@
 use libc::*;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
+use std::path::Path;
 
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty,)*}) => {
@@ -21,7 +22,7 @@ macro_rules! encoded_syscall {
 
 macro_rules! path_syscall {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
-         encoded_syscall!($name {path:  Cow<'a, CStr>, $($field: $ft,)* });
+         encoded_syscall!($name {path:  Cow<'a, Path>, $($field: $ft,)* });
     }
 }
 
@@ -45,21 +46,21 @@ path_syscall!(rmdir {});
 path_syscall!(fsync { isdatasync: c_int });
 
 encoded_syscall!(symlink {
-    from: Cow<'a, CStr>,
-    to: Cow<'a, CStr>,
+    from: Cow<'a, Path>,
+    to: Cow<'a, Path>,
     uid: uint32_t,
     gid: uint32_t
 });
 
 encoded_syscall!(rename {
-    from: Cow<'a, CStr>,
-    to: Cow<'a, CStr>,
+    from: Cow<'a, Path>,
+    to: Cow<'a, Path>,
     flags: uint32_t,
 });
 
 encoded_syscall!(link {
-    from: Cow<'a, CStr>,
-    to: Cow<'a, CStr>,
+    from: Cow<'a, Path>,
+    to: Cow<'a, Path>,
     uid: uint32_t,
     gid: uint32_t
 });
@@ -114,6 +115,7 @@ impl enc_timespec {
     }
 }
 
+#[cfg(target_family = "unix")]
 impl From<timespec> for enc_timespec {
     fn from(spec: timespec) -> Self {
         enc_timespec {
@@ -123,6 +125,7 @@ impl From<timespec> for enc_timespec {
     }
 }
 
+#[cfg(target_family = "unix")]
 impl Into<timespec> for enc_timespec {
     fn into(self) -> timespec {
         timespec {
@@ -133,5 +136,5 @@ impl Into<timespec> for enc_timespec {
 }
 
 path_syscall!(utimens {
-    timespec: [enc_timespec; 2]
+    timespec: [enc_timespec; 3] // 2 on POSIX last is 0, 3 on Windows
 });

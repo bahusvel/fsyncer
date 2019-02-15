@@ -4,14 +4,17 @@ macro_rules! trans_ppath {
     };
 }
 
-mod client;
-mod fusemain;
-mod fuseops;
-mod read;
-mod write;
+metablock!(cfg(target_family = "unix") {
+    mod fusemain;
+    mod fuseops;
+    mod read;
+    mod write;
+    use self::fusemain::fuse_main;
+});
 
+mod client;
 use self::client::{Client, ClientStatus};
-use self::fusemain::fuse_main;
+
 use clap::ArgMatches;
 use common::*;
 use journal::{BilogEntry, Journal, JournalConfig, JournalEntry};
@@ -331,10 +334,11 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 filestore_size: 1024 * 1024 * 1024,
             };
             unsafe {
-            JOURNAL = Some(Mutex::new(
-                open_journal(journal_path, c).expect("Failed to open journal"),
-            )) }
-        },
+                JOURNAL = Some(Mutex::new(
+                    open_journal(journal_path, c).expect("Failed to open journal"),
+                ))
+            }
+        }
         "off" => {}
         _ => panic!("Unknown journal type"),
     }

@@ -18,14 +18,14 @@ extern crate serde_derive;
 extern crate bincode;
 extern crate byteorder;
 extern crate clap;
-//extern crate dssc;
+extern crate dssc;
 extern crate errno;
 extern crate libc;
 extern crate lz4;
 extern crate net2;
 extern crate serde;
 extern crate walkdir;
-//extern crate zstd;
+extern crate zstd;
 
 #[macro_export]
 macro_rules! iter_try {
@@ -62,6 +62,15 @@ macro_rules! is_variant {
         } else {
             false
         }
+    };
+}
+
+#[macro_export]
+macro_rules! metablock {
+    ($meta:meta { $($list:item)* } ) => {
+        $(
+            #[$meta] $list
+        )*
     };
 }
 
