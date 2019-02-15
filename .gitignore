@@ -10,3 +10,4 @@ bindgen
 # Magic rule to exclude binaries in test 
 test/*
 !test/*.*
+test/ioctl_client
