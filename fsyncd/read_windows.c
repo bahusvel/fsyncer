@@ -234,35 +234,6 @@ MirrorCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			ShareMode = FILE_SHARE_READ;
 	*/
 
-	DbgPrint(L"\tShareMode = 0x%x\n", ShareAccess);
-
-	MirrorCheckFlag(ShareAccess, FILE_SHARE_READ);
-	MirrorCheckFlag(ShareAccess, FILE_SHARE_WRITE);
-	MirrorCheckFlag(ShareAccess, FILE_SHARE_DELETE);
-
-	DbgPrint(L"\tDesiredAccess = 0x%x\n", DesiredAccess);
-
-	MirrorCheckFlag(DesiredAccess, GENERIC_READ);
-	MirrorCheckFlag(DesiredAccess, GENERIC_WRITE);
-	MirrorCheckFlag(DesiredAccess, GENERIC_EXECUTE);
-
-	MirrorCheckFlag(DesiredAccess, DELETE);
-	MirrorCheckFlag(DesiredAccess, FILE_READ_DATA);
-	MirrorCheckFlag(DesiredAccess, FILE_READ_ATTRIBUTES);
-	MirrorCheckFlag(DesiredAccess, FILE_READ_EA);
-	MirrorCheckFlag(DesiredAccess, READ_CONTROL);
-	MirrorCheckFlag(DesiredAccess, FILE_WRITE_DATA);
-	MirrorCheckFlag(DesiredAccess, FILE_WRITE_ATTRIBUTES);
-	MirrorCheckFlag(DesiredAccess, FILE_WRITE_EA);
-	MirrorCheckFlag(DesiredAccess, FILE_APPEND_DATA);
-	MirrorCheckFlag(DesiredAccess, WRITE_DAC);
-	MirrorCheckFlag(DesiredAccess, WRITE_OWNER);
-	MirrorCheckFlag(DesiredAccess, SYNCHRONIZE);
-	MirrorCheckFlag(DesiredAccess, FILE_EXECUTE);
-	MirrorCheckFlag(DesiredAccess, STANDARD_RIGHTS_READ);
-	MirrorCheckFlag(DesiredAccess, STANDARD_RIGHTS_WRITE);
-	MirrorCheckFlag(DesiredAccess, STANDARD_RIGHTS_EXECUTE);
-
 	// When filePath is a directory, needs to change the flag so that the file
 	// can be opened.
 	fileAttr = GetFileAttributes(filePath);
@@ -279,57 +250,6 @@ MirrorCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			DbgPrint(L"\tCannot open a dir as a file\n");
 			return STATUS_FILE_IS_A_DIRECTORY;
 		}
-	}
-
-	DbgPrint(L"\tFlagsAndAttributes = 0x%x\n", fileAttributesAndFlags);
-
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_ARCHIVE);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_COMPRESSED);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_DEVICE);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_DIRECTORY);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_ENCRYPTED);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_HIDDEN);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_INTEGRITY_STREAM);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_NORMAL);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_NO_SCRUB_DATA);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_OFFLINE);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_READONLY);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_REPARSE_POINT);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_SPARSE_FILE);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_SYSTEM);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_TEMPORARY);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_ATTRIBUTE_VIRTUAL);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_WRITE_THROUGH);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_OVERLAPPED);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_NO_BUFFERING);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_RANDOM_ACCESS);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_SEQUENTIAL_SCAN);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_DELETE_ON_CLOSE);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_BACKUP_SEMANTICS);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_POSIX_SEMANTICS);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_OPEN_REPARSE_POINT);
-	MirrorCheckFlag(fileAttributesAndFlags, FILE_FLAG_OPEN_NO_RECALL);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_ANONYMOUS);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_IDENTIFICATION);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_IMPERSONATION);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_DELEGATION);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_CONTEXT_TRACKING);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_EFFECTIVE_ONLY);
-	MirrorCheckFlag(fileAttributesAndFlags, SECURITY_SQOS_PRESENT);
-
-	if (creationDisposition == CREATE_NEW) {
-		DbgPrint(L"\tCREATE_NEW\n");
-	} else if (creationDisposition == OPEN_ALWAYS) {
-		DbgPrint(L"\tOPEN_ALWAYS\n");
-	} else if (creationDisposition == CREATE_ALWAYS) {
-		DbgPrint(L"\tCREATE_ALWAYS\n");
-	} else if (creationDisposition == OPEN_EXISTING) {
-		DbgPrint(L"\tOPEN_EXISTING\n");
-	} else if (creationDisposition == TRUNCATE_EXISTING) {
-		DbgPrint(L"\tTRUNCATE_EXISTING\n");
-	} else {
-		DbgPrint(L"\tUNKNOWN creationDisposition!\n");
 	}
 
 	if (g_ImpersonateCallerUser) {

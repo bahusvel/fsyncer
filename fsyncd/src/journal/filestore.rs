@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::ffi::CString;
 use std::fs;
 use std::io::Error;
-use std::os::unix::fs::MetadataExt;
+//use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 const FILESTORE_PATH: &str = ".fsyncer-deleted";

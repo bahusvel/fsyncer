@@ -136,7 +136,7 @@ pub enum VFSCall<'a> {
     symlink(symlink<'a>),
     rename(rename<'a>),
     link(link<'a>),
-    chmod(chmod<'a>),
+    chmod(chmod<'a>), // On windows this represents attributes
     chown(chown<'a>),
     truncate(truncate<'a>),
     write(write<'a>),
@@ -147,6 +147,7 @@ pub enum VFSCall<'a> {
     utimens(utimens<'a>),
     fsync(fsync<'a>),
     truncating_write { write: write<'a>, length: int64_t },
+    allocation_size(allocation_size<'a>),
 }
 
 use std::ffi::{CStr, CString};

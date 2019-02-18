@@ -3,8 +3,12 @@
 
 use libc::*;
 use std::borrow::Cow;
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsString};
+use std::ops::BitXor;
 use std::path::Path;
+
+#[cfg(target_os = "windows")]
+use common::FILETIME;
 
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty,)*}) => {
@@ -26,13 +30,6 @@ macro_rules! path_syscall {
     }
 }
 
-path_syscall!(mknod {
-    mode: uint32_t,
-    rdev: uint64_t,
-    uid: uint32_t,
-    gid: uint32_t
-});
-
 path_syscall!(mkdir {
     mode: uint32_t,
     uid: uint32_t,
@@ -44,13 +41,6 @@ path_syscall!(unlink {});
 path_syscall!(rmdir {});
 
 path_syscall!(fsync { isdatasync: c_int });
-
-encoded_syscall!(symlink {
-    from: Cow<'a, Path>,
-    to: Cow<'a, Path>,
-    uid: uint32_t,
-    gid: uint32_t
-});
 
 encoded_syscall!(rename {
     from: Cow<'a, Path>,
@@ -65,18 +55,102 @@ encoded_syscall!(link {
     gid: uint32_t
 });
 
-path_syscall!(chmod { mode: uint32_t });
-
-path_syscall!(chown {
-    uid: uint32_t,
-    gid: uint32_t
-});
-
 path_syscall!(truncate { size: int64_t });
 
 path_syscall!(write {
     offset: int64_t,
     buf: Cow<'a, [u8]>
+});
+
+path_syscall!(create {
+    mode: uint32_t,
+    flags: int32_t,
+    uid: uint32_t,
+    gid: uint32_t
+});
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
+pub struct enc_timespec {
+    pub high: int64_t,
+    pub low: int64_t,
+}
+
+impl BitXor for enc_timespec {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self {
+        enc_timespec {
+            high: self.high ^ rhs.high,
+            low: self.low ^ rhs.low,
+        }
+    }
+}
+
+#[cfg(target_family = "unix")]
+impl From<timespec> for enc_timespec {
+    fn from(spec: timespec) -> Self {
+        enc_timespec {
+            high: spec.tv_sec,
+            low: spec.tv_nsec,
+        }
+    }
+}
+
+#[cfg(target_family = "unix")]
+impl Into<timespec> for enc_timespec {
+    fn into(self) -> timespec {
+        timespec {
+            high: self.tv_sec,
+            low: self.tv_nsec,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl From<FILETIME> for enc_timespec {
+    fn from(spec: FILETIME) -> Self {
+        enc_timespec {
+            high: spec.dwHighDateTime as i64,
+            low: spec.dwLowDateTime as i64,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Into<FILETIME> for enc_timespec {
+    fn into(self) -> FILETIME {
+        FILETIME {
+            dwHighDateTime: self.high as u32,
+            dwLowDateTime: self.low as u32,
+        }
+    }
+}
+
+path_syscall!(utimens {
+    timespec: [enc_timespec; 3] // 2 on POSIX last is 0, 3 on Windows (Created, Accessed, Written)
+});
+
+path_syscall!(chmod { mode: uint32_t }); // On windows this represents attributes
+
+// Linux Specific
+
+encoded_syscall!(symlink {
+    from: Cow<'a, Path>,
+    to: Cow<'a, Path>,
+    uid: uint32_t,
+    gid: uint32_t
+});
+
+path_syscall!(mknod {
+    mode: uint32_t,
+    rdev: uint64_t,
+    uid: uint32_t,
+    gid: uint32_t
+});
+
+path_syscall!(chown {
+    uid: uint32_t,
+    gid: uint32_t
 });
 
 path_syscall!(fallocate {
@@ -93,48 +167,22 @@ path_syscall!(setxattr {
 
 path_syscall!(removexattr { name: Cow<'a, CStr> });
 
-path_syscall!(create {
-    mode: uint32_t,
-    flags: int32_t,
-    uid: uint32_t,
-    gid: uint32_t
-});
+// Windows Specific
+path_syscall!(allocation_size { size: int64_t });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-pub struct enc_timespec {
-    pub tv_sec: int64_t,
-    pub tv_nsec: int64_t,
+struct ACL {
+    AclRevision: u8,
+    Sbz1: u8,
+    AclSize: u16,
+    AceCount: u16,
+    Sbz2: u16,
 }
 
-impl enc_timespec {
-    pub fn xor(&self, other: &Self) -> Self {
-        enc_timespec {
-            tv_sec: self.tv_sec ^ other.tv_sec,
-            tv_nsec: self.tv_nsec ^ other.tv_nsec,
-        }
-    }
-}
-
-#[cfg(target_family = "unix")]
-impl From<timespec> for enc_timespec {
-    fn from(spec: timespec) -> Self {
-        enc_timespec {
-            tv_sec: spec.tv_sec,
-            tv_nsec: spec.tv_nsec,
-        }
-    }
-}
-
-#[cfg(target_family = "unix")]
-impl Into<timespec> for enc_timespec {
-    fn into(self) -> timespec {
-        timespec {
-            tv_sec: self.tv_sec,
-            tv_nsec: self.tv_nsec,
-        }
-    }
-}
-
-path_syscall!(utimens {
-    timespec: [enc_timespec; 3] // 2 on POSIX last is 0, 3 on Windows
+path_syscall!(security {
+    info: u32,
+    dacl: Cow<'a, [ACL]>,
+    sacl: Cow<'a, [ACL]>,
+    group: String, // Translate SIDs to text names of users, SIDs are random
+    owner: String
 });

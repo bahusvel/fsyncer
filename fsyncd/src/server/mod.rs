@@ -7,9 +7,13 @@ macro_rules! trans_ppath {
 metablock!(cfg(target_family = "unix") {
     mod fusemain;
     mod fuseops;
-    mod read;
-    mod write;
+    mod read_unix;
+    mod write_unix;
     use self::fusemain::fuse_main;
+});
+
+metablock!(cfg(target_os = "windows") {
+    mod write_windows;
 });
 
 mod client;
