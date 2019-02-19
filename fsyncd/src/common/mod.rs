@@ -65,7 +65,7 @@ bitflags! {
 pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
-    for entry in WalkDir::new(path) {
+    for entry in WalkDir::new(path).sort_by(|a, b| a.file_name().cmp(b.file_name())) {
         let e = entry?;
         let path = e.path().strip_prefix(path).unwrap();
         if path == empty {
