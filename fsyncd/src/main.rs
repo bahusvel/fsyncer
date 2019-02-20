@@ -87,7 +87,7 @@ use std::process::exit;
 
 use clap::{App, Arg, ArgGroup, ErrorKind, SubCommand};
 use client::{client_main, Client};
-use common::{ClientMode, CompMode};
+use common::{ClientMode, CompMode, InitMsg};
 use journal::viewer_main;
 use server::{display_fuse_help, server_main};
 use std::path::Path;
@@ -136,8 +136,8 @@ fn main() {
         ).arg(
             Arg::with_name("buffer")
                 .long("buffer")
-                .default_value("32")
-                .help("TX/RX Buffer size in megabytes")
+                .default_value("32M")
+                .help("TX/RX buffer size")
                 .takes_value(true),
         ).subcommand(
             SubCommand::with_name("client")
@@ -175,6 +175,13 @@ fn main() {
                         .possible_values(&["sync", "async", "semi", "flush"])
                         .default_value("async")
                         .help("Selects replication mode"),
+                ).arg(
+                    Arg::with_name("iolimit")
+                        .long("iolimit")
+                        .help("Restricts network transmission, 0 means unlimited")
+                        .short("l")
+                        .takes_value(true)
+                        .default_value("0")
                 ),
         ).subcommand(
             SubCommand::with_name("server")
@@ -330,9 +337,12 @@ fn main() {
             let mut client = Client::new(
                 host,
                 port,
-                ClientMode::MODE_CONTROL,
-                0,
-                CompMode::empty(),
+                InitMsg {
+                    mode: ClientMode::MODE_CONTROL,
+                    compress: CompMode::empty(),
+                    dsthash: 0,
+                    iolimit_bps: 0,
+                },
                 buffer,
                 |_| 0,
             )

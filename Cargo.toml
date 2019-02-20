@@ -1,2 +1,2 @@
 [workspace]
-members = ["fsyncd", "dssc", "dokan"]
+members = ["fsyncd", "dssc", "dokan", "iolimit"]

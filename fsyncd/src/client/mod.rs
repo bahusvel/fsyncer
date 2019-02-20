@@ -39,45 +39,37 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
     pub fn new(
         host: &str,
         port: i32,
-        mode: ClientMode,
-        dsthash: u64,
-        compress: CompMode,
+        init_msg: InitMsg,
         buffer_size: usize,
         op_callback: F,
     ) -> Result<Self, io::Error> {
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
 
-        stream.set_recv_buffer_size(buffer_size * 1024 * 1024)?;
+        stream.set_recv_buffer_size(buffer_size)?;
 
-        send_msg(
-            &mut stream,
-            FsyncerMsg::InitMsg(InitMsg {
-                mode,
-                dsthash,
-                compress,
-            }),
-        )?;
+        send_msg(&mut stream, FsyncerMsg::InitMsg(init_msg.clone()))?;
 
-        let reader = if compress.contains(CompMode::STREAM_ZSTD) {
+        let reader = if init_msg.compress.contains(CompMode::STREAM_ZSTD) {
             Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
-        } else if compress.contains(CompMode::STREAM_LZ4) {
+        } else if init_msg.compress.contains(CompMode::STREAM_LZ4) {
             Box::new(lz4::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
         } else {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
 
-        let rt_comp: Option<Box<Compressor>> = if compress.contains(CompMode::RT_DSSC_CHUNKED) {
-            Some(Box::new(ChunkMap::new(0.5)))
-        } else if compress.contains(CompMode::RT_DSSC_ZSTD) {
-            Some(Box::new(ZstdBlock::default()))
-        } else {
-            None
-        };
+        let rt_comp: Option<Box<Compressor>> =
+            if init_msg.compress.contains(CompMode::RT_DSSC_CHUNKED) {
+                Some(Box::new(ChunkMap::new(0.5)))
+            } else if init_msg.compress.contains(CompMode::RT_DSSC_ZSTD) {
+                Some(Box::new(ZstdBlock::default()))
+            } else {
+                None
+            };
 
         Ok(Client {
             write: Box::new(stream),
             read: reader,
-            mode,
+            mode: init_msg.mode,
             rt_comp: rt_comp,
             op_callback,
         })
@@ -173,21 +165,19 @@ pub fn client_main(matches: ArgMatches) {
         _ => panic!("That is not possible"),
     };
 
-    let buffer_size = matches
-        .value_of("buffer")
-        .and_then(|b| b.parse().ok())
-        .expect("Buffer format incorrect");
+    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
+        .expect("Buffer size format incorrect");
 
-    let mut comp = CompMode::empty();
+    let mut compress = CompMode::empty();
 
     match client_matches.value_of("stream-compressor").unwrap() {
         "default" | "lz4" => {
             println!("Using a LZ4 stream compressor");
-            comp.insert(CompMode::STREAM_LZ4)
+            compress.insert(CompMode::STREAM_LZ4)
         }
         "zstd" => {
             println!("Using a ZSTD stream compressor");
-            comp.insert(CompMode::STREAM_ZSTD)
+            compress.insert(CompMode::STREAM_ZSTD)
         }
         _ => (),
     }
@@ -195,14 +185,17 @@ pub fn client_main(matches: ArgMatches) {
     match client_matches.value_of("rt-compressor").unwrap() {
         "default" | "zstd" => {
             println!("Using a RT_DSSC_ZSTD realtime compressor");
-            comp.insert(CompMode::RT_DSSC_ZSTD)
+            compress.insert(CompMode::RT_DSSC_ZSTD)
         }
         "chunked" => {
             println!("Using a RT_DSSC_CHUNKED realtime compressor");
-            comp.insert(CompMode::RT_DSSC_CHUNKED)
+            compress.insert(CompMode::RT_DSSC_CHUNKED)
         }
         "none" | _ => (),
     }
+
+    let iolimit_bps = parse_human_size(client_matches.value_of("iolimit").unwrap())
+        .expect("Invalid format for iolimit");
 
     let mut client = Client::new(
         host,
@@ -210,9 +203,12 @@ pub fn client_main(matches: ArgMatches) {
             .value_of("port")
             .map(|v| v.parse().expect("Invalid format for port"))
             .unwrap(),
-        mode,
-        dsthash,
-        comp,
+        InitMsg {
+            mode,
+            dsthash,
+            compress,
+            iolimit_bps,
+        },
         buffer_size,
         |call| unsafe { dispatch(call, client_path) },
     )

@@ -41,11 +41,12 @@ pub enum ClientMode {
     MODE_CONTROL,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct InitMsg {
     pub mode: ClientMode,
     pub dsthash: u64,
     pub compress: CompMode,
+    pub iolimit_bps: usize,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -72,7 +73,7 @@ pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
 
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
-    for entry in WalkDir::new(path) {
+    for entry in WalkDir::new(path).sort_by(|a, b| a.file_name().cmp(b.file_name())) {
         let e = entry?;
         let path = e.path().strip_prefix(path).unwrap();
         if path == empty {
@@ -153,5 +154,11 @@ pub enum VFSCall<'a> {
 
 use std::ffi::{CStr, CString};
 pub fn translate_path(path: &CStr, root: &Path) -> CString {
-    root.join(path.to_path()).into_cstring()
+    let p = path.to_path();
+    root.join(if p.starts_with("/") {
+        p.strip_prefix("/").unwrap()
+    } else {
+        p
+    })
+    .into_cstring()
 }
