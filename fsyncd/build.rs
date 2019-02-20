@@ -17,7 +17,7 @@ fn main() {
         .include(iflags)
         .warnings(false)
         .flag("-Wall")
-        .file("windows.c")
+        .file("write_windows.c")
         .compile("fsyncer");
     } else {
         let fuse_flags_out = Command::new("pkg-config")

@@ -1,20 +1,27 @@
-extern crate winapi;
-pub use self::winapi::shared::{
+pub use winapi::shared::{
     basetsd::*,
     minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD},
     ntdef::*,
 };
-pub use self::winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
+pub use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
 extern "C" {
     pub fn MirrorCreateFile(
         path: LPCWSTR,
-        access: ACCESS_MASK,
-        shared: ULONG,
         security_descriptor: PSECURITY_DESCRIPTOR,
-        disposition: ULONG,
-        attributes: ULONG,
-        options: ULONG,
+        access: ACCESS_MASK,
+        attributes: DWORD,
+        shared: ULONG,
+        disposition: DWORD,
+        handle: *mut HANDLE,
+    ) -> NTSTATUS;
+    pub fn MirrorCreateDirectory(
+        path: LPCWSTR,
+        security_descriptor: PSECURITY_DESCRIPTOR,
+        access: ACCESS_MASK,
+        attributes: DWORD,
+        shared: ULONG,
+        disposition: DWORD,
         handle: *mut HANDLE,
     ) -> NTSTATUS;
     pub fn MirrorWriteFile(

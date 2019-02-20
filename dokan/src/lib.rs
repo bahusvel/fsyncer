@@ -6,6 +6,8 @@ use winapi::shared::{
 };
 use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
+pub const FILE_NON_DIRECTORY_FILE: DWORD = 0x00000040;
+
 #[repr(C)]
 pub struct DOKAN_OPTIONS {
     pub Version: USHORT,
@@ -106,4 +108,18 @@ trait DokanWrite {
         info: PDOKAN_FILE_INFO,
     ) -> NTSTATUS;
     fn flush_file_buffers(path: LPCWSTR, info: PDOKAN_FILE_INFO) -> NTSTATUS;
+}
+
+#[link(name = "dokan1")]
+extern "stdcall" {
+    pub fn DokanMapKernelToUserCreateFileFlags(
+        DesiredAccess: ACCESS_MASK,
+        FileAttributes: ULONG,
+        CreateOptions: ULONG,
+        CreateDisposition: ULONG,
+        outDesiredAccess: *mut ACCESS_MASK,
+        outFileAttributesAndFlags: *mut DWORD,
+        outCreationDisposition: *mut DWORD,
+    );
+    pub fn DokanOpenRequestorToken(info: PDOKAN_FILE_INFO) -> HANDLE;
 }

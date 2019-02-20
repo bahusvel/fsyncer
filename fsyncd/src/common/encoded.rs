@@ -171,18 +171,34 @@ path_syscall!(removexattr { name: Cow<'a, CStr> });
 path_syscall!(allocation_size { size: int64_t });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-struct ACL {
-    AclRevision: u8,
-    Sbz1: u8,
-    AclSize: u16,
-    AceCount: u16,
-    Sbz2: u16,
+struct ACE {
+    permisssions: u32,
+    mode: u32,
+    inheritance: u32,
+    trustee: String,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
+enum FileSecurity {
+    Windows {
+        group: Option<String>,
+        owner: Option<String>,
+        dacl: Option<Vec<ACE>>,
+    },
+    Unix {
+        uid: u32,
+        gid: u32,
+        mode: u32,
+    },
+    Portable {
+        owner: Option<String>,
+        group: Option<String>,
+    },
 }
 
 path_syscall!(security {
-    info: u32,
-    dacl: Cow<'a, [ACL]>,
-    sacl: Cow<'a, [ACL]>,
-    group: String, // Translate SIDs to text names of users, SIDs are random
-    owner: String
+    group: Option<String>, // Translate SIDs to text names of users, SIDs are random
+    owner: Option<String>,
+    dacl: Option<Vec<ACE>>
+    // How to retrievie SACL members?
 });

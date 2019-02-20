@@ -79,4 +79,12 @@ MoveFile -> rename
 WriteFile -> write
 SetEndOfFile -> truncate
 
+# Compiling for Windows
+
+The visual studio project uses these compiler flags:
+CL.exe /c /I../../sys /Zi /JMC /nologo /W4 /WX- /diagnostics:classic /MP /Od /Oy- /D WIN32 /D _DEBUG /D _CONSOLE /D _UNICODE /D UNICODE /Gm- /EHsc /RTC1 /MTd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"Win32\Debug\\" /Fd"Win32\Debug\vc141.pdb" /Gd /TC /analyze- /FC /errorReport:prompt mirror.c
+And these linker flags:
+link.exe /ERRORREPORT:PROMPT /OUT:"C:\Users\denis\Documents\Developing\dokany\Win32\Debug\mirror.exe" /INCREMENTAL /NOLOGO /LIBPATH:../debug ntdll.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG:FASTLINK /PDB:"C:\Users\denis\Documents\Developing\dokany\Win32\Debug\mirror.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:\Users\denis\Documents\Developing\dokany\Win32\Debug\mirror.lib" /MACHINE:X86 Win32\Debug\mirror.obj
+
+If i experience any difference in behaviour between mirror.exe compiled by vscode and through the makefile these are most likely the reason.
 

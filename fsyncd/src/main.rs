@@ -26,6 +26,10 @@ extern crate net2;
 extern crate serde;
 extern crate walkdir;
 extern crate zstd;
+#[cfg(target_os = "windows")]
+extern crate winapi;
+
+
 
 #[macro_export]
 macro_rules! iter_try {

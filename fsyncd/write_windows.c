@@ -40,82 +40,69 @@ THE SOFTWARE.
 #define DOKAN_MAX_PATH MAX_PATH
 #endif // DEBUG
 
-BOOL g_UseStdErr;
-BOOL g_DebugMode;
-BOOL g_HasSeSecurityPrivilege;
-BOOL g_ImpersonateCallerUser;
+NTSTATUS MirrorCreateDirectory(LPCWSTR FileName,
+							   PSECURITY_DESCRIPTOR SecurityDescriptor,
+							   ACCESS_MASK genericDesiredAccess,
+							   DWORD fileAttributesAndFlags, ULONG ShareAccess,
+							   DWORD creationDisposition, HANDLE *handle) {
+	NTSTATUS status = STATUS_SUCCESS;
+	DWORD error = 0;
 
-static WCHAR RootDirectory[DOKAN_MAX_PATH] = L"C:";
-static WCHAR UNCName[DOKAN_MAX_PATH] = L"";
+	SECURITY_ATTRIBUTES securityAttrib;
+	securityAttrib.nLength = sizeof(securityAttrib);
+	securityAttrib.lpSecurityDescriptor = SecurityDescriptor;
+	securityAttrib.bInheritHandle = FALSE;
 
-static void DbgPrint(LPCWSTR format, ...) {
-	if (g_DebugMode) {
-		const WCHAR *outputString;
-		WCHAR *buffer = NULL;
-		size_t length;
-		va_list argp;
+	DWORD fileAttr = GetFileAttributes(FileName);
 
-		va_start(argp, format);
-		length = _vscwprintf(format, argp) + 1;
-		buffer = _malloca(length * sizeof(WCHAR));
-		if (buffer) {
-			vswprintf_s(buffer, length, format, argp);
-			outputString = buffer;
-		} else {
-			outputString = format;
+	// It is a create directory request
+	if (creationDisposition == CREATE_NEW ||
+		creationDisposition == OPEN_ALWAYS) {
+		// We create folder
+		if (!CreateDirectory(FileName, &securityAttrib)) {
+			error = GetLastError();
+			// Fail to create folder for OPEN_ALWAYS is not an error
+			if (error != ERROR_ALREADY_EXISTS ||
+				creationDisposition == CREATE_NEW) {
+				status = DokanNtStatusFromWin32(error);
+			}
 		}
-		if (g_UseStdErr)
-			fputws(outputString, stderr);
-		else
-			OutputDebugStringW(outputString);
-		if (buffer)
-			_freea(buffer);
-		va_end(argp);
-		if (g_UseStdErr)
-			fflush(stderr);
 	}
-}
+	if (status == STATUS_SUCCESS) {
+		// FILE_FLAG_BACKUP_SEMANTICS is required for opening directory
+		// handles
+		*handle = CreateFile( // This just opens the directory
+			FileName, genericDesiredAccess, ShareAccess, &securityAttrib,
+			OPEN_EXISTING, fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS,
+			NULL);
 
-static void GetFilePath(PWCHAR filePath, ULONG numberOfElements,
-						LPCWSTR FileName) {
-	wcsncpy_s(filePath, numberOfElements, RootDirectory, wcslen(RootDirectory));
-	size_t unclen = wcslen(UNCName);
-	if (unclen > 0 && _wcsnicmp(FileName, UNCName, unclen) == 0) {
-		if (_wcsnicmp(FileName + unclen, L".", 1) != 0) {
-			wcsncat_s(filePath, numberOfElements, FileName + unclen,
-					  wcslen(FileName) - unclen);
+		if (*handle == INVALID_HANDLE_VALUE) {
+			error = GetLastError();
+			status = DokanNtStatusFromWin32(error);
+		} else {
+			// Open succeed but we need to inform the driver
+			// that the dir open and not created by returning
+			// STATUS_OBJECT_NAME_COLLISION
+			if (creationDisposition == OPEN_ALWAYS &&
+				fileAttr != INVALID_FILE_ATTRIBUTES)
+				return STATUS_OBJECT_NAME_COLLISION;
 		}
-	} else {
-		wcsncat_s(filePath, numberOfElements, FileName, wcslen(FileName));
 	}
 }
 
 NTSTATUS MirrorCreateFile(LPCWSTR FileName,
 						  PSECURITY_DESCRIPTOR SecurityDescriptor,
-						  ACCESS_MASK DesiredAccess, ULONG FileAttributes,
-						  ULONG ShareAccess, ULONG CreateDisposition,
-						  ULONG CreateOptions, PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-	HANDLE handle;
-	DWORD fileAttr;
-	NTSTATUS status = STATUS_SUCCESS;
-	DWORD creationDisposition;
-	DWORD fileAttributesAndFlags;
-	DWORD error = 0;
-	SECURITY_ATTRIBUTES securityAttrib;
-	ACCESS_MASK genericDesiredAccess;
-	// userTokenHandle is for Impersonate Caller User Option
-	HANDLE userTokenHandle = INVALID_HANDLE_VALUE;
+						  ACCESS_MASK genericDesiredAccess,
+						  DWORD fileAttributesAndFlags, ULONG ShareAccess,
+						  DWORD creationDisposition, HANDLE *handle) {
 
+	NTSTATUS status = STATUS_SUCCESS;
+	DWORD error = 0;
+
+	SECURITY_ATTRIBUTES securityAttrib;
 	securityAttrib.nLength = sizeof(securityAttrib);
 	securityAttrib.lpSecurityDescriptor = SecurityDescriptor;
 	securityAttrib.bInheritHandle = FALSE;
-
-	DokanMapKernelToUserCreateFileFlags(
-		DesiredAccess, FileAttributes, CreateOptions, CreateDisposition,
-		&genericDesiredAccess, &fileAttributesAndFlags, &creationDisposition);
-
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 
 	/*
 	if (ShareMode == 0 && AccessMode & FILE_WRITE_DATA)
@@ -124,195 +111,58 @@ NTSTATUS MirrorCreateFile(LPCWSTR FileName,
 			ShareMode = FILE_SHARE_READ;
 	*/
 
-	// When filePath is a directory, needs to change the flag so that the file
-	// can be opened.
-	fileAttr = GetFileAttributes(filePath);
+	DWORD fileAttr = GetFileAttributes(FileName);
 
+	// Cannot overwrite a hidden or system file if flag not set
 	if (fileAttr != INVALID_FILE_ATTRIBUTES &&
-		fileAttr & FILE_ATTRIBUTE_DIRECTORY) {
-		if (!(CreateOptions & FILE_NON_DIRECTORY_FILE)) {
-			DokanFileInfo->IsDirectory = TRUE;
-			// Needed by FindFirstFile to list files in it
-			// TODO: use ReOpenFile in MirrorFindFiles to set share read
-			// temporary
-			ShareAccess |= FILE_SHARE_READ;
-		} else { // FILE_NON_DIRECTORY_FILE - Cannot open a dir as a file
-			return STATUS_FILE_IS_A_DIRECTORY;
-		}
-	}
+		((!(fileAttributesAndFlags & FILE_ATTRIBUTE_HIDDEN) &&
+		  (fileAttr & FILE_ATTRIBUTE_HIDDEN)) ||
+		 (!(fileAttributesAndFlags & FILE_ATTRIBUTE_SYSTEM) &&
+		  (fileAttr & FILE_ATTRIBUTE_SYSTEM))) &&
+		(creationDisposition == TRUNCATE_EXISTING ||
+		 creationDisposition == CREATE_ALWAYS))
+		return STATUS_ACCESS_DENIED;
 
-	if (g_ImpersonateCallerUser) {
-		userTokenHandle = DokanOpenRequestorToken(DokanFileInfo);
-		if (userTokenHandle == INVALID_HANDLE_VALUE) {
-			// Should we return some error?
-		}
-	}
+	// Cannot delete a read only file
+	if ((fileAttr != INVALID_FILE_ATTRIBUTES &&
+			 (fileAttr & FILE_ATTRIBUTE_READONLY) ||
+		 (fileAttributesAndFlags & FILE_ATTRIBUTE_READONLY)) &&
+		(fileAttributesAndFlags & FILE_FLAG_DELETE_ON_CLOSE))
+		return STATUS_CANNOT_DELETE;
 
-	if (DokanFileInfo->IsDirectory) {
-		// It is a create directory request
-		if (creationDisposition == CREATE_NEW ||
-			creationDisposition == OPEN_ALWAYS) {
+	// Truncate should always be used with write access
+	if (creationDisposition == TRUNCATE_EXISTING)
+		genericDesiredAccess |= GENERIC_WRITE;
 
-			if (g_ImpersonateCallerUser &&
-				userTokenHandle != INVALID_HANDLE_VALUE) {
-				// if g_ImpersonateCallerUser option is on, call the
-				// ImpersonateLoggedOnUser function.
-				if (!ImpersonateLoggedOnUser(userTokenHandle)) {
-					// handle the error if failed to impersonate
-				}
-			}
+	*handle = CreateFile(
+		FileName,
+		genericDesiredAccess, // GENERIC_READ|GENERIC_WRITE|GENERIC_EXECUTE,
+		ShareAccess,
+		&securityAttrib, // security attribute
+		creationDisposition,
+		fileAttributesAndFlags, // |FILE_FLAG_NO_BUFFERING,
+		NULL);					// template file handle
 
-			// We create folder
-			if (!CreateDirectory(filePath, &securityAttrib)) {
-				error = GetLastError();
-				// Fail to create folder for OPEN_ALWAYS is not an error
-				if (error != ERROR_ALREADY_EXISTS ||
-					creationDisposition == CREATE_NEW) {
-
-					status = DokanNtStatusFromWin32(error);
-				}
-			}
-
-			if (g_ImpersonateCallerUser &&
-				userTokenHandle != INVALID_HANDLE_VALUE) {
-				// Clean Up operation for impersonate
-				DWORD lastError = GetLastError();
-				if (status !=
-					STATUS_SUCCESS) // Keep the handle open for CreateFile
-					CloseHandle(userTokenHandle);
-				RevertToSelf();
-				SetLastError(lastError);
-			}
-		}
-
-		if (status == STATUS_SUCCESS) {
-
-			// Check first if we're trying to open a file as a directory.
-			if (fileAttr != INVALID_FILE_ATTRIBUTES &&
-				!(fileAttr & FILE_ATTRIBUTE_DIRECTORY) &&
-				(CreateOptions & FILE_DIRECTORY_FILE)) {
-				return STATUS_NOT_A_DIRECTORY;
-			}
-
-			if (g_ImpersonateCallerUser &&
-				userTokenHandle != INVALID_HANDLE_VALUE) {
-				// if g_ImpersonateCallerUser option is on, call the
-				// ImpersonateLoggedOnUser function.
-				if (!ImpersonateLoggedOnUser(userTokenHandle)) {
-					// handle the error if failed to impersonate
-				}
-			}
-
-			// FILE_FLAG_BACKUP_SEMANTICS is required for opening directory
-			// handles
-			handle = CreateFile(
-				filePath, genericDesiredAccess, ShareAccess, &securityAttrib,
-				OPEN_EXISTING,
-				fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS, NULL);
-
-			if (g_ImpersonateCallerUser &&
-				userTokenHandle != INVALID_HANDLE_VALUE) {
-				// Clean Up operation for impersonate
-				DWORD lastError = GetLastError();
-				CloseHandle(userTokenHandle);
-				RevertToSelf();
-				SetLastError(lastError);
-			}
-
-			if (handle == INVALID_HANDLE_VALUE) {
-				error = GetLastError();
-
-				status = DokanNtStatusFromWin32(error);
-			} else {
-				DokanFileInfo->Context =
-					(ULONG64)handle; // save the file handle in Context
-
-				// Open succeed but we need to inform the driver
-				// that the dir open and not created by returning
-				// STATUS_OBJECT_NAME_COLLISION
-				if (creationDisposition == OPEN_ALWAYS &&
-					fileAttr != INVALID_FILE_ATTRIBUTES)
-					return STATUS_OBJECT_NAME_COLLISION;
-			}
-		}
+	if (*handle == INVALID_HANDLE_VALUE) {
+		error = GetLastError();
+		status = DokanNtStatusFromWin32(error);
 	} else {
-		// It is a create file request
-		// Cannot overwrite a hidden or system file if flag not set
+		// Need to update FileAttributes with previous when Overwrite file
 		if (fileAttr != INVALID_FILE_ATTRIBUTES &&
-			((!(fileAttributesAndFlags & FILE_ATTRIBUTE_HIDDEN) &&
-			  (fileAttr & FILE_ATTRIBUTE_HIDDEN)) ||
-			 (!(fileAttributesAndFlags & FILE_ATTRIBUTE_SYSTEM) &&
-			  (fileAttr & FILE_ATTRIBUTE_SYSTEM))) &&
-			(creationDisposition == TRUNCATE_EXISTING ||
-			 creationDisposition == CREATE_ALWAYS))
-			return STATUS_ACCESS_DENIED;
-
-		// Cannot delete a read only file
-		if ((fileAttr != INVALID_FILE_ATTRIBUTES &&
-				 (fileAttr & FILE_ATTRIBUTE_READONLY) ||
-			 (fileAttributesAndFlags & FILE_ATTRIBUTE_READONLY)) &&
-			(fileAttributesAndFlags & FILE_FLAG_DELETE_ON_CLOSE))
-			return STATUS_CANNOT_DELETE;
-
-		// Truncate should always be used with write access
-		if (creationDisposition == TRUNCATE_EXISTING)
-			genericDesiredAccess |= GENERIC_WRITE;
-
-		if (g_ImpersonateCallerUser &&
-			userTokenHandle != INVALID_HANDLE_VALUE) {
-			// if g_ImpersonateCallerUser option is on, call the
-			// ImpersonateLoggedOnUser function.
-			if (!ImpersonateLoggedOnUser(userTokenHandle)) {
-				// handle the error if failed to impersonate
-			}
+			creationDisposition == TRUNCATE_EXISTING) {
+			SetFileAttributes(FileName, fileAttributesAndFlags | fileAttr);
 		}
-
-		handle = CreateFile(
-			filePath,
-			genericDesiredAccess, // GENERIC_READ|GENERIC_WRITE|GENERIC_EXECUTE,
-			ShareAccess,
-			&securityAttrib, // security attribute
-			creationDisposition,
-			fileAttributesAndFlags, // |FILE_FLAG_NO_BUFFERING,
-			NULL);					// template file handle
-
-		if (g_ImpersonateCallerUser &&
-			userTokenHandle != INVALID_HANDLE_VALUE) {
-			// Clean Up operation for impersonate
-			DWORD lastError = GetLastError();
-			CloseHandle(userTokenHandle);
-			RevertToSelf();
-			SetLastError(lastError);
-		}
-
-		if (handle == INVALID_HANDLE_VALUE) {
+		if (creationDisposition == OPEN_ALWAYS ||
+			creationDisposition == CREATE_ALWAYS) {
 			error = GetLastError();
-
-			status = DokanNtStatusFromWin32(error);
-		} else {
-			// Need to update FileAttributes with previous when Overwrite file
-			if (fileAttr != INVALID_FILE_ATTRIBUTES &&
-				creationDisposition == TRUNCATE_EXISTING) {
-				SetFileAttributes(filePath, fileAttributesAndFlags | fileAttr);
-			}
-
-			DokanFileInfo->Context =
-				(ULONG64)handle; // save the file handle in Context
-
-			if (creationDisposition == OPEN_ALWAYS ||
-				creationDisposition == CREATE_ALWAYS) {
-				error = GetLastError();
-				if (error == ERROR_ALREADY_EXISTS) {
-
-					// Open succeed but we need to inform the driver
-					// that the file open and not created by returning
-					// STATUS_OBJECT_NAME_COLLISION
-					status = STATUS_OBJECT_NAME_COLLISION;
-				}
+			if (error == ERROR_ALREADY_EXISTS) {
+				// Open succeed but we need to inform the driver
+				// that the file open and not created by returning
+				// STATUS_OBJECT_NAME_COLLISION
+				status = STATUS_OBJECT_NAME_COLLISION;
 			}
 		}
 	}
-
 	return status;
 }
 
@@ -320,9 +170,6 @@ NTSTATUS MirrorCreateFile(LPCWSTR FileName,
 #pragma warning(disable : 4305)
 
 static void MirrorCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
 	if (DokanFileInfo->Context) {
 		CloseHandle((HANDLE)(DokanFileInfo->Context));
 		DokanFileInfo->Context = 0;
@@ -331,12 +178,12 @@ static void MirrorCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 		// Should already be deleted by CloseHandle
 		// if open with FILE_FLAG_DELETE_ON_CLOSE
 		if (DokanFileInfo->IsDirectory) {
-			if (!RemoveDirectory(filePath)) {
-				DbgPrint(L"error code = %d\n\n", GetLastError());
+			if (!RemoveDirectory(FileName)) {
+				// Failed to remove directory
 			}
 		} else {
-			if (DeleteFile(filePath) == 0) {
-				DbgPrint(L" error code = %d\n\n", GetLastError());
+			if (DeleteFile(FileName) == 0) {
+				// Failed to remove file
 			}
 		}
 	}
@@ -346,15 +193,12 @@ NTSTATUS MirrorWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 						 DWORD NumberOfBytesToWrite,
 						 LPDWORD NumberOfBytesWritten, LONGLONG Offset,
 						 PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	HANDLE handle = (HANDLE)DokanFileInfo->Context;
 	BOOL opened = FALSE;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
 	// reopen the file
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
-		handle = CreateFile(filePath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
+		handle = CreateFile(FileName, GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
 							OPEN_EXISTING, 0, NULL);
 		if (handle == INVALID_HANDLE_VALUE) {
 			DWORD error = GetLastError();
@@ -441,10 +285,6 @@ NTSTATUS MirrorWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 }
 
 NTSTATUS MirrorFlushFileBuffers(LPCWSTR FileName, HANDLE handle) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_SUCCESS;
 	}
@@ -458,12 +298,9 @@ NTSTATUS MirrorFlushFileBuffers(LPCWSTR FileName, HANDLE handle) {
 }
 
 NTSTATUS MirrorDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	HANDLE handle = (HANDLE)DokanFileInfo->Context;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
-	DWORD dwAttrib = GetFileAttributes(filePath);
+	DWORD dwAttrib = GetFileAttributes(FileName);
 
 	if (dwAttrib != INVALID_FILE_ATTRIBUTES &&
 		(dwAttrib & FILE_ATTRIBUTE_DIRECTORY))
@@ -480,29 +317,25 @@ NTSTATUS MirrorDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS MirrorDeleteDirectory(LPCWSTR FileName,
+NTSTATUS MirrorDeleteDirectory(LPWSTR FileName,
 							   PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	// HANDLE	handle = (HANDLE)DokanFileInfo->Context;
 	HANDLE hFind;
 	WIN32_FIND_DATAW findData;
 	size_t fileLen;
 
-	ZeroMemory(filePath, sizeof(filePath));
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
 	if (!DokanFileInfo->DeleteOnClose)
 		// Dokan notify that the file is requested not to be deleted.
 		return STATUS_SUCCESS;
 
-	fileLen = wcslen(filePath);
-	if (filePath[fileLen - 1] != L'\\') {
-		filePath[fileLen++] = L'\\';
+	fileLen = wcslen(FileName);
+	if (FileName[fileLen - 1] != L'\\') {
+		FileName[fileLen++] = L'\\';
 	}
-	filePath[fileLen] = L'*';
-	filePath[fileLen + 1] = L'\0';
+	FileName[fileLen] = L'*';
+	FileName[fileLen + 1] = L'\0';
 
-	hFind = FindFirstFile(filePath, &findData);
+	hFind = FindFirstFile(FileName, &findData);
 
 	if (hFind == INVALID_HANDLE_VALUE) {
 		DWORD error = GetLastError();
@@ -531,30 +364,24 @@ NTSTATUS MirrorDeleteDirectory(LPCWSTR FileName,
 NTSTATUS MirrorMoveFile(LPCWSTR FileName, // existing file name
 						LPCWSTR NewFileName, BOOL ReplaceIfExisting,
 						HANDLE handle) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-	WCHAR newFilePath[DOKAN_MAX_PATH];
-	HANDLE handle;
 	DWORD bufferSize;
 	BOOL result;
 	size_t newFilePathLen;
 
 	PFILE_RENAME_INFO renameInfo = NULL;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-	GetFilePath(newFilePath, DOKAN_MAX_PATH, NewFileName);
-
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_INVALID_HANDLE;
 	}
 
-	newFilePathLen = wcslen(newFilePath);
+	newFilePathLen = wcslen(NewFileName);
 
 	// the PFILE_RENAME_INFO struct has space for one WCHAR for the name at
 	// the end, so that
 	// accounts for the null terminator
 
 	bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) +
-						 newFilePathLen * sizeof(newFilePath[0]));
+						 newFilePathLen * sizeof(NewFileName[0]));
 
 	renameInfo = (PFILE_RENAME_INFO)malloc(bufferSize);
 	if (!renameInfo) {
@@ -569,9 +396,9 @@ NTSTATUS MirrorMoveFile(LPCWSTR FileName, // existing file name
 	renameInfo->RootDirectory = NULL; // hope it is never needed, shouldn't be
 	renameInfo->FileNameLength =
 		(DWORD)newFilePathLen *
-		sizeof(newFilePath[0]); // they want length in bytes
+		sizeof(NewFileName[0]); // they want length in bytes
 
-	wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath);
+	wcscpy_s(renameInfo->FileName, newFilePathLen + 1, NewFileName);
 
 	result = SetFileInformationByHandle(handle, FileRenameInfo, renameInfo,
 										bufferSize);
@@ -589,10 +416,7 @@ NTSTATUS MirrorMoveFile(LPCWSTR FileName, // existing file name
 
 NTSTATUS MirrorSetEndOfFile(LPCWSTR FileName, LONGLONG ByteOffset,
 							HANDLE handle) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	LARGE_INTEGER offset;
-
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_INVALID_HANDLE;
@@ -615,13 +439,9 @@ NTSTATUS MirrorSetEndOfFile(LPCWSTR FileName, LONGLONG ByteOffset,
 
 NTSTATUS MirrorSetAllocationSize(LPCWSTR FileName, LONGLONG AllocSize,
 								 HANDLE handle) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	LARGE_INTEGER fileSize;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
-
 		return STATUS_INVALID_HANDLE;
 	}
 
@@ -647,28 +467,18 @@ NTSTATUS MirrorSetAllocationSize(LPCWSTR FileName, LONGLONG AllocSize,
 }
 
 NTSTATUS MirrorSetFileAttributes(LPCWSTR FileName, DWORD FileAttributes) {
-
-	WCHAR filePath[DOKAN_MAX_PATH];
-
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
-
 	if (FileAttributes != 0) {
-		if (!SetFileAttributes(filePath, FileAttributes)) {
+		if (!SetFileAttributes(FileName, FileAttributes)) {
 			DWORD error = GetLastError();
-
 			return DokanNtStatusFromWin32(error);
 		}
 	}
-
 	return STATUS_SUCCESS;
 }
 
 NTSTATUS MirrorSetFileTime(LPCWSTR FileName, CONST FILETIME *CreationTime,
 						   CONST FILETIME *LastAccessTime,
 						   CONST FILETIME *LastWriteTime, HANDLE handle) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_INVALID_HANDLE;
@@ -686,9 +496,6 @@ NTSTATUS MirrorSetFileSecurity(LPCWSTR FileName,
 							   PSECURITY_INFORMATION SecurityInformation,
 							   PSECURITY_DESCRIPTOR SecurityDescriptor,
 							   HANDLE handle) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_INVALID_HANDLE;

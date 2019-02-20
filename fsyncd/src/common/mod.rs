@@ -148,6 +148,7 @@ pub enum VFSCall<'a> {
     fsync(fsync<'a>),
     truncating_write { write: write<'a>, length: int64_t },
     allocation_size(allocation_size<'a>),
+    security(security<'a>),
 }
 
 use std::ffi::{CStr, CString};
