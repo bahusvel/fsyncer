@@ -119,5 +119,11 @@ pub enum VFSCall<'a> {
 
 use std::ffi::{CStr, CString};
 pub fn translate_path(path: &CStr, root: &Path) -> CString {
-    root.join(path.to_path()).into_cstring()
+    let p = path.to_path();
+    root.join(if p.starts_with("/") {
+        p.strip_prefix("/").unwrap()
+    } else {
+        p
+    })
+    .into_cstring()
 }
