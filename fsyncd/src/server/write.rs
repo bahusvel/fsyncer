@@ -352,7 +352,7 @@ pub unsafe extern "C" fn do_fsync(
     isdatasync: c_int,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    println!("Sync received");
+    //println!("Sync received");
     let call = VFSCall::fsync(fsync {
         path: Cow::Borrowed(CStr::from_ptr(path)),
         isdatasync: isdatasync,

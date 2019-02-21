@@ -68,17 +68,17 @@ pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
     for entry in WalkDir::new(path).sort_by(|a, b| a.file_name().cmp(b.file_name())) {
         let e = entry?;
         let path = e.path().strip_prefix(path).unwrap();
-        if path == empty {
+        let stat = e.metadata()?;
+        if path == empty && stat.is_dir() {
             continue;
         }
         path.hash(&mut hasher);
         e.file_type().hash(&mut hasher);
-        let stat = e.metadata()?;
         stat.permissions().mode().hash(&mut hasher);
         if !stat.is_dir() {
             stat.len().hash(&mut hasher);
         }
-        stat.modified()?.hash(&mut hasher);
+        //stat.modified()?.hash(&mut hasher); This will result in insync clusters reporting different hashes, as the times are not precisely replicated during writes. Once there is an option to precisely replicate timestamps I can re-enable this option.
         stat.uid().hash(&mut hasher);
         stat.gid().hash(&mut hasher);
     }
