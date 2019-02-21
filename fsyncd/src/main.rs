@@ -25,11 +25,9 @@ extern crate lz4;
 extern crate net2;
 extern crate serde;
 extern crate walkdir;
-extern crate zstd;
 #[cfg(target_os = "windows")]
 extern crate winapi;
-
-
+extern crate zstd;
 
 #[macro_export]
 macro_rules! iter_try {
@@ -89,8 +87,13 @@ use clap::{App, Arg, ArgGroup, ErrorKind, SubCommand};
 use client::{client_main, Client};
 use common::{ClientMode, CompMode, InitMsg};
 use journal::viewer_main;
-use server::{display_fuse_help, server_main};
+#[cfg(target_family = "unix")]
+use server::display_fuse_help;
+use server::server_main;
 use std::path::Path;
+
+#[cfg(target_os = "windows")]
+pub use server::write_windows::*;
 
 #[cfg(feature = "profile")]
 extern "C" fn stop_profiler(_: i32) {
@@ -290,6 +293,7 @@ fn main() {
         .unwrap_or_else(|e| match e.kind {
             ErrorKind::HelpDisplayed => {
                 eprintln!("{}", e);
+                #[cfg(target_family = "unix")]
                 display_fuse_help();
                 exit(1);
             }

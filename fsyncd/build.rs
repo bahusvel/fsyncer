@@ -18,6 +18,8 @@ fn main() {
         .warnings(false)
         .flag("-Wall")
         .file("write_windows.c")
+        .file("read_windows.c")
+        .file("dokan_main.c")
         .compile("fsyncer");
     } else {
         let fuse_flags_out = Command::new("pkg-config")

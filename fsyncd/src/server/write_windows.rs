@@ -1,25 +1,14 @@
-extern crate dokan;
-
-use self::dokan::*;
 use common::*;
-use libc::{uint32_t, wcslen};
-use server::{post_op, pre_op};
+use libc::uint32_t;
+use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
 use std::io::ErrorKind;
-use std::path::PathBuf;
 use std::ptr;
 use std::slice;
 use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::winnt::{FILE_SHARE_READ, PSID};
-
-fn wstr_to_path<'a>(path: LPCWSTR) -> PathBuf {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-    let len = wcslen(path);
-    PathBuf::from(OsString::from_wide(slice::from_raw_parts(path, len)))
-}
+use winapi::um::winnt::{FILE_SHARE_READ, PSID, SECURITY_DESCRIPTOR};
 
 macro_rules! flagset {
     ($val:expr, $flag:expr) => {
@@ -38,7 +27,8 @@ fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
     res
 }
 
-pub unsafe extern "stdcall" fn zw_create_file(
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorCreateFile(
     path: LPCWSTR,
     context: PDOKAN_IO_SECURITY_CONTEXT,
     access: ACCESS_MASK,
@@ -51,7 +41,10 @@ pub unsafe extern "stdcall" fn zw_create_file(
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
 
     let rpath = wstr_to_path(path);
-    let attr = symlink_metadata(rpath);
+    let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
+    let real_path = path_to_wstr(&rrpath);
+
+    let attr = symlink_metadata(rrpath);
     let exists = !(attr.is_err() && attr.unwrap_err().kind() == ErrorKind::NotFound);
     // File exists and we need to open it
 
@@ -84,6 +77,18 @@ pub unsafe extern "stdcall" fn zw_create_file(
 
     let call;
     let status;
+    let desc = secDesc as *const SECURITY_DESCRIPTOR;
+    let security = FileSecurity::Windows {
+        owner: {
+            let (_, acc_name) = lookup_account((*desc).Owner).expect("Unknown account");
+            Some(acc_name)
+        },
+        group: {
+            let (_, acc_name) = lookup_account((*desc).Group).expect("Unknown account");
+            Some(acc_name)
+        },
+        dacl: None,
+    };
 
     if !exists
         && (flagset!(disposition, CREATE_ALWAYS) || flagset!(disposition, CREATE_NEW))
@@ -92,15 +97,14 @@ pub unsafe extern "stdcall" fn zw_create_file(
         // Path does not exist, need to create it, and it is a directory
         call = Some(VFSCall::mkdir(mkdir {
             path: Cow::Borrowed(&rpath),
-            uid: 0,
-            gid: 0,
-            mode: 0,
+            security,
+            mode: userAttributes,
         }));
         if let Some(r) = pre_op(call.as_ref().unwrap()) {
             return r;
         }
         status = as_user(userHandle, || {
-            MirrorCreateDirectory(
+            OpCreateDirectory(
                 path,
                 secDesc,
                 userAccess,
@@ -112,7 +116,8 @@ pub unsafe extern "stdcall" fn zw_create_file(
         });
     }
 
-    if exists && (flagset!(disposition, TRUNCATE_EXISTING)) {
+    if exists && (flagset!(disposition, TRUNCATE_EXISTING) || flagset!(disposition, CREATE_ALWAYS))
+    {
         call = Some(VFSCall::truncate(truncate {
             path: Cow::Borrowed(&rpath),
             size: 0,
@@ -121,9 +126,8 @@ pub unsafe extern "stdcall" fn zw_create_file(
     {
         call = Some(VFSCall::create(create {
             path: Cow::Borrowed(&rpath),
-            uid: 0,
-            gid: 0,
-            mode: 0,
+            security,
+            mode: userAttributes,
             flags: 0,
         }));
     }
@@ -134,8 +138,8 @@ pub unsafe extern "stdcall" fn zw_create_file(
         }
     }
     status = as_user(userHandle, || {
-        MirrorCreateFile(
-            path,
+        OpCreateFile(
+            real_path.as_ptr(),
             secDesc,
             userAccess,
             userAttributes,
@@ -150,8 +154,39 @@ pub unsafe extern "stdcall" fn zw_create_file(
         return status;
     }
 }
-pub unsafe extern "stdcall" fn cleanup(path: LPCWSTR, info: PDOKAN_FILE_INFO) {}
-pub unsafe extern "stdcall" fn write_file(
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorCleanup(path: LPCWSTR, info: PDOKAN_FILE_INFO) {
+    let real_path = trans_ppath!(path);
+    let handle = (*info).Context as HANDLE;
+    if !handle.is_null() {
+        CloseHandle(handle);
+        (*info).Context = 0;
+    }
+    let call;
+    let status;
+    if (*info).IsDirectory != 0 {
+        call = VFSCall::rmdir(rmdir {
+            path: Cow::Owned(wstr_to_path(path)),
+        });
+        if let Some(r) = pre_op(&call) {
+            return;
+        }
+        status = OpDeleteDirectory(real_path.as_ptr());
+    } else {
+        call = VFSCall::unlink(unlink {
+            path: Cow::Owned(wstr_to_path(path)),
+        });
+        if let Some(r) = pre_op(&call) {
+            return;
+        }
+        status = OpDeleteFile(real_path.as_ptr());
+    }
+    post_op(&call, status);
+}
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorWriteFile(
     path: LPCWSTR,
     buffer: LPCVOID,
     len: DWORD,
@@ -159,16 +194,53 @@ pub unsafe extern "stdcall" fn write_file(
     offset: LONGLONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let rpath = wstr_to_path(path);
+    let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
+    let real_path = path_to_wstr(&rrpath);
+
+    let stat = symlink_metadata(rrpath);
+    if stat.is_err() {
+        return DokanNtStatusFromWin32(GetLastError());
+    }
+    let fileSize = stat.unwrap().len();
+
+    let distanceToMove: u64;
+    if (*info).WriteToEndOfFile != 0 {
+        offset = fileSize as i64;
+    } else {
+        // Paging IO cannot write after allocate file size.
+        if (*info).PagingIo != 0 {
+            if offset as u64 >= fileSize {
+                *bytes_written = 0;
+                return STATUS_SUCCESS;
+            }
+            if (offset as u64 + len as u64) > fileSize {
+                let bytes = fileSize - offset as u64;
+                if (bytes >> 32) != 0 {
+                    len = (bytes & 0xFFFFFFFF) as u32;
+                } else {
+                    len = bytes as u32;
+                }
+            }
+        }
+        if offset as u64 > fileSize {
+            // In the mirror sample helperZeroFileData is not necessary. NTFS
+            // will zero a hole. But if user's file system is different from
+            // NTFS( or other Windows's file systems ) then  users will have to
+            // zero the hole themselves.
+        }
+    }
+
     let call = VFSCall::write(write {
-        path: Cow::Owned(wstr_to_path(path)),
+        path: Cow::Owned(rpath),
         buf: Cow::Borrowed(slice::from_raw_parts(buffer as *const u8, len as usize)),
         offset,
     });
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorWriteFile(
-        path,
+    let status = OpWriteFile(
+        real_path.as_ptr(),
         buffer,
         len,
         bytes_written,
@@ -177,11 +249,14 @@ pub unsafe extern "stdcall" fn write_file(
     );
     post_op(&call, status)
 }
-pub unsafe extern "stdcall" fn set_file_attributes(
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorSetFileAttributes(
     path: LPCWSTR,
     attributes: DWORD,
     _: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
     let call = VFSCall::chmod(chmod {
         path: Cow::Owned(wstr_to_path(path)),
         mode: attributes,
@@ -189,16 +264,17 @@ pub unsafe extern "stdcall" fn set_file_attributes(
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorSetFileAttributes(path, attributes);
+    let status = OpSetFileAttributes(real_path.as_ptr(), attributes);
     post_op(&call, status)
 }
-pub unsafe extern "stdcall" fn set_file_time(
+pub unsafe extern "stdcall" fn MirrorSetFileTime(
     path: LPCWSTR,
     creation: *const FILETIME,
     access: *const FILETIME,
     write: *const FILETIME,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
     let call = VFSCall::utimens(utimens {
         path: Cow::Owned(wstr_to_path(path)),
         timespec: [
@@ -210,15 +286,25 @@ pub unsafe extern "stdcall" fn set_file_time(
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorSetFileTime(path, creation, access, write, (*info).Context as HANDLE);
+    let status = OpSetFileTime(
+        real_path.as_ptr(),
+        creation,
+        access,
+        write,
+        (*info).Context as HANDLE,
+    );
     post_op(&call, status)
 }
-pub unsafe extern "stdcall" fn move_file(
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorMoveFile(
     path: LPCWSTR,
     new_name: LPCWSTR,
     replace: BOOL,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
+    let real_new_name = trans_ppath!(new_name);
     let call = VFSCall::rename(rename {
         from: Cow::Owned(wstr_to_path(path)),
         to: Cow::Owned(wstr_to_path(new_name)),
@@ -227,14 +313,22 @@ pub unsafe extern "stdcall" fn move_file(
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorMoveFile(path, new_name, replace, (*info).Context as HANDLE);
+    let status = OpMoveFile(
+        real_path.as_ptr(),
+        real_new_name.as_ptr(),
+        replace,
+        (*info).Context as HANDLE,
+    );
     post_op(&call, status)
 }
-pub unsafe extern "stdcall" fn set_end_of_file(
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorSetEndOfFile(
     path: LPCWSTR,
     offset: LONGLONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
     let call = VFSCall::truncate(truncate {
         path: Cow::Owned(wstr_to_path(path)),
         size: offset,
@@ -242,14 +336,17 @@ pub unsafe extern "stdcall" fn set_end_of_file(
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorSetEndOfFile(path, offset, (*info).Context as HANDLE);
+    let status = OpSetEndOfFile(real_path.as_ptr(), offset, (*info).Context as HANDLE);
     post_op(&call, status)
 }
-pub unsafe extern "stdcall" fn set_allocation_size(
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorSetAllocationSize(
     path: LPCWSTR,
     size: LONGLONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
     let call = VFSCall::allocation_size(allocation_size {
         path: Cow::Owned(wstr_to_path(path)),
         size,
@@ -257,7 +354,7 @@ pub unsafe extern "stdcall" fn set_allocation_size(
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorSetAllocationSize(path, size, (*info).Context as HANDLE);
+    let status = OpSetAllocationSize(real_path.as_ptr(), size, (*info).Context as HANDLE);
     post_op(&call, status)
 }
 
@@ -306,16 +403,18 @@ fn lookup_account(psid: PSID) -> Option<(String, String)> {
     return Some((domain, name));
 }
 
-pub unsafe extern "stdcall" fn set_file_security(
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     path: LPCWSTR,
     security: PSECURITY_INFORMATION,
     descriptor: PSECURITY_DESCRIPTOR,
     length: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
     use winapi::um::winnt::{
         DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-        SACL_SECURITY_INFORMATION, SECURITY_DESCRIPTOR,
+        SACL_SECURITY_INFORMATION,
     };
 
     let desc = descriptor as *const SECURITY_DESCRIPTOR;
@@ -325,8 +424,7 @@ pub unsafe extern "stdcall" fn set_file_security(
         panic!("Sacl replication not implemented");
     }
 
-    let call = VFSCall::security(security {
-        path: Cow::Owned(wstr_to_path(path)),
+    let fileSecurity = FileSecurity::Windows {
         dacl: if flagset!(*security, DACL_SECURITY_INFORMATION) {
             (*desc).Dacl;
             panic!("Dacl replication not implemented");
@@ -345,19 +443,32 @@ pub unsafe extern "stdcall" fn set_file_security(
         } else {
             None
         },
+    };
+
+    let call = VFSCall::security(security {
+        path: Cow::Owned(wstr_to_path(path)),
+        security: fileSecurity,
     });
 
     if let Some(r) = pre_op(&call) {
         return r;
     }
 
-    let status = MirrorSetFileSecurity(path, security, descriptor, (*info).Context as HANDLE);
+    let status = OpSetFileSecurity(
+        real_path.as_ptr(),
+        security,
+        descriptor,
+        (*info).Context as HANDLE,
+    );
     post_op(&call, status)
 }
-pub unsafe extern "stdcall" fn flush_file_buffers(
+
+#[no_mangle]
+pub unsafe extern "stdcall" fn MirrorFlushFileBuffers(
     path: LPCWSTR,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    let real_path = trans_ppath!(path);
     let call = VFSCall::fsync(fsync {
         path: Cow::Owned(wstr_to_path(path)),
         isdatasync: 0,
@@ -365,6 +476,6 @@ pub unsafe extern "stdcall" fn flush_file_buffers(
     if let Some(r) = pre_op(&call) {
         return r;
     }
-    let status = MirrorFlushFileBuffers(path, (*info).Context as HANDLE);
+    let status = OpFlushFileBuffers(real_path.as_ptr(), (*info).Context as HANDLE);
     post_op(&call, status)
 }

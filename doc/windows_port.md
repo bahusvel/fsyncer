@@ -60,6 +60,21 @@ ZwCreateFile and SetFileSecurity will get their own vfs ops, the rest can be fit
 
 ZwCreateFile (LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext, ACCESS_MASK DesiredAccess, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PDOKAN_FILE_INFO DokanFileInfo); -> create, but contains stat information, Linux just assumes instead. Could be useful to extend Create, but Windows also has enough weird fields in there to be treated differently.
 
+### Parameters of ZwCreateFile
+context - SecurityContext needs to be replicated as FileSecurity
+access - does not need to be replicated
+attributes - must be replicated
+sharing - does not need to be replicated but the receiving side should be careful
+disposition - must be replicated, could be replicated as flags
+options - are a dokan thing so they do not need to be replicated, the most important option is to figure out whether dokan intends to deal with a directory or not. I make that distinction by using mkdir and create instead.
+info/handle - is just output.
+
+### ZwCreateFile truncate behaviour
+
+ZwCreateFile actually truncates in 2 different dispositions
+1. CREATE_ALWAYS - will truncate if the file exists, otherwise it will create.
+2. TRUNCTE_EXISTING - will truncate if the file exists.
+
 SetFileSecurity (LPCWSTR FileName, PSECURITY_INFORMATION SecurityInformation, PSECURITY_DESCRIPTOR SecurityDescriptor, ULONG BufferLength, PDOKAN_FILE_INFO DokanFileInfo); -> this is like chown and chmod combined, but with extra windows stuff, ultimately these are not compatible and need intelligent translation.
 
 SetFileTime (LPCWSTR FileName, CONST FILETIME *CreationTime, CONST FILETIME *LastAccessTime, CONST FILETIME *LastWriteTime, PDOKAN_FILE_INFO DokanFileInfo) -> utimens, with the exception of creation time, that does not exist in Linux

@@ -245,6 +245,7 @@ dependencies = [
 name = "dokan"
 version = "0.1.0"
 dependencies = [
+ "cc 1.0.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

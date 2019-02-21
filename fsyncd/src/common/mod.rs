@@ -138,7 +138,6 @@ pub enum VFSCall<'a> {
     rename(rename<'a>),
     link(link<'a>),
     chmod(chmod<'a>), // On windows this represents attributes
-    chown(chown<'a>),
     truncate(truncate<'a>),
     write(write<'a>),
     fallocate(fallocate<'a>),
@@ -149,16 +148,39 @@ pub enum VFSCall<'a> {
     fsync(fsync<'a>),
     truncating_write { write: write<'a>, length: int64_t },
     allocation_size(allocation_size<'a>),
-    security(security<'a>),
+    security(security<'a>), //chown on linux
 }
 
-use std::ffi::{CStr, CString};
-pub fn translate_path(path: &CStr, root: &Path) -> CString {
-    let p = path.to_path();
-    root.join(if p.starts_with("/") {
-        p.strip_prefix("/").unwrap()
+// windows, WSTR -> Path -> .join() -> WSTR?
+
+pub fn translate_path(path: &Path, root: &Path) -> PathBuf {
+    root.join(if path.starts_with("/") {
+        path.strip_prefix("/").unwrap()
     } else {
-        p
+        path
     })
-    .into_cstring()
 }
+metablock!(cfg(target_family = "unix") {
+    use std::ffi::{CStr, CString};
+    pub fn trans_cstr(path: &CStr, root: &Path) -> CString {
+        translate_path(path.to_path()).into_cstring()
+    }
+});
+
+metablock!(cfg(target_os = "windows") {
+    use libc::wcslen;
+    use std::slice;
+    use std::ffi::OsString;
+    pub fn wstr_to_path<'a>(path: LPCWSTR) -> PathBuf {
+        use std::os::windows::ffi::OsStringExt;
+        let len = wcslen(path);
+        PathBuf::from(OsString::from_wide(slice::from_raw_parts(path, len)))
+    }
+    pub fn path_to_wstr(path: &Path) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        path.as_os_str().encode_wide().collect()
+    }
+    pub fn trans_wstr(path: LPCWSTR, root: &Path) -> Vec<u16> {
+        path_to_wstr(&translate_path(&wstr_to_path(path), root))
+    }
+});

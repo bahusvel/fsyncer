@@ -3,6 +3,10 @@ name = "dokan"
 version = "0.1.0"
 authors = ["Denis Lavrov <bahus.vel@gmail.com>"]
 edition = "2018"
+build = "build.rs"
 
 [dependencies]
 winapi = "0.3.6"
+
+[build-dependencies]
+cc = "1.0"

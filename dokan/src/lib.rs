@@ -1,12 +1,30 @@
+#![feature(try_from)]
 extern crate winapi;
+use std::convert::TryFrom;
+use std::ptr;
 use winapi::shared::{
     basetsd::*,
     minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD},
     ntdef::*,
 };
+use winapi::um::consoleapi::SetConsoleCtrlHandler;
+use winapi::um::wincon::{
+    CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+};
 use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
 pub const FILE_NON_DIRECTORY_FILE: DWORD = 0x00000040;
+
+pub const DOKAN_OPTION_DEBUG: ULONG = 1;
+pub const DOKAN_OPTION_STDERR: ULONG = 2;
+pub const DOKAN_OPTION_ALT_STREAM: ULONG = 4;
+pub const DOKAN_OPTION_WRITE_PROTECT: ULONG = 8;
+pub const DOKAN_OPTION_REMOVABLE: ULONG = 32;
+pub const DOKAN_OPTION_MOUNT_MANAGER: ULONG = 64;
+pub const DOKAN_OPTION_CURRENT_SESSION: ULONG = 128;
+pub const DOKAN_OPTION_FILELOCK_USER_MODE: ULONG = 256;
+
+use std::mem;
 
 #[repr(C)]
 pub struct DOKAN_OPTIONS {
@@ -19,6 +37,16 @@ pub struct DOKAN_OPTIONS {
     pub Timeout: ULONG,
     pub AllocationUnitSize: ULONG,
     pub SectorSize: ULONG,
+}
+
+impl DOKAN_OPTIONS {
+    pub fn zero() -> DOKAN_OPTIONS {
+        let buf: [u8; mem::size_of::<DOKAN_OPTIONS>()] = [0; mem::size_of::<DOKAN_OPTIONS>()];
+        let mut res =
+            unsafe { mem::transmute::<[u8; mem::size_of::<DOKAN_OPTIONS>()], DOKAN_OPTIONS>(buf) };
+        res.Version = unsafe { CONST_DOKAN_VERSION };
+        res
+    }
 }
 
 pub type PDOKAN_OPTIONS = *mut DOKAN_OPTIONS;
@@ -61,6 +89,37 @@ pub struct DOKAN_IO_SECURITY_CONTEXT {
 }
 
 pub type PDOKAN_IO_SECURITY_CONTEXT = *mut DOKAN_IO_SECURITY_CONTEXT;
+
+pub type PDOKAN_OPERATIONS = *mut VOID;
+
+#[derive(Debug)]
+pub enum DokanResult {
+    Success = 0,
+    Error = -1,
+    DriveLetterError = -2,
+    DriverInstallError = -3,
+    StartError = -4,
+    MountError = -5,
+    MountPointError = -6,
+    VersionError = -7,
+}
+
+impl TryFrom<i32> for DokanResult {
+    type Error = i32;
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(DokanResult::Success),
+            -1 => Ok(DokanResult::Success),
+            -2 => Ok(DokanResult::Success),
+            -3 => Ok(DokanResult::Success),
+            -4 => Ok(DokanResult::Success),
+            -5 => Ok(DokanResult::Success),
+            -6 => Ok(DokanResult::Success),
+            -7 => Ok(DokanResult::Success),
+            i => Err(i),
+        }
+    }
+}
 
 trait DokanWrite {
     fn zw_create_file(
@@ -111,6 +170,7 @@ trait DokanWrite {
 }
 
 #[link(name = "dokan1")]
+#[link(name = "helper", kind="static")]
 extern "stdcall" {
     pub fn DokanMapKernelToUserCreateFileFlags(
         DesiredAccess: ACCESS_MASK,
@@ -122,4 +182,38 @@ extern "stdcall" {
         outCreationDisposition: *mut DWORD,
     );
     pub fn DokanOpenRequestorToken(info: PDOKAN_FILE_INFO) -> HANDLE;
+    pub fn DokanNtStatusFromWin32(error: DWORD) -> NTSTATUS;
+    pub fn DokanMain(DokanOptions: PDOKAN_OPTIONS, DokanOperations: PDOKAN_OPERATIONS) -> i32;
+    static CONST_DOKAN_VERSION: u16;
+    pub fn AddSeSecurityNamePrivilege() -> BOOL;
+    pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;
+}
+
+static mut MOUNT_POINT: LPCWSTR = ptr::null();
+
+unsafe extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
+    match ctrl_type {
+        CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
+        | CTRL_SHUTDOWN_EVENT => {
+            SetConsoleCtrlHandler(Some(handler), 0);
+            DokanRemoveMountPoint(MOUNT_POINT);
+            1
+        }
+        _ => 0,
+    }
+}
+
+pub unsafe fn dokan_main(
+    mut options: DOKAN_OPTIONS,
+    ops: PDOKAN_OPERATIONS,
+) -> Result<DokanResult, i32> {
+    MOUNT_POINT = options.MountPoint;
+    if AddSeSecurityNamePrivilege() == 0 {
+        panic!("Failed tp add security priviledge");
+    }
+    if SetConsoleCtrlHandler(Some(handler), 1) == 0 {
+        panic!("Failed to set dokan exit handler");
+    }
+    let res = DokanMain(&mut options as *mut _, ops);
+    DokanResult::try_from(res)
 }

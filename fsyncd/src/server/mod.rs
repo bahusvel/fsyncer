@@ -1,10 +1,9 @@
-macro_rules! trans_ppath {
-    ($path:expr) => {
-        translate_path(CStr::from_ptr($path), &SERVER_PATH.as_ref().unwrap())
-    };
-}
-
 metablock!(cfg(target_family = "unix") {
+    macro_rules! trans_ppath {
+        ($path:expr) => {
+            translate_path(CStr::from_ptr($path), &SERVER_PATH.as_ref().unwrap())
+        };
+    }
     mod fusemain;
     mod fuseops;
     mod read_unix;
@@ -13,7 +12,14 @@ metablock!(cfg(target_family = "unix") {
 });
 
 metablock!(cfg(target_os = "windows") {
-    mod write_windows;
+    macro_rules! trans_ppath {
+        ($path:expr) => {
+            trans_wstr($path, &SERVER_PATH.as_ref().unwrap())
+        };
+    }
+    extern crate dokan; 
+    pub mod write_windows;
+
 });
 
 mod client;
@@ -170,6 +176,7 @@ pub fn post_op(call: &VFSCall, ret: i32) -> i32 {
     /* Cork lock is held until here, it is used to make sure that any pending operations get sent over the network, the flush operation will force them to the other side */
 }
 
+#[cfg(target_family = "unix")]
 pub fn display_fuse_help() {
     println!("Fuse options, specify at the end, after --:");
     let args = vec!["fsyncd", "--help"]
@@ -345,22 +352,37 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         _ => panic!("Unknown journal type"),
     }
 
-    // Fuse args parsing
-    let args = vec![
-        "fsyncd".to_string(),
-        server_matches.value_of("mount-path").unwrap().to_string(),
-    ]
-    .into_iter()
-    .chain(env::args().skip_while(|v| v != "--").skip(1))
-    .map(|arg| CString::new(arg).unwrap())
-    .collect::<Vec<CString>>();
-    // convert the strings to raw pointers
-    let c_args = args
-        .iter()
-        .map(|arg| arg.as_ptr())
-        .collect::<Vec<*const c_char>>();
+    #[cfg(target_family = "unix")]
+    {
+        // Fuse args parsing
+        let args = vec![
+            "fsyncd".to_string(),
+            mount_path,
+        ]
+        .into_iter()
+        .chain(env::args().skip_while(|v| v != "--").skip(1))
+        .map(|arg| CString::new(arg).unwrap())
+        .collect::<Vec<CString>>();
+        // convert the strings to raw pointers
+        let c_args = args
+            .iter()
+            .map(|arg| arg.as_ptr())
+            .collect::<Vec<*const c_char>>();
 
-    unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
-
-    Ok(())
+        unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use self::dokan::*;
+        let options = DOKAN_OPTIONS::zero();
+        let wstr_mount_path = path_to_wstr(&mount_path);
+        options.MountPoint = wstr_mount_path.as_ptr();
+        options.Options |= DOKAN_OPTION_ALT_STREAM;
+        let res = dokan_main(options, DOKAN_OPS_PTR);
+        match res {
+            Ok(DokanResult::Success) => Ok(()),
+            e => panic!("Dokan error {:?}", e),
+        }
+    }
 }

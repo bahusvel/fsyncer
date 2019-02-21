@@ -24,9 +24,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
-
+#pragma warning(push)
+#pragma warning(disable : 4820)
 #include "dokan/dokan.h"
 #include "dokan/fileinfo.h"
+#pragma warning(pop)
 #include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,11 +42,11 @@ THE SOFTWARE.
 #define DOKAN_MAX_PATH MAX_PATH
 #endif // DEBUG
 
-NTSTATUS MirrorCreateDirectory(LPCWSTR FileName,
-							   PSECURITY_DESCRIPTOR SecurityDescriptor,
-							   ACCESS_MASK genericDesiredAccess,
-							   DWORD fileAttributesAndFlags, ULONG ShareAccess,
-							   DWORD creationDisposition, HANDLE *handle) {
+NTSTATUS OpCreateDirectory(LPCWSTR FileName,
+						   PSECURITY_DESCRIPTOR SecurityDescriptor,
+						   ACCESS_MASK genericDesiredAccess,
+						   DWORD fileAttributesAndFlags, ULONG ShareAccess,
+						   DWORD creationDisposition, HANDLE *handle) {
 	NTSTATUS status = STATUS_SUCCESS;
 	DWORD error = 0;
 
@@ -90,11 +92,10 @@ NTSTATUS MirrorCreateDirectory(LPCWSTR FileName,
 	}
 }
 
-NTSTATUS MirrorCreateFile(LPCWSTR FileName,
-						  PSECURITY_DESCRIPTOR SecurityDescriptor,
-						  ACCESS_MASK genericDesiredAccess,
-						  DWORD fileAttributesAndFlags, ULONG ShareAccess,
-						  DWORD creationDisposition, HANDLE *handle) {
+NTSTATUS OpCreateFile(LPCWSTR FileName, PSECURITY_DESCRIPTOR SecurityDescriptor,
+					  ACCESS_MASK genericDesiredAccess,
+					  DWORD fileAttributesAndFlags, ULONG ShareAccess,
+					  DWORD creationDisposition, HANDLE *handle) {
 
 	NTSTATUS status = STATUS_SUCCESS;
 	DWORD error = 0;
@@ -166,34 +167,9 @@ NTSTATUS MirrorCreateFile(LPCWSTR FileName,
 	return status;
 }
 
-#pragma warning(push)
-#pragma warning(disable : 4305)
-
-static void MirrorCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-	if (DokanFileInfo->Context) {
-		CloseHandle((HANDLE)(DokanFileInfo->Context));
-		DokanFileInfo->Context = 0;
-	}
-	if (DokanFileInfo->DeleteOnClose) {
-		// Should already be deleted by CloseHandle
-		// if open with FILE_FLAG_DELETE_ON_CLOSE
-		if (DokanFileInfo->IsDirectory) {
-			if (!RemoveDirectory(FileName)) {
-				// Failed to remove directory
-			}
-		} else {
-			if (DeleteFile(FileName) == 0) {
-				// Failed to remove file
-			}
-		}
-	}
-}
-
-NTSTATUS MirrorWriteFile(LPCWSTR FileName, LPCVOID Buffer,
-						 DWORD NumberOfBytesToWrite,
-						 LPDWORD NumberOfBytesWritten, LONGLONG Offset,
-						 PDOKAN_FILE_INFO DokanFileInfo) {
-	HANDLE handle = (HANDLE)DokanFileInfo->Context;
+NTSTATUS OpWriteFile(LPCWSTR FileName, LPCVOID Buffer,
+					 DWORD NumberOfBytesToWrite, LPDWORD NumberOfBytesWritten,
+					 LONGLONG Offset, HANDLE handle) {
 	BOOL opened = FALSE;
 
 	// reopen the file
@@ -208,65 +184,14 @@ NTSTATUS MirrorWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 		opened = TRUE;
 	}
 
-	UINT64 fileSize = 0;
-	DWORD fileSizeLow = 0;
-	DWORD fileSizeHigh = 0;
-	fileSizeLow = GetFileSize(handle, &fileSizeHigh);
-	if (fileSizeLow == INVALID_FILE_SIZE) {
+	LARGE_INTEGER z;
+	z.QuadPart = Offset;
+	if (!SetFilePointerEx(handle, z, NULL, FILE_BEGIN)) {
 		DWORD error = GetLastError();
-
+		DbgPrint(L"\tseek error, offset = EOF, error = %d\n", error);
 		if (opened)
 			CloseHandle(handle);
 		return DokanNtStatusFromWin32(error);
-	}
-
-	fileSize = ((UINT64)fileSizeHigh << 32) | fileSizeLow;
-
-	LARGE_INTEGER distanceToMove;
-	if (DokanFileInfo->WriteToEndOfFile) {
-		LARGE_INTEGER z;
-		z.QuadPart = 0;
-		if (!SetFilePointerEx(handle, z, NULL, FILE_END)) {
-			DWORD error = GetLastError();
-
-			if (opened)
-				CloseHandle(handle);
-			return DokanNtStatusFromWin32(error);
-		}
-	} else {
-		// Paging IO cannot write after allocate file size.
-		if (DokanFileInfo->PagingIo) {
-			if ((UINT64)Offset >= fileSize) {
-				*NumberOfBytesWritten = 0;
-				if (opened)
-					CloseHandle(handle);
-				return STATUS_SUCCESS;
-			}
-
-			if (((UINT64)Offset + NumberOfBytesToWrite) > fileSize) {
-				UINT64 bytes = fileSize - Offset;
-				if (bytes >> 32) {
-					NumberOfBytesToWrite = (DWORD)(bytes & 0xFFFFFFFFUL);
-				} else {
-					NumberOfBytesToWrite = (DWORD)bytes;
-				}
-			}
-		}
-
-		if ((UINT64)Offset > fileSize) {
-			// In the mirror sample helperZeroFileData is not necessary. NTFS
-			// will zero a hole. But if user's file system is different from
-			// NTFS( or other Windows's file systems ) then  users will have to
-			// zero the hole themselves.
-		}
-
-		distanceToMove.QuadPart = Offset;
-		if (!SetFilePointerEx(handle, distanceToMove, NULL, FILE_BEGIN)) {
-			DWORD error = GetLastError();
-			if (opened)
-				CloseHandle(handle);
-			return DokanNtStatusFromWin32(error);
-		}
 	}
 
 	if (!WriteFile(handle, Buffer, NumberOfBytesToWrite, NumberOfBytesWritten,
@@ -284,7 +209,8 @@ NTSTATUS MirrorWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS MirrorFlushFileBuffers(LPCWSTR FileName, HANDLE handle) {
+NTSTATUS OpFlushFileBuffers(LPCWSTR FileName, HANDLE handle) {
+	UNREFERENCED_PARAMETER(FileName);
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_SUCCESS;
 	}
@@ -297,73 +223,9 @@ NTSTATUS MirrorFlushFileBuffers(LPCWSTR FileName, HANDLE handle) {
 	}
 }
 
-NTSTATUS MirrorDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-	HANDLE handle = (HANDLE)DokanFileInfo->Context;
-
-	DWORD dwAttrib = GetFileAttributes(FileName);
-
-	if (dwAttrib != INVALID_FILE_ATTRIBUTES &&
-		(dwAttrib & FILE_ATTRIBUTE_DIRECTORY))
-		return STATUS_ACCESS_DENIED;
-
-	if (handle && handle != INVALID_HANDLE_VALUE) {
-		FILE_DISPOSITION_INFO fdi;
-		fdi.DeleteFile = DokanFileInfo->DeleteOnClose;
-		if (!SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
-										sizeof(FILE_DISPOSITION_INFO)))
-			return DokanNtStatusFromWin32(GetLastError());
-	}
-
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS MirrorDeleteDirectory(LPWSTR FileName,
-							   PDOKAN_FILE_INFO DokanFileInfo) {
-	// HANDLE	handle = (HANDLE)DokanFileInfo->Context;
-	HANDLE hFind;
-	WIN32_FIND_DATAW findData;
-	size_t fileLen;
-
-	if (!DokanFileInfo->DeleteOnClose)
-		// Dokan notify that the file is requested not to be deleted.
-		return STATUS_SUCCESS;
-
-	fileLen = wcslen(FileName);
-	if (FileName[fileLen - 1] != L'\\') {
-		FileName[fileLen++] = L'\\';
-	}
-	FileName[fileLen] = L'*';
-	FileName[fileLen + 1] = L'\0';
-
-	hFind = FindFirstFile(FileName, &findData);
-
-	if (hFind == INVALID_HANDLE_VALUE) {
-		DWORD error = GetLastError();
-		return DokanNtStatusFromWin32(error);
-	}
-
-	do {
-		if (wcscmp(findData.cFileName, L"..") != 0 &&
-			wcscmp(findData.cFileName, L".") != 0) {
-			FindClose(hFind);
-			return STATUS_DIRECTORY_NOT_EMPTY;
-		}
-	} while (FindNextFile(hFind, &findData) != 0);
-
-	DWORD error = GetLastError();
-
-	FindClose(hFind);
-
-	if (error != ERROR_NO_MORE_FILES) {
-		return DokanNtStatusFromWin32(error);
-	}
-
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS MirrorMoveFile(LPCWSTR FileName, // existing file name
-						LPCWSTR NewFileName, BOOL ReplaceIfExisting,
-						HANDLE handle) {
+NTSTATUS OpMoveFile(LPCWSTR FileName, // existing file name
+					LPCWSTR NewFileName, BOOL ReplaceIfExisting,
+					HANDLE handle) {
 	DWORD bufferSize;
 	BOOL result;
 	size_t newFilePathLen;
@@ -409,13 +271,11 @@ NTSTATUS MirrorMoveFile(LPCWSTR FileName, // existing file name
 		return STATUS_SUCCESS;
 	} else {
 		DWORD error = GetLastError();
-
 		return DokanNtStatusFromWin32(error);
 	}
 }
 
-NTSTATUS MirrorSetEndOfFile(LPCWSTR FileName, LONGLONG ByteOffset,
-							HANDLE handle) {
+NTSTATUS OpSetEndOfFile(LPCWSTR FileName, LONGLONG ByteOffset, HANDLE handle) {
 	LARGE_INTEGER offset;
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
@@ -437,8 +297,8 @@ NTSTATUS MirrorSetEndOfFile(LPCWSTR FileName, LONGLONG ByteOffset,
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS MirrorSetAllocationSize(LPCWSTR FileName, LONGLONG AllocSize,
-								 HANDLE handle) {
+NTSTATUS OpSetAllocationSize(LPCWSTR FileName, LONGLONG AllocSize,
+							 HANDLE handle) {
 	LARGE_INTEGER fileSize;
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
@@ -466,7 +326,7 @@ NTSTATUS MirrorSetAllocationSize(LPCWSTR FileName, LONGLONG AllocSize,
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS MirrorSetFileAttributes(LPCWSTR FileName, DWORD FileAttributes) {
+NTSTATUS OpSetFileAttributes(LPCWSTR FileName, DWORD FileAttributes) {
 	if (FileAttributes != 0) {
 		if (!SetFileAttributes(FileName, FileAttributes)) {
 			DWORD error = GetLastError();
@@ -476,9 +336,9 @@ NTSTATUS MirrorSetFileAttributes(LPCWSTR FileName, DWORD FileAttributes) {
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS MirrorSetFileTime(LPCWSTR FileName, CONST FILETIME *CreationTime,
-						   CONST FILETIME *LastAccessTime,
-						   CONST FILETIME *LastWriteTime, HANDLE handle) {
+NTSTATUS OpSetFileTime(LPCWSTR FileName, CONST FILETIME *CreationTime,
+					   CONST FILETIME *LastAccessTime,
+					   CONST FILETIME *LastWriteTime, HANDLE handle) {
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_INVALID_HANDLE;
@@ -492,10 +352,10 @@ NTSTATUS MirrorSetFileTime(LPCWSTR FileName, CONST FILETIME *CreationTime,
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS MirrorSetFileSecurity(LPCWSTR FileName,
-							   PSECURITY_INFORMATION SecurityInformation,
-							   PSECURITY_DESCRIPTOR SecurityDescriptor,
-							   HANDLE handle) {
+NTSTATUS OpSetFileSecurity(LPCWSTR FileName,
+						   PSECURITY_INFORMATION SecurityInformation,
+						   PSECURITY_DESCRIPTOR SecurityDescriptor,
+						   HANDLE handle) {
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return STATUS_INVALID_HANDLE;

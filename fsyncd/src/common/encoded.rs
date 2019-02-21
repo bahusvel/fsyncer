@@ -31,9 +31,8 @@ macro_rules! path_syscall {
 }
 
 path_syscall!(mkdir {
-    mode: uint32_t,
-    uid: uint32_t,
-    gid: uint32_t
+    security: FileSecurity,
+    mode: uint32_t // Attributes on windows
 });
 
 path_syscall!(unlink {});
@@ -63,10 +62,9 @@ path_syscall!(write {
 });
 
 path_syscall!(create {
-    mode: uint32_t,
     flags: int32_t,
-    uid: uint32_t,
-    gid: uint32_t
+    security: FileSecurity,
+    mode: uint32_t // Attributes on windows
 });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
@@ -132,6 +130,11 @@ path_syscall!(utimens {
 
 path_syscall!(chmod { mode: uint32_t }); // On windows this represents attributes
 
+// chown on Linux
+path_syscall!(security {
+    security: FileSecurity
+});
+
 // Linux Specific
 
 encoded_syscall!(symlink {
@@ -144,11 +147,6 @@ encoded_syscall!(symlink {
 path_syscall!(mknod {
     mode: uint32_t,
     rdev: uint64_t,
-    uid: uint32_t,
-    gid: uint32_t
-});
-
-path_syscall!(chown {
     uid: uint32_t,
     gid: uint32_t
 });
@@ -171,7 +169,7 @@ path_syscall!(removexattr { name: Cow<'a, CStr> });
 path_syscall!(allocation_size { size: int64_t });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-struct ACE {
+pub struct ACE {
     permisssions: u32,
     mode: u32,
     inheritance: u32,
@@ -179,7 +177,7 @@ struct ACE {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-enum FileSecurity {
+pub enum FileSecurity {
     Windows {
         group: Option<String>,
         owner: Option<String>,
@@ -188,17 +186,10 @@ enum FileSecurity {
     Unix {
         uid: u32,
         gid: u32,
-        mode: u32,
+        // Mode is probably not security, it is attributes on windows, and on Linux it also contains attributes sometimes
     },
     Portable {
         owner: Option<String>,
         group: Option<String>,
     },
 }
-
-path_syscall!(security {
-    group: Option<String>, // Translate SIDs to text names of users, SIDs are random
-    owner: Option<String>,
-    dacl: Option<Vec<ACE>>
-    // How to retrievie SACL members?
-});
