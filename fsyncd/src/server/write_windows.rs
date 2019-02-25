@@ -10,12 +10,6 @@ use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::winnt::{FILE_SHARE_READ, PSID, SECURITY_DESCRIPTOR};
 
-macro_rules! flagset {
-    ($val:expr, $flag:expr) => {
-        $val & $flag == $flag
-    };
-}
-
 fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
     use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
     if ImpersonateLoggedOnUser(handle) == 0 {
@@ -87,7 +81,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
             let (_, acc_name) = lookup_account((*desc).Group).expect("Unknown account");
             Some(acc_name)
         },
-        dacl: None,
+        dacl: Some(file_security::acl_entries((*desc).Dacl).expect("Failed to parse DACL entries")),
+        sacl: Some(file_security::acl_entries((*desc).Sacl).expect("Failed to parse SACL entries")),
     };
 
     if !exists
@@ -128,7 +123,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
             path: Cow::Borrowed(&rpath),
             security,
             mode: userAttributes,
-            flags: 0,
+            flags: userDisposition as i32,
         }));
     }
 
@@ -419,15 +414,14 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
 
     let desc = descriptor as *const SECURITY_DESCRIPTOR;
 
-    if flagset!(*security, SACL_SECURITY_INFORMATION) {
-        (*desc).Sacl;
-        panic!("Sacl replication not implemented");
-    }
-
     let fileSecurity = FileSecurity::Windows {
         dacl: if flagset!(*security, DACL_SECURITY_INFORMATION) {
-            (*desc).Dacl;
-            panic!("Dacl replication not implemented");
+            Some(file_security::acl_entries((*desc).Dacl).expect("Failed to parse DACL entries"))
+        } else {
+            None
+        },
+        sacl: if flagset!(*security, SACL_SECURITY_INFORMATION) {
+            Some(file_security::acl_entries((*desc).Sacl).expect("Failed to parse SACL entries"))
         } else {
             None
         },

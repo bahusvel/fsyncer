@@ -11,22 +11,22 @@ fn main() {
 
     git_version::set_env();
 
-    if cfg!(target_os="windows") {
+    if cfg!(target_os = "windows") {
         let iflags = "C:\\Program Files\\Dokan\\Dokan Library-1.2.1\\include";
-         cc::Build::new()
-        .include(iflags)
-        .warnings(false)
-        .flag("-Wall")
-        .file("write_windows.c")
-        .file("read_windows.c")
-        .file("dokan_main.c")
-        .compile("fsyncer");
+        cc::Build::new()
+            .include(iflags)
+            .warnings(false)
+            .flag("-Wall")
+            .file("write_windows.c")
+            .file("read_windows.c")
+            .file("dokan_main.c")
+            .compile("fsyncer");
     } else {
         let fuse_flags_out = Command::new("pkg-config")
-        .arg("fuse3")
-        .arg("--cflags")
-        .output()
-        .expect("failed to execute process");
+            .arg("fuse3")
+            .arg("--cflags")
+            .output()
+            .expect("failed to execute process");
 
         if !fuse_flags_out.status.success() {
             panic!("Could not find fuse3 using 'pkg-config fuse3 --cflags'");
@@ -35,15 +35,15 @@ fn main() {
         let out = fuse_flags_out.stdout;
 
         let iflags = from_utf8(&out[..out.len() - 1])
-                .expect("Non utf output")
-                .trim();
+            .expect("Non utf output")
+            .trim();
 
-         cc::Build::new()
-        .include(iflags)
-        .define("_FILE_OFFSET_BITS", "64")
-        .warnings(false)
-        .flag("-Wall")
-        .file("read.c")
-        .compile("fsyncer");
+        cc::Build::new()
+            .include(iflags)
+            .define("_FILE_OFFSET_BITS", "64")
+            .warnings(false)
+            .flag("-Wall")
+            .file("read.c")
+            .compile("fsyncer");
     }
 }

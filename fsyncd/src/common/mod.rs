@@ -1,9 +1,11 @@
 mod encoded;
-pub mod ffi;
+pub mod file_security;
 
 metablock!(cfg(target_family="unix") {
     mod ops_unix;
     pub use self::ops_unix::*;
+    pub mod ffi;
+    use self::ffi::*;
 });
 metablock!(cfg(target_family="windows") {
     mod ops_windows;
@@ -11,12 +13,12 @@ metablock!(cfg(target_family="windows") {
 });
 
 pub use self::encoded::*;
-use self::ffi::*;
 use libc::int64_t;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -96,7 +98,6 @@ pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
 #[cfg(target_os = "windows")]
 pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
     use std::os::windows::fs::MetadataExt;
-
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
     for entry in WalkDir::new(path) {
@@ -151,8 +152,6 @@ pub enum VFSCall<'a> {
     security(security<'a>), //chown on linux
 }
 
-// windows, WSTR -> Path -> .join() -> WSTR?
-
 pub fn translate_path(path: &Path, root: &Path) -> PathBuf {
     root.join(if path.starts_with("/") {
         path.strip_prefix("/").unwrap()
@@ -171,10 +170,13 @@ metablock!(cfg(target_os = "windows") {
     use libc::wcslen;
     use std::slice;
     use std::ffi::OsString;
-    pub fn wstr_to_path<'a>(path: LPCWSTR) -> PathBuf {
+    pub fn wstr_to_os(s: LPCWSTR) -> OsString {
         use std::os::windows::ffi::OsStringExt;
-        let len = wcslen(path);
-        PathBuf::from(OsString::from_wide(slice::from_raw_parts(path, len)))
+        let len = wcslen(s);
+        OsString::from_wide(slice::from_raw_parts(s, len))
+    }
+    pub fn wstr_to_path(path: LPCWSTR) -> PathBuf {
+        PathBuf::from(wstr_to_os(path))
     }
     pub fn path_to_wstr(path: &Path) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt;

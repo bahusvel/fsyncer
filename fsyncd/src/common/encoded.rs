@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 #![allow(unused)]
 
+use common::file_security::*;
 use libc::*;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, OsString};
@@ -9,6 +10,24 @@ use std::path::Path;
 
 #[cfg(target_os = "windows")]
 use common::FILETIME;
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
+pub enum FileSecurity {
+    Windows {
+        group: Option<String>,
+        owner: Option<String>,
+        dacl: Option<Vec<ACE>>,
+        sacl: Option<Vec<ACE>>,
+    },
+    Unix {
+        uid: u32,
+        gid: u32,
+    },
+    Portable {
+        owner: Option<String>,
+        group: Option<String>,
+    },
+}
 
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty,)*}) => {
@@ -167,29 +186,3 @@ path_syscall!(removexattr { name: Cow<'a, CStr> });
 
 // Windows Specific
 path_syscall!(allocation_size { size: int64_t });
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-pub struct ACE {
-    permisssions: u32,
-    mode: u32,
-    inheritance: u32,
-    trustee: String,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-pub enum FileSecurity {
-    Windows {
-        group: Option<String>,
-        owner: Option<String>,
-        dacl: Option<Vec<ACE>>,
-    },
-    Unix {
-        uid: u32,
-        gid: u32,
-        // Mode is probably not security, it is attributes on windows, and on Linux it also contains attributes sometimes
-    },
-    Portable {
-        owner: Option<String>,
-        group: Option<String>,
-    },
-}

@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
 #![feature(try_from)]
 extern crate winapi;
 use std::convert::TryFrom;
@@ -170,7 +172,7 @@ trait DokanWrite {
 }
 
 #[link(name = "dokan1")]
-#[link(name = "helper", kind="static")]
+#[link(name = "helper", kind = "static")]
 extern "stdcall" {
     pub fn DokanMapKernelToUserCreateFileFlags(
         DesiredAccess: ACCESS_MASK,

@@ -17,7 +17,7 @@ metablock!(cfg(target_os = "windows") {
             trans_wstr($path, &SERVER_PATH.as_ref().unwrap())
         };
     }
-    extern crate dokan; 
+    extern crate dokan;
     pub mod write_windows;
 
 });
@@ -27,6 +27,7 @@ use self::client::{Client, ClientStatus};
 
 use clap::ArgMatches;
 use common::*;
+#[cfg(target_family = "unix")]
 use journal::{BilogEntry, Journal, JournalConfig, JournalEntry};
 
 use libc::{c_char, c_int};
@@ -41,6 +42,7 @@ use std::{
 };
 
 pub static mut SERVER_PATH: Option<PathBuf> = None;
+#[cfg(target_family = "unix")]
 static mut JOURNAL: Option<Mutex<Journal>> = None;
 
 lazy_static! {
@@ -138,22 +140,25 @@ fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Resul
 
 pub fn pre_op(call: &VFSCall) -> Option<c_int> {
     // This is safe, journal is only initialized once.
-    if unsafe { JOURNAL.is_none() } {
-        return None;
-    }
-    //println!("writing journal event {:?}", call);
-    let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH.as_ref().unwrap() })
-        .expect("Failed to generate journal entry from vfscall");
+    #[cfg(target_family = "unix")]
     {
-        // Reduce the time journal lock is held
-        let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
-        j.write_entry(&bilog)
-            .expect("Failed to write journal entry");
-    }
+        if unsafe { JOURNAL.is_none() } {
+            return None;
+        }
+        //println!("writing journal event {:?}", call);
+        let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH.as_ref().unwrap() })
+            .expect("Failed to generate journal entry from vfscall");
+        {
+            // Reduce the time journal lock is held
+            let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
+            j.write_entry(&bilog)
+                .expect("Failed to write journal entry");
+        }
 
-    if is_variant!(bilog, BilogEntry::filestore, struct) {
-        // Bypass real unlink when using filestore
-        return Some(0);
+        if is_variant!(bilog, BilogEntry::filestore, struct) {
+            // Bypass real unlink when using filestore
+            return Some(0);
+        }
     }
 
     None
@@ -257,6 +262,7 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     Ok((mount_path, backing_store))
 }
 
+#[cfg(target_family = "unix")]
 fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, io::Error> {
     let exists = Path::new(path).exists();
     let f = OpenOptions::new()
@@ -330,6 +336,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         .expect("Invalid format for journal-size");
     let journal_sync = server_matches.is_present("journal-sync");
 
+    #[cfg(target_family = "unix")]
     match server_matches.value_of("journal").unwrap() {
         "bilog" => {
             let journal_path = server_matches
@@ -355,14 +362,11 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     #[cfg(target_family = "unix")]
     {
         // Fuse args parsing
-        let args = vec![
-            "fsyncd".to_string(),
-            mount_path,
-        ]
-        .into_iter()
-        .chain(env::args().skip_while(|v| v != "--").skip(1))
-        .map(|arg| CString::new(arg).unwrap())
-        .collect::<Vec<CString>>();
+        let args = vec!["fsyncd".to_string(), mount_path]
+            .into_iter()
+            .chain(env::args().skip_while(|v| v != "--").skip(1))
+            .map(|arg| CString::new(arg).unwrap())
+            .collect::<Vec<CString>>();
         // convert the strings to raw pointers
         let c_args = args
             .iter()

@@ -40,6 +40,13 @@ macro_rules! iter_try {
 }
 
 #[macro_export]
+macro_rules! flagset {
+    ($val:expr, $flag:expr) => {
+        $val & $flag == $flag
+    };
+}
+
+#[macro_export]
 macro_rules! debug {
     ($($e:expr),+) => {
         $(
@@ -78,6 +85,7 @@ macro_rules! metablock {
 
 mod client;
 mod common;
+#[cfg(target_family = "unix")]
 mod journal;
 mod server;
 
@@ -86,6 +94,7 @@ use std::process::exit;
 use clap::{App, Arg, ArgGroup, ErrorKind, SubCommand};
 use client::{client_main, Client};
 use common::{ClientMode, CompMode, InitMsg};
+#[cfg(target_family = "unix")]
 use journal::viewer_main;
 #[cfg(target_family = "unix")]
 use server::display_fuse_help;
@@ -310,6 +319,7 @@ fn main() {
         Some("client") => {
             client_main(matches);
         }
+        #[cfg(target_family = "unix")]
         Some("journal") => {
             viewer_main(matches);
         }
