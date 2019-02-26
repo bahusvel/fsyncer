@@ -1,28 +1,27 @@
+extern crate threadpool;
+
 mod dispatch;
 
 pub use self::dispatch::dispatch;
-use bincode::deserialize;
-use bincode::{serialize_into, serialized_size};
+use self::threadpool::ThreadPool;
+use bincode::{deserialize, serialize_into, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use clap::ArgMatches;
 use common::*;
-use dssc::chunkmap::ChunkMap;
-use dssc::other::ZstdBlock;
-use dssc::Compressor;
+use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use lz4;
 use net2::TcpStreamExt;
-use std::io;
-use std::io::{Read, Write};
-use std::mem::size_of;
-use std::net::TcpStream;
-use std::path::Path;
+use std::io::{self, Read, Write};
+use std::sync::{Arc, Mutex};
+use std::{mem::size_of, net::TcpStream, path::Path};
 use zstd;
 
-pub struct Client<F: Fn(&VFSCall) -> i32> {
-    write: Box<Write + Send>,
+pub struct Client<F: Send + Fn(&VFSCall) -> i32> {
+    write: Arc<Mutex<Box<Write + Send>>>,
     read: Box<Read + Send>,
-    mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
+    mode: ClientMode,
+    pool: Option<ThreadPool>,
     op_callback: F,
 }
 
@@ -31,19 +30,27 @@ fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
 
     //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
     write.write_u32::<BigEndian>(size as u32)?;
-    serialize_into(&mut write, &msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    write.flush()
+    serialize_into(&mut write, &msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
 }
 
-impl<F: Fn(&VFSCall) -> i32> Client<F> {
+impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
     pub fn new(
         host: &str,
         port: i32,
         init_msg: InitMsg,
         buffer_size: usize,
+        dispatch_threads: usize,
         op_callback: F,
     ) -> Result<Self, io::Error> {
+        if dispatch_threads != 1 && init_msg.mode != ClientMode::MODE_SYNC {
+            panic!("Only synchronous mode is compatible with multiple dispatch threads");
+        }
+
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
+
+        if init_msg.mode != ClientMode::MODE_ASYNC {
+            stream.set_nodelay(true)?;
+        }
 
         stream.set_recv_buffer_size(buffer_size)?;
 
@@ -67,16 +74,21 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
             };
 
         Ok(Client {
-            write: Box::new(stream),
+            write: Arc::new(Mutex::new(Box::new(stream))),
             read: reader,
             mode: init_msg.mode,
             rt_comp: rt_comp,
+            pool: if dispatch_threads == 1 {
+                None
+            } else {
+                Some(ThreadPool::new(dispatch_threads))
+            },
             op_callback,
         })
     }
 
     fn send_msg(&mut self, msg_data: FsyncerMsg) -> Result<(), io::Error> {
-        send_msg(&mut self.write, msg_data)
+        send_msg(&mut *self.write.lock().unwrap(), msg_data)
     }
 
     fn read_msg<'a, 'b>(&'a mut self) -> Result<FsyncerMsg<'b>, io::Error> {
@@ -120,11 +132,26 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
                         self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: 0, tid }))?;
                     }
 
-                    let res = (self.op_callback)(&call);
+                    let need_ack = self.mode == ClientMode::MODE_SYNC
+                        || self.mode == ClientMode::MODE_FLUSHSYNC;
+                    let write = self.write.clone();
+                    let callback = self.op_callback.clone();
 
-                    if self.mode == ClientMode::MODE_SYNC || self.mode == ClientMode::MODE_FLUSHSYNC
-                    {
-                        self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: res, tid }))?;
+                    let f = move || {
+                        let res = (callback)(&call);
+                        if need_ack {
+                            send_msg(
+                                &mut *write.lock().unwrap(),
+                                FsyncerMsg::Ack(AckMsg { retcode: res, tid }),
+                            )
+                            .expect("Failed to send ack");
+                        }
+                    };
+
+                    if self.pool.is_none() {
+                        f();
+                    } else {
+                        self.pool.as_ref().unwrap().execute(f);
                     }
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
@@ -150,9 +177,10 @@ pub fn client_main(matches: ArgMatches) {
         client_matches
             .value_of("mount-path")
             .expect("Destination not specified"),
-    );
+    )
+    .to_path_buf();
 
-    let dsthash = hash_metadata(client_path).expect("Hash failed");
+    let dsthash = hash_metadata(&client_path).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
 
     let host = client_matches.value_of("host").expect("No host specified");
@@ -210,7 +238,11 @@ pub fn client_main(matches: ArgMatches) {
             iolimit_bps,
         },
         buffer_size,
-        |call| unsafe { dispatch(call, client_path) },
+        client_matches
+            .value_of("threads")
+            .map(|v| v.parse().expect("Invalid thread number"))
+            .unwrap(),
+        move |call| unsafe { dispatch(call, &client_path) },
     )
     .expect("Failed to connect to fsyncer");
 

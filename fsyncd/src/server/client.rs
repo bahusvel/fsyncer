@@ -45,6 +45,18 @@ struct ClientResponse<T> {
     cvar: Condvar,
 }
 
+struct NagleFlush(TcpStream);
+
+impl Write for NagleFlush {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> Result<(), io::Error> {
+        self.0.set_nodelay(true)?;
+        self.0.set_nodelay(false)
+    }
+}
+
 impl<T> ClientResponse<T> {
     pub fn new() -> Self {
         ClientResponse {
@@ -102,7 +114,7 @@ impl Client {
             }
         }
 
-        let limiter = LimitWriter::new(stream.try_clone()?, init.iolimit_bps);
+        let limiter = LimitWriter::new(NagleFlush(stream.try_clone()?), init.iolimit_bps);
 
         let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
             Box::new(zstd::stream::Encoder::new(limiter, 0)?) as Box<Write + Send>

@@ -163,6 +163,13 @@ fn main() {
                         .default_value("async")
                         .help("Selects replication mode"),
                 ).arg(
+                    Arg::with_name("threads")
+                        .short("t")
+                        .long("threads")
+                        .takes_value(true)
+                        .default_value("1")
+                        .help("Sets number of dispatch threads"),
+                ).arg(
                     Arg::with_name("iolimit")
                         .long("iolimit")
                         .help("Restricts network transmission, 0 means unlimited")
@@ -331,6 +338,7 @@ fn main() {
                     iolimit_bps: 0,
                 },
                 buffer,
+                1,
                 |_| 0,
             )
             .expect("Failed to initialize client");

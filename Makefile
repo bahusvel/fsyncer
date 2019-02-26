@@ -57,7 +57,11 @@ else
 endif
 
 ifneq ($(stream),)
-	CLIENT_FLAGS ++ --stream-compressor=$(stream)
+	CLIENT_FLAGS += --stream-compressor=$(stream)
+endif
+
+ifneq ($(threads),)
+	CLIENT_FLAGS += --threads=$(threads)
 endif
 
 dirs:
