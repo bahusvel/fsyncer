@@ -151,20 +151,21 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
 
 #[cfg(target_os = "windows")]
 pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
+    use std::ptr;
     use winapi::um::fileapi::CREATE_NEW;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::winnt::{
         DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         GENERIC_WRITE, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-        SACL_SECURITY_INFORMATION,
+        SACL_SECURITY_INFORMATION, SECURITY_DESCRIPTOR,
     };
     match call {
         VFSCall::utimens(utimens { path, timespec }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let created = timespec[0].into();
-            let accessed = timespec[1].into();
-            let written = timespec[2].into();
+            let created = timespec[0].clone().into();
+            let accessed = timespec[1].clone().into();
+            let written = timespec[2].clone().into();
             OpSetFileTime(
                 real_path.as_ptr(),
                 &created as *const FILETIME,
@@ -181,12 +182,12 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let mut descriptor = security.to_descriptor();
+            //let mut descriptor = mem::zeroed(); // = security.to_descriptor();
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may need to replicate.
             let res = OpCreateFile(
                 real_path.as_ptr(),
-                &mut descriptor as *mut _,
+                ptr::null_mut(), // FIXME
                 GENERIC_WRITE,
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
                 *mode,         // attributes
@@ -223,9 +224,9 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }
         VFSCall::rename(rename { from, to, flags }) => {
             let rfrom = translate_path(from, root);
-            let real_from = path_to_wstr(&from);
+            let real_from = path_to_wstr(&rfrom);
             let rto = translate_path(to, root);
-            let real_to = path_to_wstr(&to);
+            let real_to = path_to_wstr(&rto);
             OpMoveFile(
                 real_from.as_ptr(),
                 real_to.as_ptr(),
@@ -250,12 +251,12 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let mut descriptor = security.to_descriptor();
+            //let mut descriptor = mem::zeroed(); // = security.to_descriptor();
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may need to replicate.
             let res = OpCreateDirectory(
                 real_path.as_ptr(),
-                &mut descriptor as *mut _,
+                ptr::null_mut(), // FIXME
                 GENERIC_WRITE,
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
                 *mode,      // attributes
@@ -295,15 +296,15 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                 panic!("Security information needs translation")
             }
 
-            let mut descriptor = security.to_descriptor();
+            //let mut descriptor = mem::zeroed(); // = security.to_descriptor();
             OpSetFileSecurity(
                 real_path.as_ptr(),
                 &mut info as *mut _,
-                &mut descriptor as *mut _,
+                ptr::null_mut(), // FIXME
                 INVALID_HANDLE_VALUE,
             )
         }
-        VFSCall::fsync(fsync { path, isdatasync }) => {
+        VFSCall::fsync(fsync { path, .. }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
             OpFlushFileBuffers(real_path.as_ptr(), INVALID_HANDLE_VALUE)

@@ -9,6 +9,11 @@ metablock!(cfg(target_family = "unix") {
     mod read_unix;
     mod write_unix;
     use self::fusemain::fuse_main;
+    use journal::{BilogEntry, Journal, JournalConfig, JournalEntry};
+    use std::{env, ffi::CString};
+    use std::fs::OpenOptions;
+    use libc::c_char;
+    static mut JOURNAL: Option<Mutex<Journal>> = None;
 });
 
 metablock!(cfg(target_os = "windows") {
@@ -19,31 +24,30 @@ metablock!(cfg(target_os = "windows") {
     }
     extern crate dokan;
     pub mod write_windows;
-
+    #[no_mangle]
+    pub unsafe extern "C" fn win_translate_path(buf: LPWSTR, path_len: ULONG, path: LPCWSTR) {
+        use std::slice;
+        let real_path = trans_ppath!(path);
+        assert!(real_path.len() < path_len as usize);
+        slice::from_raw_parts_mut(buf, path_len as usize)[..real_path.len()].copy_from_slice(&real_path)
+    }
 });
 
+//#[cfg(target_os = "windows")]
 mod client;
 use self::client::{Client, ClientStatus};
 
 use clap::ArgMatches;
 use common::*;
-#[cfg(target_family = "unix")]
-use journal::{BilogEntry, Journal, JournalConfig, JournalEntry};
-
-use libc::{c_char, c_int};
-use std::fs::{self, OpenOptions};
+use libc::c_int;
+use std::fs;
 use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, RwLock};
-use std::{
-    borrow::Cow, env, ffi::CString, mem::transmute, ops::Deref, process::Command, thread,
-    time::Duration,
-};
+use std::{borrow::Cow, mem::transmute, ops::Deref, process::Command, thread, time::Duration};
 
 pub static mut SERVER_PATH: Option<PathBuf> = None;
-#[cfg(target_family = "unix")]
-static mut JOURNAL: Option<Mutex<Journal>> = None;
 
 lazy_static! {
     static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
@@ -138,7 +142,7 @@ fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Resul
     }
 }
 
-pub fn pre_op(call: &VFSCall) -> Option<c_int> {
+pub fn pre_op(_call: &VFSCall) -> Option<c_int> {
     // This is safe, journal is only initialized once.
     #[cfg(target_family = "unix")]
     {
@@ -146,7 +150,7 @@ pub fn pre_op(call: &VFSCall) -> Option<c_int> {
             return None;
         }
         //println!("writing journal event {:?}", call);
-        let bilog = BilogEntry::from_vfscall(call, unsafe { &SERVER_PATH.as_ref().unwrap() })
+        let bilog = BilogEntry::from_vfscall(_call, unsafe { &SERVER_PATH.as_ref().unwrap() })
             .expect("Failed to generate journal entry from vfscall");
         {
             // Reduce the time journal lock is held
@@ -259,7 +263,7 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
         ));
     }
 
-    Ok((mount_path, backing_store))
+    Ok((mount_path.to_path_buf(), backing_store))
 }
 
 #[cfg(target_family = "unix")]
@@ -332,35 +336,34 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
 
     thread::spawn(harvester_thread);
 
-    let journal_size = parse_human_size(server_matches.value_of("journal-size").unwrap())
-        .expect("Invalid format for journal-size");
-    let journal_sync = server_matches.is_present("journal-sync");
-
-    #[cfg(target_family = "unix")]
-    match server_matches.value_of("journal").unwrap() {
-        "bilog" => {
-            let journal_path = server_matches
-                .value_of("journal-path")
-                .expect("Journal path must be set in bilog mode");
-
-            let c = JournalConfig {
-                journal_size: journal_size as u64,
-                sync: journal_sync,
-                vfsroot: unsafe { SERVER_PATH.as_ref().unwrap().clone() },
-                filestore_size: 1024 * 1024 * 1024,
-            };
-            unsafe {
-                JOURNAL = Some(Mutex::new(
-                    open_journal(journal_path, c).expect("Failed to open journal"),
-                ))
-            }
-        }
-        "off" => {}
-        _ => panic!("Unknown journal type"),
-    }
-
     #[cfg(target_family = "unix")]
     {
+        let journal_size = parse_human_size(server_matches.value_of("journal-size").unwrap())
+            .expect("Invalid format for journal-size");
+        let journal_sync = server_matches.is_present("journal-sync");
+
+        match server_matches.value_of("journal").unwrap() {
+            "bilog" => {
+                let journal_path = server_matches
+                    .value_of("journal-path")
+                    .expect("Journal path must be set in bilog mode");
+
+                let c = JournalConfig {
+                    journal_size: journal_size as u64,
+                    sync: journal_sync,
+                    vfsroot: unsafe { SERVER_PATH.as_ref().unwrap().clone() },
+                    filestore_size: 1024 * 1024 * 1024,
+                };
+                unsafe {
+                    JOURNAL = Some(Mutex::new(
+                        open_journal(journal_path, c).expect("Failed to open journal"),
+                    ))
+                }
+            }
+            "off" => {}
+            _ => panic!("Unknown journal type"),
+        }
+
         // Fuse args parsing
         let args = vec!["fsyncd".to_string(), mount_path]
             .into_iter()
@@ -379,13 +382,16 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     #[cfg(target_os = "windows")]
     {
         use self::dokan::*;
-        let options = DOKAN_OPTIONS::zero();
+        let mut options = DOKAN_OPTIONS::zero();
         let wstr_mount_path = path_to_wstr(&mount_path);
         options.MountPoint = wstr_mount_path.as_ptr();
         options.Options |= DOKAN_OPTION_ALT_STREAM;
-        let res = dokan_main(options, DOKAN_OPS_PTR);
+        let res = unsafe { dokan_main(options, DOKAN_OPS_PTR) };
         match res {
-            Ok(DokanResult::Success) => Ok(()),
+            Ok(DokanResult::Success) => {
+                println!("Dokan exited {:?}", res);
+                Ok(())
+            }
             e => panic!("Dokan error {:?}", e),
         }
     }

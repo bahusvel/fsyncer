@@ -25,10 +25,10 @@ ifneq ($(profile),)
 endif
 
 ifeq ($(release), no)
-	FSYNCD_BIN = "target/debug/fsyncd"
+	FSYNCD_BIN = target/debug/fsyncd
 else 
 	CARGO_BUILD_FLAGS += --release
-	FSYNCD_BIN = "target/release/fsyncd"
+	FSYNCD_BIN = target/release/fsyncd
 endif
 
 ifeq ($(journal), bilog)
@@ -60,6 +60,10 @@ ifneq ($(stream),)
 	CLIENT_FLAGS ++ --stream-compressor=$(stream)
 endif
 
+ifeq ($(OS),Windows_NT)
+	EXEC_CMD = cmd.exe
+endif
+
 dirs:
 	mkdir test_src || true
 	mkdir test_path || true
@@ -81,6 +85,11 @@ build:
 fs: build dirs
 	fusermount3 -u -z test_src || true
 	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)
+	$(POST_CMD)
+
+winfs: build dirs
+	# fusermount3 -u -z test_src || true
+	$(ENV) runas /user:Administrator "$(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)"
 	$(POST_CMD)
 
 client: build dirs
@@ -106,4 +115,4 @@ mirror_windows:
 	cmd.exe /C 'call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\Tools\VsDevCmd.bat" -arch=amd64 && cl.exe /I "C:\Program Files\Dokan\Dokan Library-1.2.1\include" /D _UNICODE /D UNICODE doc/mirror.c /link "C:\Program Files\Dokan\Dokan Library-1.2.1\lib\dokan1.lib" user32.lib advapi32.lib'
 
 test_mirror:
-	runas /user:Administrator "mirror.exe /s /r C:\Users\denis\Documents /l L:"
+	runas /user:Administrator "mirror.exe /s /r C:\Users\denis\Documents\Developing\fsyncer\.fsyncer-test_src /l  C:\Users\denis\Documents\Developing\fsyncer\test_src"

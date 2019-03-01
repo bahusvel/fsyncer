@@ -42,15 +42,16 @@ THE SOFTWARE.
 #define DOKAN_MAX_PATH MAX_PATH
 #endif // DEBUG
 
-static WCHAR RootDirectory[DOKAN_MAX_PATH] = L"C:";
-
 #pragma warning(push)
 #pragma warning(disable : 4305)
 
-static void DOKAN_CALLBACK MirrorCloseFile(LPCWSTR FileName,
-										   PDOKAN_FILE_INFO DokanFileInfo) {
+void win_translate_path(PWCHAR filePath, ULONG numberOfElements,
+						LPCWSTR FileName);
+
+void DOKAN_CALLBACK MirrorCloseFile(LPCWSTR FileName,
+									PDOKAN_FILE_INFO DokanFileInfo) {
 	WCHAR filePath[DOKAN_MAX_PATH];
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	if (DokanFileInfo->Context) {
 		CloseHandle((HANDLE)DokanFileInfo->Context);
@@ -68,7 +69,7 @@ NTSTATUS DOKAN_CALLBACK MirrorReadFile(LPCWSTR FileName, LPVOID Buffer,
 	ULONG offset = (ULONG)Offset;
 	BOOL opened = FALSE;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		handle = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -109,7 +110,7 @@ NTSTATUS DOKAN_CALLBACK MirrorGetFileInformation(
 	HANDLE handle = (HANDLE)DokanFileInfo->Context;
 	BOOL opened = FALSE;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		handle = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -166,7 +167,7 @@ MirrorFindFiles(LPCWSTR FileName,
 	DWORD error;
 	int count = 0;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	fileLen = wcslen(filePath);
 	if (filePath[fileLen - 1] != L'\\') {
@@ -210,7 +211,7 @@ NTSTATUS DOKAN_CALLBACK MirrorLockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 	LARGE_INTEGER offset;
 	LARGE_INTEGER length;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	handle = (HANDLE)DokanFileInfo->Context;
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
@@ -238,7 +239,7 @@ NTSTATUS DOKAN_CALLBACK MirrorUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 	LARGE_INTEGER length;
 	LARGE_INTEGER offset;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	handle = (HANDLE)DokanFileInfo->Context;
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
@@ -267,7 +268,7 @@ NTSTATUS DOKAN_CALLBACK MirrorGetFileSecurity(
 
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	requestingSaclInfo = ((*SecurityInformation & SACL_SECURITY_INFORMATION) ||
 						  (*SecurityInformation & BACKUP_SECURITY_INFORMATION));
@@ -320,6 +321,9 @@ NTSTATUS DOKAN_CALLBACK MirrorGetVolumeInformation(
 	PDOKAN_FILE_INFO DokanFileInfo) {
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
+	WCHAR filePath[DOKAN_MAX_PATH];
+	win_translate_path(filePath, DOKAN_MAX_PATH, "/");
+
 	WCHAR volumeRoot[4];
 	DWORD fsFlags = 0;
 
@@ -335,7 +339,7 @@ NTSTATUS DOKAN_CALLBACK MirrorGetVolumeInformation(
 						   FILE_SUPPORTS_REMOTE_STORAGE | FILE_UNICODE_ON_DISK |
 						   FILE_PERSISTENT_ACLS | FILE_NAMED_STREAMS;
 
-	volumeRoot[0] = RootDirectory[0];
+	volumeRoot[0] = filePath[0];
 	volumeRoot[1] = ':';
 	volumeRoot[2] = '\\';
 	volumeRoot[3] = '\0';
@@ -410,7 +414,7 @@ MirrorFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 	DWORD error;
 	int count = 0;
 
-	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	hFind = FindFirstStreamW(filePath, FindStreamInfoStandard, &findData, 0);
 
@@ -446,6 +450,78 @@ NTSTATUS DOKAN_CALLBACK MirrorMounted(PDOKAN_FILE_INFO DokanFileInfo) {
 
 NTSTATUS DOKAN_CALLBACK MirrorUnmounted(PDOKAN_FILE_INFO DokanFileInfo) {
 	UNREFERENCED_PARAMETER(DokanFileInfo);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS DOKAN_CALLBACK MirrorDeleteFile(LPCWSTR FileName,
+										 PDOKAN_FILE_INFO DokanFileInfo) {
+	WCHAR filePath[DOKAN_MAX_PATH];
+	HANDLE handle = (HANDLE)DokanFileInfo->Context;
+
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
+
+	DWORD dwAttrib = GetFileAttributes(filePath);
+
+	if (dwAttrib != INVALID_FILE_ATTRIBUTES &&
+		(dwAttrib & FILE_ATTRIBUTE_DIRECTORY))
+		return STATUS_ACCESS_DENIED;
+
+	if (handle && handle != INVALID_HANDLE_VALUE) {
+		FILE_DISPOSITION_INFO fdi;
+		fdi.DeleteFile = DokanFileInfo->DeleteOnClose;
+		if (!SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
+										sizeof(FILE_DISPOSITION_INFO)))
+			return DokanNtStatusFromWin32(GetLastError());
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS DOKAN_CALLBACK MirrorDeleteDirectory(LPCWSTR FileName,
+											  PDOKAN_FILE_INFO DokanFileInfo) {
+	WCHAR filePath[DOKAN_MAX_PATH];
+	// HANDLE	handle = (HANDLE)DokanFileInfo->Context;
+	HANDLE hFind;
+	WIN32_FIND_DATAW findData;
+	size_t fileLen;
+
+	ZeroMemory(filePath, sizeof(filePath));
+	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
+
+	if (!DokanFileInfo->DeleteOnClose)
+		// Dokan notify that the file is requested not to be deleted.
+		return STATUS_SUCCESS;
+
+	fileLen = wcslen(filePath);
+	if (filePath[fileLen - 1] != L'\\') {
+		filePath[fileLen++] = L'\\';
+	}
+	filePath[fileLen] = L'*';
+	filePath[fileLen + 1] = L'\0';
+
+	hFind = FindFirstFile(filePath, &findData);
+
+	if (hFind == INVALID_HANDLE_VALUE) {
+		DWORD error = GetLastError();
+		return DokanNtStatusFromWin32(error);
+	}
+
+	do {
+		if (wcscmp(findData.cFileName, L"..") != 0 &&
+			wcscmp(findData.cFileName, L".") != 0) {
+			FindClose(hFind);
+			return STATUS_DIRECTORY_NOT_EMPTY;
+		}
+	} while (FindNextFile(hFind, &findData) != 0);
+
+	DWORD error = GetLastError();
+
+	FindClose(hFind);
+
+	if (error != ERROR_NO_MORE_FILES) {
+		return DokanNtStatusFromWin32(error);
+	}
+
 	return STATUS_SUCCESS;
 }
 

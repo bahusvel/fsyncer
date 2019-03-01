@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::OsString;
+use std::ptr;
 
 metablock!(cfg(target_os = "windows") {
     use winapi::um::winnt::{PACL, PSID};
@@ -55,6 +56,7 @@ macro_rules! enummatch {
 #[cfg(target_os = "windows")]
 impl From<TRUSTEE_TYPE> for TrusteeType {
     fn from(t: TRUSTEE_TYPE) -> Self {
+        use winapi::um::accctrl::*;
         enummatch! {t, TrusteeType,
             TRUSTEE_IS_UNKNOWN,
             TRUSTEE_IS_USER,
@@ -111,6 +113,7 @@ pub enum ObjectType {
 #[cfg(target_os = "windows")]
 impl From<SE_OBJECT_TYPE> for ObjectType {
     fn from(o: SE_OBJECT_TYPE) -> Self {
+        use winapi::um::accctrl::*;
         enummatch! {o, ObjectType,  SE_UNKNOWN_OBJECT_TYPE,
                     SE_FILE_OBJECT,
                     SE_SERVICE,
@@ -144,7 +147,7 @@ impl From<TRUSTEE_W> for Trustee {
         use winapi::um::winnt::{ACE_INHERITED_OBJECT_TYPE_PRESENT, ACE_OBJECT_TYPE_PRESENT};
 
         unsafe fn psid_to_string(sid: PSID) -> OsString {
-            let mut p: *mut u16;
+            let mut p: *mut u16 = ptr::null_mut();
             if ConvertSidToStringSidW(sid, &mut p as *mut _) == 0 {
                 panic!("Failed to get strign SID");
             }
@@ -154,53 +157,56 @@ impl From<TRUSTEE_W> for Trustee {
         }
 
         let ty = TrusteeType::from(t.TrusteeType);
+        let form = unsafe {
+            match t.TrusteeForm {
+                TRUSTEE_IS_SID => TrusteeForm::Sid(psid_to_string(t.ptstrName as PSID)),
+                TRUSTEE_IS_NAME => TrusteeForm::Name(wstr_to_os(t.ptstrName)),
+                TRUSTEE_IS_OBJECTS_AND_SID => {
+                    use winapi::um::accctrl::OBJECTS_AND_SID;
+                    let t = t.ptstrName as *const OBJECTS_AND_SID;
 
-        let form = match t.TrusteeForm {
-            TRUSTEE_IS_SID => TrusteeForm::Sid(psid_to_string(t.ptstrName as PSID)),
-            TRUSTEE_IS_NAME => TrusteeForm::Name(wstr_to_os(t.ptstrName)),
-            TRUSTEE_IS_OBJECTS_AND_SID => {
-                use winapi::um::accctrl::OBJECTS_AND_SID;
-                let t = t.ptstrName as *const OBJECTS_AND_SID;
-
-                TrusteeForm::ObjectsAndSid {
-                    object_type: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT) {
-                        Some(WinGUID::from((*t).ObjectTypeGuid))
-                    } else {
-                        None
-                    },
-                    inherited_object_type: if flagset!(
-                        (*t).ObjectsPresent,
-                        ACE_INHERITED_OBJECT_TYPE_PRESENT
-                    ) {
-                        Some(WinGUID::from((*t).InheritedObjectTypeGuid))
-                    } else {
-                        None
-                    },
-                    sid: psid_to_string((*t).pSid as *mut _),
+                    TrusteeForm::ObjectsAndSid {
+                        object_type: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT) {
+                            Some(WinGUID::from((*t).ObjectTypeGuid))
+                        } else {
+                            None
+                        },
+                        inherited_object_type: if flagset!(
+                            (*t).ObjectsPresent,
+                            ACE_INHERITED_OBJECT_TYPE_PRESENT
+                        ) {
+                            Some(WinGUID::from((*t).InheritedObjectTypeGuid))
+                        } else {
+                            None
+                        },
+                        sid: psid_to_string((*t).pSid as *mut _),
+                    }
                 }
-            }
-            TRUSTEE_IS_OBJECTS_AND_NAME => {
-                use winapi::um::accctrl::OBJECTS_AND_NAME_W;
-                let t = t.ptstrName as *const OBJECTS_AND_NAME_W;
-                let ty = ObjectType::from((*t).ObjectType);
-                TrusteeForm::ObjectsAndName {
-                    inherited_object_type_name: if flagset!(
-                        (*t).ObjectsPresent,
-                        ACE_INHERITED_OBJECT_TYPE_PRESENT
-                    ) {
-                        Some(wstr_to_os((*t).InheritedObjectTypeName))
-                    } else {
-                        None
-                    },
+                TRUSTEE_IS_OBJECTS_AND_NAME => {
+                    use winapi::um::accctrl::OBJECTS_AND_NAME_W;
+                    let t = t.ptstrName as *const OBJECTS_AND_NAME_W;
+                    let ty = ObjectType::from((*t).ObjectType);
+                    TrusteeForm::ObjectsAndName {
+                        inherited_object_type_name: if flagset!(
+                            (*t).ObjectsPresent,
+                            ACE_INHERITED_OBJECT_TYPE_PRESENT
+                        ) {
+                            Some(wstr_to_os((*t).InheritedObjectTypeName))
+                        } else {
+                            None
+                        },
 
-                    object_type_name: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT) {
-                        Some(wstr_to_os((*t).ObjectTypeName))
-                    } else {
-                        None
-                    },
-                    object_type: ty,
-                    name: wstr_to_os((*t).ptstrName),
+                        object_type_name: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT)
+                        {
+                            Some(wstr_to_os((*t).ObjectTypeName))
+                        } else {
+                            None
+                        },
+                        object_type: ty,
+                        name: wstr_to_os((*t).ptstrName),
+                    }
                 }
+                F => panic!("Invalid trustee form {}", F),
             }
         };
 
@@ -223,7 +229,7 @@ pub unsafe fn acl_entries(descriptor: PACL) -> Result<Vec<ACE>, Error> {
     use winapi::um::aclapi::GetExplicitEntriesFromAclW;
 
     let mut count: u32 = 0;
-    let mut entries: *mut EXPLICIT_ACCESS_W;
+    let mut entries: *mut EXPLICIT_ACCESS_W = ptr::null_mut();
 
     if GetExplicitEntriesFromAclW(descriptor, &mut count as *mut _, &mut entries as *mut _)
         != ERROR_SUCCESS
@@ -232,6 +238,8 @@ pub unsafe fn acl_entries(descriptor: PACL) -> Result<Vec<ACE>, Error> {
     }
 
     let mut rlist = Vec::new();
+
+    assert!(!entries.is_null());
 
     for i in 0..count {
         let entry = entries.offset(i as isize);

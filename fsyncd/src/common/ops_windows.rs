@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 pub use winapi::shared::{
     basetsd::*,
     minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD},

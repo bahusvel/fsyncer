@@ -4,6 +4,8 @@ extern crate git_version;
 use std::process::Command;
 use std::str::from_utf8;
 
+const DOKAN_PATH: &str = "C:\\Program Files\\Dokan\\Dokan Library-1.2.1\\";
+
 //const PACKAGE_TOP_DIR: &'static str = ".";
 
 fn main() {
@@ -12,9 +14,14 @@ fn main() {
     git_version::set_env();
 
     if cfg!(target_os = "windows") {
-        let iflags = "C:\\Program Files\\Dokan\\Dokan Library-1.2.1\\include";
+        let mut lib = "cargo:rustc-link-search=".to_string();
+        lib.push_str(DOKAN_PATH);
+        lib.push_str("lib");
+        println!("{}", lib);
+        let mut include = DOKAN_PATH.to_string();
+        include.push_str("include");
         cc::Build::new()
-            .include(iflags)
+            .include(include)
             .warnings(false)
             .flag("-Wall")
             .file("write_windows.c")

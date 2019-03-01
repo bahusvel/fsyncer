@@ -43,9 +43,7 @@ pub struct DOKAN_OPTIONS {
 
 impl DOKAN_OPTIONS {
     pub fn zero() -> DOKAN_OPTIONS {
-        let buf: [u8; mem::size_of::<DOKAN_OPTIONS>()] = [0; mem::size_of::<DOKAN_OPTIONS>()];
-        let mut res =
-            unsafe { mem::transmute::<[u8; mem::size_of::<DOKAN_OPTIONS>()], DOKAN_OPTIONS>(buf) };
+        let mut res: DOKAN_OPTIONS = unsafe { mem::zeroed() };
         res.Version = unsafe { CONST_DOKAN_VERSION };
         res
     }
@@ -108,7 +106,7 @@ pub enum DokanResult {
 
 impl TryFrom<i32> for DokanResult {
     type Error = i32;
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self, <Self as TryFrom<i32>>::Error> {
         match value {
             0 => Ok(DokanResult::Success),
             -1 => Ok(DokanResult::Success),
@@ -172,7 +170,6 @@ trait DokanWrite {
 }
 
 #[link(name = "dokan1")]
-#[link(name = "helper", kind = "static")]
 extern "stdcall" {
     pub fn DokanMapKernelToUserCreateFileFlags(
         DesiredAccess: ACCESS_MASK,
@@ -186,9 +183,13 @@ extern "stdcall" {
     pub fn DokanOpenRequestorToken(info: PDOKAN_FILE_INFO) -> HANDLE;
     pub fn DokanNtStatusFromWin32(error: DWORD) -> NTSTATUS;
     pub fn DokanMain(DokanOptions: PDOKAN_OPTIONS, DokanOperations: PDOKAN_OPERATIONS) -> i32;
+    pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;
+}
+
+#[link(name = "helper", kind = "static")]
+extern "stdcall" {
     static CONST_DOKAN_VERSION: u16;
     pub fn AddSeSecurityNamePrivilege() -> BOOL;
-    pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;
 }
 
 static mut MOUNT_POINT: LPCWSTR = ptr::null();

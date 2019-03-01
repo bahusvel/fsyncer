@@ -2,7 +2,7 @@
 #![feature(const_string_new)]
 #![feature(test)]
 #![feature(concat_idents)]
-#![feature(rw_exact_all_at)]
+#![cfg_attr(target_family = "unix", rw_exact_all_at)]
 
 #[cfg(feature = "profile")]
 extern crate cpuprofiler;
@@ -25,8 +25,6 @@ extern crate lz4;
 extern crate net2;
 extern crate serde;
 extern crate walkdir;
-#[cfg(target_os = "windows")]
-extern crate winapi;
 extern crate zstd;
 
 #[macro_export]
@@ -85,8 +83,6 @@ macro_rules! metablock {
 
 mod client;
 mod common;
-#[cfg(target_family = "unix")]
-mod journal;
 mod server;
 
 use std::process::exit;
@@ -94,15 +90,20 @@ use std::process::exit;
 use clap::{App, Arg, ArgGroup, ErrorKind, SubCommand};
 use client::{client_main, Client};
 use common::{ClientMode, CompMode, InitMsg};
-#[cfg(target_family = "unix")]
-use journal::viewer_main;
-#[cfg(target_family = "unix")]
-use server::display_fuse_help;
 use server::server_main;
 use std::path::Path;
 
-#[cfg(target_os = "windows")]
-pub use server::write_windows::*;
+metablock!(cfg(target_family = "unix") {
+    use server::display_fuse_help;
+    use journal::viewer_main;
+    mod journal;
+});
+
+metablock!(cfg(target_os = "windows") {
+    extern crate winapi;
+    pub use server::write_windows::*;
+    pub use server::win_translate_path;
+});
 
 #[cfg(feature = "profile")]
 extern "C" fn stop_profiler(_: i32) {
@@ -375,6 +376,6 @@ fn main() {
             }
             .expect("Failed to execute command server");
         }
-        _ => unreachable!(),
+        _ => panic!("you must provide a command"),
     }
 }

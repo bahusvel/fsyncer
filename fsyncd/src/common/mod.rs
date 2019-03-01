@@ -170,19 +170,19 @@ metablock!(cfg(target_os = "windows") {
     use libc::wcslen;
     use std::slice;
     use std::ffi::OsString;
-    pub fn wstr_to_os(s: LPCWSTR) -> OsString {
+    pub unsafe fn wstr_to_os(s: LPCWSTR) -> OsString {
         use std::os::windows::ffi::OsStringExt;
         let len = wcslen(s);
         OsString::from_wide(slice::from_raw_parts(s, len))
     }
-    pub fn wstr_to_path(path: LPCWSTR) -> PathBuf {
+    pub unsafe fn wstr_to_path(path: LPCWSTR) -> PathBuf {
         PathBuf::from(wstr_to_os(path))
     }
     pub fn path_to_wstr(path: &Path) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt;
         path.as_os_str().encode_wide().collect()
     }
-    pub fn trans_wstr(path: LPCWSTR, root: &Path) -> Vec<u16> {
+    pub unsafe fn trans_wstr(path: LPCWSTR, root: &Path) -> Vec<u16> {
         path_to_wstr(&translate_path(&wstr_to_path(path), root))
     }
 });
