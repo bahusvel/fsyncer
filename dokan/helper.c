@@ -9,16 +9,11 @@ WORD CONST_DOKAN_VERSION = DOKAN_VERSION;
 
 BOOL __stdcall AddSeSecurityNamePrivilege() {
 	HANDLE token = 0;
-	DbgPrint(L"## Attempting to add SE_SECURITY_NAME privilege to process "
-			 L"token ##\n");
 	DWORD err;
 	LUID luid;
 	if (!LookupPrivilegeValue(0, SE_SECURITY_NAME, &luid)) {
 		err = GetLastError();
 		if (err != ERROR_SUCCESS) {
-			DbgPrint(
-				L"  failed: Unable to lookup privilege value. error = %u\n",
-				err);
 			return FALSE;
 		}
 	}
@@ -35,8 +30,6 @@ BOOL __stdcall AddSeSecurityNamePrivilege() {
 						  TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
 		err = GetLastError();
 		if (err != ERROR_SUCCESS) {
-			DbgPrint(L"  failed: Unable obtain process token. error = %u\n",
-					 err);
 			return FALSE;
 		}
 	}
@@ -47,7 +40,6 @@ BOOL __stdcall AddSeSecurityNamePrivilege() {
 						  &oldPriv, &retSize);
 	err = GetLastError();
 	if (err != ERROR_SUCCESS) {
-		DbgPrint(L"  failed: Unable to adjust token privileges: %u\n", err);
 		CloseHandle(token);
 		return FALSE;
 	}
@@ -60,8 +52,6 @@ BOOL __stdcall AddSeSecurityNamePrivilege() {
 			break;
 		}
 	}
-	DbgPrint(privAlreadyPresent ? L"  success: privilege already present\n"
-								: L"  success: privilege added\n");
 	if (token)
 		CloseHandle(token);
 	return TRUE;

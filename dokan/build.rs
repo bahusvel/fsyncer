@@ -10,8 +10,10 @@ fn main() {
 
     let mut include = DOKAN_PATH.to_string();
     include.push_str("include");
-    
+
     cc::Build::new()
+        .define("_UNICODE", None)
+        .define("UNICODE", None)
         .include(include)
         .warnings(false)
         .flag("-Wall")

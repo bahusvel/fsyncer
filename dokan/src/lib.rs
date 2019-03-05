@@ -198,6 +198,7 @@ unsafe extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
     match ctrl_type {
         CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
         | CTRL_SHUTDOWN_EVENT => {
+            println!("Handler fired");
             SetConsoleCtrlHandler(Some(handler), 0);
             DokanRemoveMountPoint(MOUNT_POINT);
             1

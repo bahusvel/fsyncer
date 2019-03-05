@@ -210,20 +210,44 @@ fn check_mount(path: &str) -> Result<bool, io::Error> {
 }
 
 fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Error> {
-    let mount_path = Path::new(matches.value_of("mount-path").unwrap()).canonicalize()?;
+    let mount_path = canonize_path(Path::new(matches.value_of("mount-path").unwrap()))?;
 
-    if matches.is_present("backing-store")
-        && !Path::new(matches.value_of("backing-store").unwrap()).exists()
+    debug!(mount_path);
+
+    let mut mount_exists = mount_path.exists();
+
+    #[cfg(target_os = "windows")]
     {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Backing path does not exist",
-        ));
+        if !mount_exists {
+            // On windows mount_path may exists, but may be mounted to previously crashed dokan file system. So another check is neccessary to figure out if it exists.
+            if let Some(parent) = mount_path.parent() {
+                mount_exists = parent
+                    .read_dir()?
+                    .filter(|e| {
+                        if let Ok(entry) = e {
+                            entry.path() == mount_path
+                        } else {
+                            false
+                        }
+                    })
+                    .next()
+                    .is_some();
+            }
+        }
     }
 
     let backing_store = if matches.is_present("backing-store") {
+        // Backing store specified
+        let path = Path::new(matches.value_of("backing-store").unwrap());
+        if !path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Backing path does not exist",
+            ));
+        }
         PathBuf::from(matches.value_of("backing-store").unwrap()).canonicalize()?
     } else {
+        // Implictly inferring backing store
         mount_path.with_file_name(format!(
             ".fsyncer-{}",
             mount_path
@@ -234,8 +258,9 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
         ))
     };
 
-    if !backing_store.exists() && mount_path.exists() {
-        if check_mount(mount_path.to_str().unwrap())? {
+    if !backing_store.exists() && mount_exists {
+        // TODO figure out how to move mountpoints on windows
+        if !cfg!(target_os = "windows") && check_mount(mount_path.to_str().unwrap())? {
             fs::create_dir_all(&mount_path)?;
             let res = Command::new("mount")
                 .arg("--move")
@@ -254,9 +279,9 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
         }
     }
 
-    if backing_store.exists() && !mount_path.exists() {
+    if backing_store.exists() && !mount_exists {
         fs::create_dir_all(&mount_path)?;
-    } else if !backing_store.exists() && !mount_path.exists() {
+    } else if !backing_store.exists() && !mount_exists {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "Mount path does not exist",
@@ -385,7 +410,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         let mut options = DOKAN_OPTIONS::zero();
         let wstr_mount_path = path_to_wstr(&mount_path);
         options.MountPoint = wstr_mount_path.as_ptr();
-        options.Options |= DOKAN_OPTION_ALT_STREAM;
+        //debug!(wstr_mount_path);
+        options.Options |= DOKAN_OPTION_ALT_STREAM | DOKAN_OPTION_DEBUG | DOKAN_OPTION_STDERR;
         let res = unsafe { dokan_main(options, DOKAN_OPS_PTR) };
         match res {
             Ok(DokanResult::Success) => {

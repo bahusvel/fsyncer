@@ -149,11 +149,12 @@ impl From<TRUSTEE_W> for Trustee {
         unsafe fn psid_to_string(sid: PSID) -> OsString {
             let mut p: *mut u16 = ptr::null_mut();
             if ConvertSidToStringSidW(sid, &mut p as *mut _) == 0 {
-                panic!("Failed to get strign SID");
+                panic!("Failed to get string SID");
             }
-            let os_sid = wstr_to_os(p);
-            LocalFree(*p as *mut _);
-            os_sid
+            let str_sid = wstr_to_os(p);
+            LocalFree(p as *mut _);
+
+            str_sid
         }
 
         let ty = TrusteeType::from(t.TrusteeType);
@@ -164,7 +165,6 @@ impl From<TRUSTEE_W> for Trustee {
                 TRUSTEE_IS_OBJECTS_AND_SID => {
                     use winapi::um::accctrl::OBJECTS_AND_SID;
                     let t = t.ptstrName as *const OBJECTS_AND_SID;
-
                     TrusteeForm::ObjectsAndSid {
                         object_type: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT) {
                             Some(WinGUID::from((*t).ObjectTypeGuid))
@@ -223,7 +223,7 @@ pub struct ACE {
 }
 
 #[cfg(target_os = "windows")]
-pub unsafe fn acl_entries(descriptor: PACL) -> Result<Vec<ACE>, Error> {
+pub unsafe fn acl_entries(acl: PACL) -> Result<Vec<ACE>, Error> {
     use winapi::shared::winerror::ERROR_SUCCESS;
     use winapi::um::accctrl::EXPLICIT_ACCESS_W;
     use winapi::um::aclapi::GetExplicitEntriesFromAclW;
@@ -231,15 +231,17 @@ pub unsafe fn acl_entries(descriptor: PACL) -> Result<Vec<ACE>, Error> {
     let mut count: u32 = 0;
     let mut entries: *mut EXPLICIT_ACCESS_W = ptr::null_mut();
 
-    if GetExplicitEntriesFromAclW(descriptor, &mut count as *mut _, &mut entries as *mut _)
+    assert!(!acl.is_null());
+
+    if GetExplicitEntriesFromAclW(acl, &mut count as *mut _, &mut entries as *mut _)
         != ERROR_SUCCESS
     {
         return Err(Error::new(ErrorKind::Other, "Failed to get acl entries"));
     }
 
-    let mut rlist = Vec::new();
-
     assert!(!entries.is_null());
+
+    let mut rlist = Vec::new();
 
     for i in 0..count {
         let entry = entries.offset(i as isize);

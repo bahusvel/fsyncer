@@ -196,7 +196,6 @@ MirrorFindFiles(LPCWSTR FileName,
 	FindClose(hFind);
 
 	if (error != ERROR_NO_MORE_FILES) {
-
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -322,7 +321,7 @@ NTSTATUS DOKAN_CALLBACK MirrorGetVolumeInformation(
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
 	WCHAR filePath[DOKAN_MAX_PATH];
-	win_translate_path(filePath, DOKAN_MAX_PATH, "/");
+	win_translate_path(filePath, DOKAN_MAX_PATH, L"\\");
 
 	WCHAR volumeRoot[4];
 	DWORD fsFlags = 0;
@@ -350,7 +349,6 @@ NTSTATUS DOKAN_CALLBACK MirrorGetVolumeInformation(
 		if (FileSystemFlags)
 			*FileSystemFlags &= fsFlags;
 	} else {
-
 		// File system name could be anything up to 10 characters.
 		// But Windows check few feature availability based on file system name.
 		// For this, it is recommended to set NTFS or FAT here.

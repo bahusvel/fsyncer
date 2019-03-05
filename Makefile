@@ -115,4 +115,4 @@ mirror_windows:
 	cmd.exe /C 'call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\Tools\VsDevCmd.bat" -arch=amd64 && cl.exe /I "C:\Program Files\Dokan\Dokan Library-1.2.1\include" /D _UNICODE /D UNICODE doc/mirror.c /link "C:\Program Files\Dokan\Dokan Library-1.2.1\lib\dokan1.lib" user32.lib advapi32.lib'
 
 test_mirror:
-	runas /user:Administrator "mirror.exe /s /r C:\Users\denis\Documents\Developing\fsyncer\.fsyncer-test_src /l  C:\Users\denis\Documents\Developing\fsyncer\test_src"
+	runas /user:Administrator "mirror.exe /o /s /r C:\Users\denis\Documents\Developing\fsyncer\.fsyncer-test_src /l  C:\Users\denis\Documents\Developing\fsyncer\test_src"

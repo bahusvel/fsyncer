@@ -164,6 +164,9 @@ metablock!(cfg(target_family = "unix") {
     pub fn trans_cstr(path: &CStr, root: &Path) -> CString {
         translate_path(path.to_path()).into_cstring()
     }
+    pub fn canonize_path(path: &Path) -> Result<PathBuf, io::Error> {
+        path.canonicalize()
+    }
 });
 
 metablock!(cfg(target_os = "windows") {
@@ -180,9 +183,24 @@ metablock!(cfg(target_os = "windows") {
     }
     pub fn path_to_wstr(path: &Path) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt;
-        path.as_os_str().encode_wide().collect()
+        let mut buf: Vec<u16> = path.as_os_str().encode_wide().collect();
+        buf.push(0);
+        buf
     }
     pub unsafe fn trans_wstr(path: LPCWSTR, root: &Path) -> Vec<u16> {
         path_to_wstr(&translate_path(&wstr_to_path(path), root))
+    }
+    pub fn canonize_path(path: &Path) -> Result<PathBuf, io::Error> {
+        // Rust implementation of Path::canonicalize() on windows is retarded, hence this
+        use winapi::um::fileapi::GetFullPathNameW;
+        use std::ptr;
+        const MAX_PATH: usize = 32767; // Supports the longest path
+        let wpath = path_to_wstr(path);
+        let mut buf: [u16; MAX_PATH] = [0; MAX_PATH];
+        if unsafe {GetFullPathNameW(wpath.as_ptr(), buf.len() as u32,  buf.as_mut_ptr(), ptr::null_mut())} == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe {wstr_to_path(buf[..].as_mut_ptr())})
+       
     }
 });

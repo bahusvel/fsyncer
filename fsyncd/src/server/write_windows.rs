@@ -3,12 +3,12 @@ use libc::uint32_t;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
-use std::io::ErrorKind;
+use std::io::{Error, ErrorKind};
 use std::ptr;
 use std::slice;
 use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::winnt::{FILE_SHARE_READ, PSID, SECURITY_DESCRIPTOR};
+use winapi::um::winnt::{FILE_SHARE_READ, PACL, PSID, SECURITY_DESCRIPTOR};
 
 unsafe fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
     use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
@@ -33,6 +33,12 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
+    use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
+
+    debug!(
+        wstr_to_path(path),
+        context, access, attributes, shared, disposition, options, info
+    );
 
     let rpath = wstr_to_path(path);
     let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
@@ -64,6 +70,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         if !flagset!(options, FILE_NON_DIRECTORY_FILE) {
             (*info).IsDirectory = 1;
             shared |= FILE_SHARE_READ;
+            user_attributes |= FILE_FLAG_BACKUP_SEMANTICS;
         } else {
             return STATUS_FILE_IS_A_DIRECTORY;
         }
@@ -72,17 +79,49 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     let mut call = None;
     let status;
     let desc = sec_desc as *const SECURITY_DESCRIPTOR;
-    let security = FileSecurity::Windows {
-        owner: {
-            let (_, acc_name) = lookup_account((*desc).Owner).expect("Unknown account");
-            Some(acc_name)
-        },
-        group: {
-            let (_, acc_name) = lookup_account((*desc).Group).expect("Unknown account");
-            Some(acc_name)
-        },
-        dacl: Some(file_security::acl_entries((*desc).Dacl).expect("Failed to parse DACL entries")),
-        sacl: Some(file_security::acl_entries((*desc).Sacl).expect("Failed to parse SACL entries")),
+
+    let security = if desc.is_null() {
+        // TODO if descriptor is NULL default descriptor is assigned, I probably need to query it and send it to the other side
+        FileSecurity::Windows {
+            owner: None,
+            group: None,
+            dacl: None,
+            sacl: None,
+        }
+    } else {
+        FileSecurity::Windows {
+            // This is invalid, I tthink I need to use GetSecurityDescriptorXXXX
+            owner: {
+                if (*desc).Owner.is_null() {
+                    None
+                } else {
+                    let (_, acc_name) = lookup_account((*desc).Owner).expect("Unknown account");
+                    Some(acc_name)
+                }
+            },
+            group: {
+                if (*desc).Group.is_null() {
+                    None
+                } else {
+                    let (_, acc_name) = lookup_account((*desc).Group).expect("Unknown account");
+                    Some(acc_name)
+                }
+            },
+            dacl: if (*desc).Dacl.is_null() {
+                None
+            } else {
+                Some(
+                    file_security::acl_entries((*desc).Dacl).expect("Failed to parse DACL entries"),
+                )
+            },
+            sacl: if (*desc).Sacl.is_null() {
+                None
+            } else {
+                Some(
+                    file_security::acl_entries((*desc).Sacl).expect("Failed to parse SACL entries"),
+                )
+            },
+        }
     };
 
     if !exists
@@ -98,9 +137,10 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         if let Some(r) = pre_op(call.as_ref().unwrap()) {
             return r;
         }
+        println!("Trying to create folder");
         status = as_user(user_handle, || {
             OpCreateDirectory(
-                path,
+                real_path.as_ptr(),
                 sec_desc,
                 user_access,
                 user_attributes,
@@ -162,8 +202,15 @@ pub unsafe extern "stdcall" fn MirrorCleanup(path: LPCWSTR, info: PDOKAN_FILE_IN
         CloseHandle(handle);
         (*info).Context = 0;
     }
+
+    if (*info).DeleteOnClose == 0 {
+        // Don't need to delete the file
+        return;
+    }
+
     let call;
     let status;
+
     if (*info).IsDirectory != 0 {
         call = VFSCall::rmdir(rmdir {
             path: Cow::Owned(wstr_to_path(path)),
@@ -358,11 +405,9 @@ pub unsafe extern "stdcall" fn MirrorSetAllocationSize(
     post_op(&call, status)
 }
 
-unsafe fn lookup_account(psid: PSID) -> Option<(String, String)> {
+unsafe fn lookup_account(psid: PSID) -> Result<(String, String), Error> {
     // TODO keep cache of lookups
     use std::ffi::CStr;
-    use winapi::shared::winerror::ERROR_NONE_MAPPED;
-    use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winbase::LookupAccountSidA;
     use winapi::um::winnt::SID_NAME_USE;
 
@@ -381,12 +426,7 @@ unsafe fn lookup_account(psid: PSID) -> Option<(String, String)> {
         &mut acc_type as *mut _,
     ) == 0
     {
-        let err = GetLastError();
-        println!("Accont loookup error occured");
-        match err {
-            ERROR_NONE_MAPPED => return None,
-            _ => return None,
-        }
+        return Err(Error::last_os_error());
     }
     let domain = String::from(
         CStr::from_bytes_with_nul(&domain_buf[..domain_len as usize])
@@ -400,7 +440,46 @@ unsafe fn lookup_account(psid: PSID) -> Option<(String, String)> {
             .to_str()
             .expect("Account name be represented in UTF-8"),
     );
-    return Some((domain, name));
+    return Ok((domain, name));
+}
+
+unsafe fn acl_from_descriptor(
+    descriptor: PSECURITY_DESCRIPTOR,
+    dacl: bool,
+) -> Result<(PACL, bool), Error> {
+    use winapi::um::securitybaseapi::{GetSecurityDescriptorDacl, GetSecurityDescriptorSacl};
+    let mut ppacl = ptr::null_mut();
+    let mut present = 0;
+    let mut defaulted = 0;
+
+    if dacl {
+        if GetSecurityDescriptorDacl(
+            descriptor,
+            &mut present as *mut _,
+            &mut ppacl as *mut _,
+            &mut defaulted as *mut _,
+        ) == 0
+        {
+            return Err(Error::last_os_error());
+        }
+    } else {
+        if GetSecurityDescriptorSacl(
+            descriptor,
+            &mut present as *mut _,
+            &mut ppacl as *mut _,
+            &mut defaulted as *mut _,
+        ) == 0
+        {
+            return Err(Error::last_os_error());
+        }
+    }
+
+    if present == 0 {
+        debug!(dacl);
+        ppacl = ptr::null_mut();
+    }
+
+    Ok((ppacl, defaulted != 0))
 }
 
 #[no_mangle]
@@ -421,12 +500,24 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
 
     let file_sec = FileSecurity::Windows {
         dacl: if flagset!(*security, DACL_SECURITY_INFORMATION) {
-            Some(file_security::acl_entries((*desc).Dacl).expect("Failed to parse DACL entries"))
+            let (dacl, _) =
+                acl_from_descriptor(desc as *mut _, true).expect("Failed to parse DACL entries");
+            if dacl.is_null() {
+                None
+            } else {
+                Some(file_security::acl_entries(dacl).expect("Failed to parse DACL entries"))
+            }
         } else {
             None
         },
         sacl: if flagset!(*security, SACL_SECURITY_INFORMATION) {
-            Some(file_security::acl_entries((*desc).Sacl).expect("Failed to parse SACL entries"))
+            let (sacl, _) =
+                acl_from_descriptor(desc as *mut _, false).expect("Failed to parse SACL entries");
+            if sacl.is_null() {
+                None
+            } else {
+                Some(file_security::acl_entries(sacl).expect("Failed to parse SACL entries"))
+            }
         } else {
             None
         },
