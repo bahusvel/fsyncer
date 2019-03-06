@@ -183,6 +183,3 @@ path_syscall!(setxattr {
 });
 
 path_syscall!(removexattr { name: Cow<'a, CStr> });
-
-// Windows Specific
-path_syscall!(allocation_size { size: int64_t });

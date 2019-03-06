@@ -50,8 +50,7 @@ void win_translate_path(PWCHAR filePath, ULONG numberOfElements,
 
 void DOKAN_CALLBACK MirrorCloseFile(LPCWSTR FileName,
 									PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
+	UNREFERENCED_PARAMETER(FileName);
 
 	if (DokanFileInfo->Context) {
 		CloseHandle((HANDLE)DokanFileInfo->Context);
@@ -205,12 +204,10 @@ MirrorFindFiles(LPCWSTR FileName,
 NTSTATUS DOKAN_CALLBACK MirrorLockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 									   LONGLONG Length,
 									   PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
+	UNREFERENCED_PARAMETER(FileName);
 	HANDLE handle;
 	LARGE_INTEGER offset;
 	LARGE_INTEGER length;
-
-	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	handle = (HANDLE)DokanFileInfo->Context;
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
@@ -233,12 +230,10 @@ NTSTATUS DOKAN_CALLBACK MirrorLockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 NTSTATUS DOKAN_CALLBACK MirrorUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 										 LONGLONG Length,
 										 PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
+	UNREFERENCED_PARAMETER(FileName);
 	HANDLE handle;
 	LARGE_INTEGER length;
 	LARGE_INTEGER offset;
-
-	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
 	handle = (HANDLE)DokanFileInfo->Context;
 	if (!handle || handle == INVALID_HANDLE_VALUE) {

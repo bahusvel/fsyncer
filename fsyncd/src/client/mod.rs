@@ -1,6 +1,13 @@
-mod dispatch;
+metablock!(cfg(target_family = "unix") {
+mod dispatch_unix;
+pub use self::dispatch_unix::dispatch;
+});
 
-pub use self::dispatch::dispatch;
+metablock!(cfg(target_os = "windows") {
+mod dispatch_windows;
+pub use self::dispatch_windows::dispatch;
+});
+
 use bincode::deserialize;
 use bincode::{serialize_into, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};

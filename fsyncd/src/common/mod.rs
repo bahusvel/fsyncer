@@ -148,7 +148,6 @@ pub enum VFSCall<'a> {
     utimens(utimens<'a>),
     fsync(fsync<'a>),
     truncating_write { write: write<'a>, length: int64_t },
-    allocation_size(allocation_size<'a>),
     security(security<'a>), //chown on linux
 }
 

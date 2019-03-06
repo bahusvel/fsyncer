@@ -4,8 +4,8 @@ use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
 use std::io::{Error, ErrorKind};
-use std::ptr;
 use std::slice;
+use std::{mem, ptr};
 use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::winnt::{FILE_SHARE_READ, PACL, PSID, SECURITY_DESCRIPTOR};
@@ -66,7 +66,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         &mut user_disposition as *mut _,
     );
 
-    if exists && attr.unwrap().is_dir() {
+    if exists && attr.as_ref().unwrap().is_dir() {
         if !flagset!(options, FILE_NON_DIRECTORY_FILE) {
             (*info).IsDirectory = 1;
             shared |= FILE_SHARE_READ;
@@ -150,6 +150,21 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
             )
         });
     } else {
+        use std::os::windows::fs::MetadataExt;
+        use winapi::shared::ntstatus::STATUS_CANNOT_DELETE;
+        use winapi::um::winbase::FILE_FLAG_DELETE_ON_CLOSE;
+        use winapi::um::winnt::FILE_ATTRIBUTE_READONLY;
+        if (exists
+            && flagset!(
+                attr.as_ref().unwrap().file_attributes(),
+                FILE_ATTRIBUTE_READONLY
+            )
+            || flagset!(user_attributes, FILE_ATTRIBUTE_READONLY))
+            && flagset!(user_attributes, FILE_FLAG_DELETE_ON_CLOSE)
+        {
+            return STATUS_CANNOT_DELETE;
+        }
+
         if exists
             && (flagset!(disposition, TRUNCATE_EXISTING) || flagset!(disposition, CREATE_ALWAYS))
         {
@@ -170,7 +185,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 
         if call.is_some() {
             if let Some(r) = pre_op(call.as_ref().unwrap()) {
-                return r;
+                return DokanNtStatusFromWin32(r as u32);
             }
         }
 
@@ -188,9 +203,21 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     }
 
     if call.is_some() {
-        return post_op(call.as_ref().unwrap(), status);
+        let mut s = DokanNtStatusFromWin32(post_op(call.as_ref().unwrap(), status as i32) as u32);
+        if s == STATUS_SUCCESS
+            && (*info).Context as *mut _ != INVALID_HANDLE_VALUE
+            && flagset!(user_disposition, OPEN_ALWAYS)
+            && exists
+        {
+            use winapi::shared::ntstatus::STATUS_OBJECT_NAME_COLLISION;
+            // Open succeed but we need to inform the driver
+            // that the dir open and not created by returning
+            // STATUS_OBJECT_NAME_COLLISION
+            s = STATUS_OBJECT_NAME_COLLISION;
+        }
+        return s;
     } else {
-        return status;
+        return DokanNtStatusFromWin32(status);
     }
 }
 
@@ -198,7 +225,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 pub unsafe extern "stdcall" fn MirrorCleanup(path: LPCWSTR, info: PDOKAN_FILE_INFO) {
     let real_path = trans_ppath!(path);
     let handle = (*info).Context as HANDLE;
-    if !handle.is_null() {
+    if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
         CloseHandle(handle);
         (*info).Context = 0;
     }
@@ -228,7 +255,7 @@ pub unsafe extern "stdcall" fn MirrorCleanup(path: LPCWSTR, info: PDOKAN_FILE_IN
         }
         status = OpDeleteFile(real_path.as_ptr());
     }
-    post_op(&call, status);
+    post_op(&call, status as i32);
 }
 
 #[no_mangle]
@@ -242,7 +269,6 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
 ) -> NTSTATUS {
     let rpath = wstr_to_path(path);
     let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
-    let real_path = path_to_wstr(&rrpath);
 
     let stat = symlink_metadata(rrpath);
     if stat.is_err() {
@@ -282,17 +308,17 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
         offset,
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpWriteFile(
-        real_path.as_ptr(),
         buffer,
         len,
         bytes_written,
         offset,
         (*info).Context as HANDLE,
     );
-    post_op(&call, status)
+
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -307,10 +333,10 @@ pub unsafe extern "stdcall" fn MirrorSetFileAttributes(
         mode: attributes,
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpSetFileAttributes(real_path.as_ptr(), attributes);
-    post_op(&call, status)
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -321,7 +347,6 @@ pub unsafe extern "stdcall" fn MirrorSetFileTime(
     write: *const FILETIME,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    let real_path = trans_ppath!(path);
     let call = VFSCall::utimens(utimens {
         path: Cow::Owned(wstr_to_path(path)),
         timespec: [
@@ -331,16 +356,10 @@ pub unsafe extern "stdcall" fn MirrorSetFileTime(
         ],
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpSetFileTime(
-        real_path.as_ptr(),
-        creation,
-        access,
-        write,
-        (*info).Context as HANDLE,
-    );
-    post_op(&call, status)
+    let status = OpSetFileTime(creation, access, write, (*info).Context as HANDLE);
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -350,7 +369,6 @@ pub unsafe extern "stdcall" fn MirrorMoveFile(
     replace: BOOL,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    let real_path = trans_ppath!(path);
     let real_new_name = trans_ppath!(new_name);
     let call = VFSCall::rename(rename {
         from: Cow::Owned(wstr_to_path(path)),
@@ -358,15 +376,10 @@ pub unsafe extern "stdcall" fn MirrorMoveFile(
         flags: replace as uint32_t,
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpMoveFile(
-        real_path.as_ptr(),
-        real_new_name.as_ptr(),
-        replace,
-        (*info).Context as HANDLE,
-    );
-    post_op(&call, status)
+    let status = OpMoveFile(real_new_name.as_ptr(), replace, (*info).Context as HANDLE);
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -375,16 +388,15 @@ pub unsafe extern "stdcall" fn MirrorSetEndOfFile(
     offset: LONGLONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    let real_path = trans_ppath!(path);
     let call = VFSCall::truncate(truncate {
         path: Cow::Owned(wstr_to_path(path)),
         size: offset,
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpSetEndOfFile(real_path.as_ptr(), offset, (*info).Context as HANDLE);
-    post_op(&call, status)
+    let status = OpSetEndOfFile(offset, (*info).Context as HANDLE);
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -393,16 +405,37 @@ pub unsafe extern "stdcall" fn MirrorSetAllocationSize(
     size: LONGLONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    let real_path = trans_ppath!(path);
-    let call = VFSCall::allocation_size(allocation_size {
+    /*
+        https://docs.microsoft.com/en-gb/windows/desktop/api/winbase/ns-winbase-_file_allocation_info
+
+        The end-of-file (EOF) position for a file must always be less than or equal to the file allocation size. If the allocation size is set to a value that is less than EOF, the EOF position is automatically adjusted to match the file allocation size.
+
+        This is the behaviour dokan is trying to emulate. But doesn't actually adjust file allocation size to be larger, via SetInformationByHandle call. I'm not entirely sure if this is correct behaviour. From the replication perspective if AllocationSize can be queried it could be different. Althought I think it shouldn't be.
+
+    */
+
+    use winapi::um::fileapi::GetFileSizeEx;
+    use winapi::um::winnt::LARGE_INTEGER;
+
+    let mut file_size: LARGE_INTEGER = mem::zeroed();
+
+    if GetFileSizeEx((*info).Context as HANDLE, &mut file_size) == 0 {
+        return DokanNtStatusFromWin32(GetLastError());
+    }
+
+    if size >= *file_size.QuadPart() {
+        return STATUS_SUCCESS;
+    }
+
+    let call = VFSCall::truncate(truncate {
         path: Cow::Owned(wstr_to_path(path)),
         size,
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpSetAllocationSize(real_path.as_ptr(), size, (*info).Context as HANDLE);
-    post_op(&call, status)
+    let status = OpSetEndOfFile(size, (*info).Context as HANDLE);
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 unsafe fn lookup_account(psid: PSID) -> Result<(String, String), Error> {
@@ -490,7 +523,6 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     _length: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    let real_path = trans_ppath!(path);
     use winapi::um::winnt::{
         DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
         SACL_SECURITY_INFORMATION,
@@ -541,16 +573,11 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     });
 
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
 
-    let status = OpSetFileSecurity(
-        real_path.as_ptr(),
-        security,
-        descriptor,
-        (*info).Context as HANDLE,
-    );
-    post_op(&call, status)
+    let status = OpSetFileSecurity(security, descriptor, (*info).Context as HANDLE);
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -558,14 +585,13 @@ pub unsafe extern "stdcall" fn MirrorFlushFileBuffers(
     path: LPCWSTR,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    let real_path = trans_ppath!(path);
     let call = VFSCall::fsync(fsync {
         path: Cow::Owned(wstr_to_path(path)),
         isdatasync: 0,
     });
     if let Some(r) = pre_op(&call) {
-        return r;
+        return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpFlushFileBuffers(real_path.as_ptr(), (*info).Context as HANDLE);
-    post_op(&call, status)
+    let status = OpFlushFileBuffers((*info).Context as HANDLE);
+    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }

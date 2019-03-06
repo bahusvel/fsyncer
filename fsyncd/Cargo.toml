@@ -9,7 +9,7 @@ profile = ["cpuprofiler", "nix" ]
 
 [target.'cfg(windows)'.dependencies]
 dokan = { path = "../dokan" }
-winapi = { version = "0.3.6", features = ["securitybaseapi", "aclapi", "sddl"] }
+winapi = { version = "0.3.6", features = ["securitybaseapi", "aclapi", "sddl", "winuser"] }
 
 [dependencies]
 net2 = "0.2"
