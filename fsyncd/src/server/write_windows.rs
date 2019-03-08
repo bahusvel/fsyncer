@@ -25,27 +25,23 @@ unsafe fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
 pub unsafe extern "stdcall" fn MirrorCreateFile(
     path: LPCWSTR,
     context: PDOKAN_IO_SECURITY_CONTEXT,
-    access: ACCESS_MASK,
-    attributes: ULONG,
+    dokan_access: ACCESS_MASK,
+    dokan_attributes: ULONG,
     mut shared: ULONG,
-    disposition: ULONG,
-    options: ULONG,
+    dokan_disposition: ULONG,
+    dokan_options: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
     use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
-
-    debug!(
-        wstr_to_path(path),
-        context, access, attributes, shared, disposition, options, info
-    );
 
     let rpath = wstr_to_path(path);
     let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
     let real_path = path_to_wstr(&rrpath);
 
     let attr = symlink_metadata(rrpath);
-    let exists = !(attr.is_err() && attr.as_ref().unwrap_err().kind() == ErrorKind::NotFound);
+    let exists = !(attr.is_err()
+        && attr.as_ref().unwrap_err().kind() == ErrorKind::NotFound);
     // File exists and we need to open it
 
     let mut user_access = 0 as ACCESS_MASK;
@@ -57,17 +53,19 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     assert!(user_handle != INVALID_HANDLE_VALUE);
 
     DokanMapKernelToUserCreateFileFlags(
-        access,
-        attributes,
-        options,
-        disposition,
+        dokan_access,
+        dokan_attributes,
+        dokan_options,
+        dokan_disposition,
         &mut user_access as *mut _,
         &mut user_attributes as *mut _,
         &mut user_disposition as *mut _,
     );
 
+    debug!("Create file", wstr_to_path(path), user_disposition);
+
     if exists && attr.as_ref().unwrap().is_dir() {
-        if !flagset!(options, FILE_NON_DIRECTORY_FILE) {
+        if !flagset!(dokan_options, FILE_NON_DIRECTORY_FILE) {
             (*info).IsDirectory = 1;
             shared |= FILE_SHARE_READ;
             user_attributes |= FILE_FLAG_BACKUP_SEMANTICS;
@@ -81,7 +79,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     let desc = sec_desc as *const SECURITY_DESCRIPTOR;
 
     let security = if desc.is_null() {
-        // TODO if descriptor is NULL default descriptor is assigned, I probably need to query it and send it to the other side
+        // TODO if descriptor is NULL default descriptor is assigned, I probably
+        // need to query it and send it to the other side
         FileSecurity::Windows {
             owner: None,
             group: None,
@@ -95,7 +94,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
                 if (*desc).Owner.is_null() {
                     None
                 } else {
-                    let (_, acc_name) = lookup_account((*desc).Owner).expect("Unknown account");
+                    let (_, acc_name) =
+                        lookup_account((*desc).Owner).expect("Unknown account");
                     Some(acc_name)
                 }
             },
@@ -103,7 +103,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
                 if (*desc).Group.is_null() {
                     None
                 } else {
-                    let (_, acc_name) = lookup_account((*desc).Group).expect("Unknown account");
+                    let (_, acc_name) =
+                        lookup_account((*desc).Group).expect("Unknown account");
                     Some(acc_name)
                 }
             },
@@ -111,21 +112,23 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
                 None
             } else {
                 Some(
-                    file_security::acl_entries((*desc).Dacl).expect("Failed to parse DACL entries"),
+                    file_security::acl_entries((*desc).Dacl)
+                        .expect("Failed to parse DACL entries"),
                 )
             },
             sacl: if (*desc).Sacl.is_null() {
                 None
             } else {
                 Some(
-                    file_security::acl_entries((*desc).Sacl).expect("Failed to parse SACL entries"),
+                    file_security::acl_entries((*desc).Sacl)
+                        .expect("Failed to parse SACL entries"),
                 )
             },
         }
     };
 
     if !exists
-        && (flagset!(disposition, CREATE_ALWAYS) || flagset!(disposition, CREATE_NEW))
+        && (user_disposition == CREATE_ALWAYS || user_disposition == CREATE_NEW)
         && (*info).IsDirectory != 0
     {
         // Path does not exist, need to create it, and it is a directory
@@ -137,7 +140,6 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         if let Some(r) = pre_op(call.as_ref().unwrap()) {
             return r;
         }
-        println!("Trying to create folder");
         status = as_user(user_handle, || {
             OpCreateDirectory(
                 real_path.as_ptr(),
@@ -165,15 +167,21 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
             return STATUS_CANNOT_DELETE;
         }
 
+        debug!(exists);
+
         if exists
-            && (flagset!(disposition, TRUNCATE_EXISTING) || flagset!(disposition, CREATE_ALWAYS))
+            && (user_disposition == TRUNCATE_EXISTING
+                || user_disposition == CREATE_ALWAYS)
         {
             call = Some(VFSCall::truncate(truncate {
                 path: Cow::Borrowed(&rpath),
                 size: 0,
             }));
         } else if !exists
-            && (flagset!(disposition, CREATE_ALWAYS) || flagset!(disposition, CREATE_NEW))
+            && (user_disposition == CREATE_ALWAYS
+                || user_disposition == CREATE_NEW
+                || user_disposition == OPEN_ALWAYS)
+        // Should also check if it can create (i.e. GENERIC_WRITE)
         {
             call = Some(VFSCall::create(create {
                 path: Cow::Borrowed(&rpath),
@@ -203,10 +211,13 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     }
 
     if call.is_some() {
-        let mut s = DokanNtStatusFromWin32(post_op(call.as_ref().unwrap(), status as i32) as u32);
+        let mut s = DokanNtStatusFromWin32(post_op(
+            call.as_ref().unwrap(),
+            status as i32,
+        ) as u32);
         if s == STATUS_SUCCESS
             && (*info).Context as *mut _ != INVALID_HANDLE_VALUE
-            && flagset!(user_disposition, OPEN_ALWAYS)
+            && user_disposition == OPEN_ALWAYS
             && exists
         {
             use winapi::shared::ntstatus::STATUS_OBJECT_NAME_COLLISION;
@@ -222,7 +233,10 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 }
 
 #[no_mangle]
-pub unsafe extern "stdcall" fn MirrorCleanup(path: LPCWSTR, info: PDOKAN_FILE_INFO) {
+pub unsafe extern "stdcall" fn MirrorCleanup(
+    path: LPCWSTR,
+    info: PDOKAN_FILE_INFO,
+) {
     let real_path = trans_ppath!(path);
     let handle = (*info).Context as HANDLE;
     if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
@@ -304,7 +318,10 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
 
     let call = VFSCall::write(write {
         path: Cow::Owned(rpath),
-        buf: Cow::Borrowed(slice::from_raw_parts(buffer as *const u8, len as usize)),
+        buf: Cow::Borrowed(slice::from_raw_parts(
+            buffer as *const u8,
+            len as usize,
+        )),
         offset,
     });
     if let Some(r) = pre_op(&call) {
@@ -358,7 +375,8 @@ pub unsafe extern "stdcall" fn MirrorSetFileTime(
     if let Some(r) = pre_op(&call) {
         return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpSetFileTime(creation, access, write, (*info).Context as HANDLE);
+    let status =
+        OpSetFileTime(creation, access, write, (*info).Context as HANDLE);
     DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
@@ -378,7 +396,8 @@ pub unsafe extern "stdcall" fn MirrorMoveFile(
     if let Some(r) = pre_op(&call) {
         return DokanNtStatusFromWin32(r as u32);
     }
-    let status = OpMoveFile(real_new_name.as_ptr(), replace, (*info).Context as HANDLE);
+    let status =
+        OpMoveFile(real_new_name.as_ptr(), replace, (*info).Context as HANDLE);
     DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
@@ -406,12 +425,18 @@ pub unsafe extern "stdcall" fn MirrorSetAllocationSize(
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
     /*
-        https://docs.microsoft.com/en-gb/windows/desktop/api/winbase/ns-winbase-_file_allocation_info
+    https://docs.microsoft.com/en-gb/windows/desktop/api/winbase/ns-winbase-_file_allocation_info
 
-        The end-of-file (EOF) position for a file must always be less than or equal to the file allocation size. If the allocation size is set to a value that is less than EOF, the EOF position is automatically adjusted to match the file allocation size.
+    The end-of-file (EOF) position for a file must always be less than or
+    equal to the file allocation size. If the allocation size is set to a
+    value that is less than EOF, the EOF position is automatically adjusted
+    to match the file allocation size.
 
-        This is the behaviour dokan is trying to emulate. But doesn't actually adjust file allocation size to be larger, via SetInformationByHandle call. I'm not entirely sure if this is correct behaviour. From the replication perspective if AllocationSize can be queried it could be different. Althought I think it shouldn't be.
-
+    This is the behaviour dokan is trying to emulate. But doesn't actually
+    adjust file allocation size to be larger, via SetInformationByHandle
+    call. I'm not entirely sure if this is correct behaviour. From the
+    replication perspective if AllocationSize can be queried it could be
+    different. Althought I think it shouldn't be.
     */
 
     use winapi::um::fileapi::GetFileSizeEx;
@@ -480,7 +505,9 @@ unsafe fn acl_from_descriptor(
     descriptor: PSECURITY_DESCRIPTOR,
     dacl: bool,
 ) -> Result<(PACL, bool), Error> {
-    use winapi::um::securitybaseapi::{GetSecurityDescriptorDacl, GetSecurityDescriptorSacl};
+    use winapi::um::securitybaseapi::{
+        GetSecurityDescriptorDacl, GetSecurityDescriptorSacl,
+    };
     let mut ppacl = ptr::null_mut();
     let mut present = 0;
     let mut defaulted = 0;
@@ -524,43 +551,51 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
     use winapi::um::winnt::{
-        DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-        SACL_SECURITY_INFORMATION,
+        DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
+        OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
     };
 
     let desc = descriptor as *const SECURITY_DESCRIPTOR;
 
     let file_sec = FileSecurity::Windows {
         dacl: if flagset!(*security, DACL_SECURITY_INFORMATION) {
-            let (dacl, _) =
-                acl_from_descriptor(desc as *mut _, true).expect("Failed to parse DACL entries");
+            let (dacl, _) = acl_from_descriptor(desc as *mut _, true)
+                .expect("Failed to parse DACL entries");
             if dacl.is_null() {
                 None
             } else {
-                Some(file_security::acl_entries(dacl).expect("Failed to parse DACL entries"))
+                Some(
+                    file_security::acl_entries(dacl)
+                        .expect("Failed to parse DACL entries"),
+                )
             }
         } else {
             None
         },
         sacl: if flagset!(*security, SACL_SECURITY_INFORMATION) {
-            let (sacl, _) =
-                acl_from_descriptor(desc as *mut _, false).expect("Failed to parse SACL entries");
+            let (sacl, _) = acl_from_descriptor(desc as *mut _, false)
+                .expect("Failed to parse SACL entries");
             if sacl.is_null() {
                 None
             } else {
-                Some(file_security::acl_entries(sacl).expect("Failed to parse SACL entries"))
+                Some(
+                    file_security::acl_entries(sacl)
+                        .expect("Failed to parse SACL entries"),
+                )
             }
         } else {
             None
         },
         group: if flagset!(*security, GROUP_SECURITY_INFORMATION) {
-            let (_, acc_name) = lookup_account((*desc).Group).expect("Unknown account");
+            let (_, acc_name) =
+                lookup_account((*desc).Group).expect("Unknown account");
             Some(acc_name)
         } else {
             None
         },
         owner: if flagset!(*security, OWNER_SECURITY_INFORMATION) {
-            let (_, acc_name) = lookup_account((*desc).Owner).expect("Unknown account");
+            let (_, acc_name) =
+                lookup_account((*desc).Owner).expect("Unknown account");
             Some(acc_name)
         } else {
             None
@@ -576,7 +611,8 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
         return DokanNtStatusFromWin32(r as u32);
     }
 
-    let status = OpSetFileSecurity(security, descriptor, (*info).Context as HANDLE);
+    let status =
+        OpSetFileSecurity(security, descriptor, (*info).Context as HANDLE);
     DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 

@@ -3,7 +3,11 @@ use libc::c_int;
 use std::fs::OpenOptions;
 use std::path::Path;
 
-fn with_file<F: (FnOnce(HANDLE) -> DWORD)>(path: &Path, options: &OpenOptions, f: F) -> DWORD {
+fn with_file<F: (FnOnce(HANDLE) -> DWORD)>(
+    path: &Path,
+    options: &OpenOptions,
+    f: F,
+) -> DWORD {
     use std::os::windows::io::IntoRawHandle;
     let file = options.open(path);
     if file.is_err() {
@@ -20,9 +24,10 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
     use winapi::um::fileapi::CREATE_NEW;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::winnt::{
-        DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GENERIC_WRITE, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-        SACL_SECURITY_INFORMATION, SECURITY_DESCRIPTOR,
+        DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GENERIC_WRITE, GROUP_SECURITY_INFORMATION,
+        OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+        SECURITY_DESCRIPTOR,
     };
     match call {
         VFSCall::utimens(utimens { path, timespec }) => {
@@ -51,15 +56,17 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            //let mut descriptor = mem::zeroed(); // = security.to_descriptor();
+            //let mut descriptor = mem::zeroed(); // =
+            // security.to_descriptor();
             let mut handle = INVALID_HANDLE_VALUE;
-            // Giving it loosest sharing access may not be a good idea, I may need to replicate.
+            // Giving it loosest sharing access may not be a good idea, I may
+            // need to replicate.
             let res = OpCreateFile(
                 real_path.as_ptr(),
                 ptr::null_mut(), // FIXME
                 GENERIC_WRITE,
+                *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
-                *mode,         // attributes
                 *flags as u32, // disposition
                 &mut handle as *mut _,
             );
@@ -115,15 +122,17 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            //let mut descriptor = mem::zeroed(); // = security.to_descriptor();
+            //let mut descriptor = mem::zeroed(); // =
+            // security.to_descriptor();
             let mut handle = INVALID_HANDLE_VALUE;
-            // Giving it loosest sharing access may not be a good idea, I may need to replicate.
+            // Giving it loosest sharing access may not be a good idea, I may
+            // need to replicate.
             let res = OpCreateDirectory(
                 real_path.as_ptr(),
                 ptr::null_mut(), // FIXME
                 GENERIC_WRITE,
+                *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
-                *mode,      // attributes
                 CREATE_NEW, // disposition
                 &mut handle as *mut _,
             );
@@ -158,7 +167,8 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                 panic!("Security information needs translation")
             }
 
-            //let mut descriptor = mem::zeroed(); // = security.to_descriptor();
+            //let mut descriptor = mem::zeroed(); // =
+            // security.to_descriptor();
             with_file(
                 &translate_path(path, root),
                 OpenOptions::new().write(true),
@@ -171,7 +181,12 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                 },
             ) as i32
         }
-        VFSCall::fsync(_) => ERROR_SUCCESS as i32, // Don't need to execute it, just needed for flush synchronous mode
+        VFSCall::chmod(chmod { path, mode }) => {
+            let rpath = translate_path(path, root);
+            let real_path = path_to_wstr(&rpath);
+            OpSetFileAttributes(real_path.as_ptr(), *mode as u32) as i32
+        }
+        VFSCall::fsync(_) => ERROR_SUCCESS as i32, /* Don't need to execute it, just needed for flush synchronous mode */
         _ => panic!("Windows cannot dispatch {:?}, translation required", call),
     }
 }

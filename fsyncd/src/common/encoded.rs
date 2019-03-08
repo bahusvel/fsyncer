@@ -144,7 +144,8 @@ impl Into<FILETIME> for enc_timespec {
 }
 
 path_syscall!(utimens {
-    timespec: [enc_timespec; 3] // 2 on POSIX last is 0, 3 on Windows (Created, Accessed, Written)
+    timespec: [enc_timespec; 3] /* 2 on POSIX last is 0, 3 on Windows
+                                 * (Created, Accessed, Written) */
 });
 
 path_syscall!(chmod { mode: uint32_t }); // On windows this represents attributes

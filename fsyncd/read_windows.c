@@ -74,8 +74,7 @@ NTSTATUS DOKAN_CALLBACK MirrorReadFile(LPCWSTR FileName, LPVOID Buffer,
 		handle = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
 							OPEN_EXISTING, 0, NULL);
 		if (handle == INVALID_HANDLE_VALUE) {
-			DWORD error = GetLastError();
-			return DokanNtStatusFromWin32(error);
+			return DokanNtStatusFromWin32(GetLastError());
 		}
 		opened = TRUE;
 	}
@@ -115,8 +114,7 @@ NTSTATUS DOKAN_CALLBACK MirrorGetFileInformation(
 		handle = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
 							OPEN_EXISTING, 0, NULL);
 		if (handle == INVALID_HANDLE_VALUE) {
-			DWORD error = GetLastError();
-			return DokanNtStatusFromWin32(error);
+			return DokanNtStatusFromWin32(GetLastError());
 		}
 		opened = TRUE;
 	}
@@ -164,7 +162,6 @@ MirrorFindFiles(LPCWSTR FileName,
 	HANDLE hFind;
 	WIN32_FIND_DATAW findData;
 	DWORD error;
-	int count = 0;
 
 	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 
@@ -178,17 +175,14 @@ MirrorFindFiles(LPCWSTR FileName,
 	hFind = FindFirstFile(filePath, &findData);
 
 	if (hFind == INVALID_HANDLE_VALUE) {
-		error = GetLastError();
-		return DokanNtStatusFromWin32(error);
+		return DokanNtStatusFromWin32(GetLastError());
 	}
 
 	// Root folder does not have . and .. folder - we remove them
 	BOOLEAN rootFolder = (wcscmp(FileName, L"\\") == 0);
 	do {
-		if (!rootFolder || (wcscmp(findData.cFileName, L".") != 0 &&
-							wcscmp(findData.cFileName, L"..") != 0))
+		if (!rootFolder || (wcscmp(findData.cFileName, L"..") != 0))
 			FillFindData(&findData, DokanFileInfo);
-		count++;
 	} while (FindNextFile(hFind, &findData) != 0);
 
 	error = GetLastError();
@@ -219,9 +213,7 @@ NTSTATUS DOKAN_CALLBACK MirrorLockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 
 	if (!LockFile(handle, offset.LowPart, offset.HighPart, length.LowPart,
 				  length.HighPart)) {
-		DWORD error = GetLastError();
-
-		return DokanNtStatusFromWin32(error);
+		return DokanNtStatusFromWin32(GetLastError());
 	}
 
 	return STATUS_SUCCESS;
@@ -245,9 +237,7 @@ NTSTATUS DOKAN_CALLBACK MirrorUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 
 	if (!UnlockFile(handle, offset.LowPart, offset.HighPart, length.LowPart,
 					length.HighPart)) {
-		DWORD error = GetLastError();
-
-		return DokanNtStatusFromWin32(error);
+		return DokanNtStatusFromWin32(GetLastError());
 	}
 
 	return STATUS_SUCCESS;
@@ -280,9 +270,7 @@ NTSTATUS DOKAN_CALLBACK MirrorGetFileSecurity(
 		NULL);
 
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
-
-		int error = GetLastError();
-		return DokanNtStatusFromWin32(error);
+		return DokanNtStatusFromWin32(GetLastError());
 	}
 
 	if (!GetUserObjectSecurity(handle, SecurityInformation, SecurityDescriptor,
@@ -292,7 +280,6 @@ NTSTATUS DOKAN_CALLBACK MirrorGetFileSecurity(
 			CloseHandle(handle);
 			return STATUS_BUFFER_OVERFLOW;
 		} else {
-
 			CloseHandle(handle);
 			return DokanNtStatusFromWin32(error);
 		}
@@ -369,35 +356,6 @@ NTSTATUS DOKAN_CALLBACK MirrorDokanGetDiskFreeSpace(
 }
 */
 
-/**
- * Avoid #include <winternl.h> which as conflict with FILE_INFORMATION_CLASS
- * definition.
- * This only for MirrorFindStreams. Link with ntdll.lib still required.
- *
- * Not needed if you're not using NtQueryInformationFile!
- *
- * BEGIN
- */
-#pragma warning(push)
-#pragma warning(disable : 4201)
-typedef struct _IO_STATUS_BLOCK {
-	union {
-		NTSTATUS Status;
-		PVOID Pointer;
-	} DUMMYUNIONNAME;
-
-	ULONG_PTR Information;
-} IO_STATUS_BLOCK, *PIO_STATUS_BLOCK;
-#pragma warning(pop)
-
-NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationFile(
-	_In_ HANDLE FileHandle, _Out_ PIO_STATUS_BLOCK IoStatusBlock,
-	_Out_writes_bytes_(Length) PVOID FileInformation, _In_ ULONG Length,
-	_In_ FILE_INFORMATION_CLASS FileInformationClass);
-/**
- * END
- */
-
 NTSTATUS DOKAN_CALLBACK
 MirrorFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 				  PDOKAN_FILE_INFO DokanFileInfo) {
@@ -412,9 +370,7 @@ MirrorFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 	hFind = FindFirstStreamW(filePath, FindStreamInfoStandard, &findData, 0);
 
 	if (hFind == INVALID_HANDLE_VALUE) {
-		error = GetLastError();
-
-		return DokanNtStatusFromWin32(error);
+		return DokanNtStatusFromWin32(GetLastError());
 	}
 
 	FillFindStreamData(&findData, DokanFileInfo);
@@ -429,20 +385,9 @@ MirrorFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 	FindClose(hFind);
 
 	if (error != ERROR_HANDLE_EOF) {
-
 		return DokanNtStatusFromWin32(error);
 	}
 
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS DOKAN_CALLBACK MirrorMounted(PDOKAN_FILE_INFO DokanFileInfo) {
-	UNREFERENCED_PARAMETER(DokanFileInfo);
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS DOKAN_CALLBACK MirrorUnmounted(PDOKAN_FILE_INFO DokanFileInfo) {
-	UNREFERENCED_PARAMETER(DokanFileInfo);
 	return STATUS_SUCCESS;
 }
 
@@ -493,10 +438,8 @@ NTSTATUS DOKAN_CALLBACK MirrorDeleteDirectory(LPCWSTR FileName,
 	filePath[fileLen + 1] = L'\0';
 
 	hFind = FindFirstFile(filePath, &findData);
-
 	if (hFind == INVALID_HANDLE_VALUE) {
-		DWORD error = GetLastError();
-		return DokanNtStatusFromWin32(error);
+		return DokanNtStatusFromWin32(GetLastError());
 	}
 
 	do {

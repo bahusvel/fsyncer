@@ -34,11 +34,14 @@ pub struct Client<F: Fn(&VFSCall) -> i32> {
 }
 
 fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
-    let size = serialized_size(&msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+    let size = serialized_size(&msg)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        as usize;
 
     //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
     write.write_u32::<BigEndian>(size as u32)?;
-    serialize_into(&mut write, &msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    serialize_into(&mut write, &msg)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     write.flush()
 }
 
@@ -57,9 +60,11 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
         send_msg(&mut stream, FsyncerMsg::InitMsg(init_msg.clone()))?;
 
         let reader = if init_msg.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
+            Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?)
+                as Box<Read + Send>
         } else if init_msg.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(lz4::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
+            Box::new(lz4::Decoder::new(stream.try_clone()?)?)
+                as Box<Read + Send>
         } else {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
@@ -124,14 +129,21 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
             match self.read_msg() {
                 Ok(FsyncerMsg::SyncOp(call, tid)) => {
                     if self.mode == ClientMode::MODE_SEMISYNC {
-                        self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: 0, tid }))?;
+                        self.send_msg(FsyncerMsg::Ack(AckMsg {
+                            retcode: 0,
+                            tid,
+                        }))?;
                     }
 
                     let res = (self.op_callback)(&call);
 
-                    if self.mode == ClientMode::MODE_SYNC || self.mode == ClientMode::MODE_FLUSHSYNC
+                    if self.mode == ClientMode::MODE_SYNC
+                        || self.mode == ClientMode::MODE_FLUSHSYNC
                     {
-                        self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: res, tid }))?;
+                        self.send_msg(FsyncerMsg::Ack(AckMsg {
+                            retcode: res,
+                            tid,
+                        }))?;
                     }
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
@@ -142,9 +154,12 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
                     println!("Received cork request");
                     self.send_msg(FsyncerMsg::AckCork(tid))?
                 }
-                Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} // Nothing, safe to ingore
+                Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} /* Nothing, safe to ingore */
                 Err(err) => return Err(err),
-                msg => println!("Unexpected message for current client state {:?}", msg),
+                msg => println!(
+                    "Unexpected message for current client state {:?}",
+                    msg
+                ),
             }
         }
     }
@@ -157,9 +172,11 @@ pub fn client_main(matches: ArgMatches) {
         client_matches
             .value_of("mount-path")
             .expect("Destination not specified"),
-    );
+    )
+    .canonicalize()
+    .expect("Failed to normalize path");
 
-    let dsthash = hash_metadata(client_path).expect("Hash failed");
+    let dsthash = hash_metadata(&client_path).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
 
     let host = client_matches.value_of("host").expect("No host specified");
@@ -201,8 +218,9 @@ pub fn client_main(matches: ArgMatches) {
         "none" | _ => (),
     }
 
-    let iolimit_bps = parse_human_size(client_matches.value_of("iolimit").unwrap())
-        .expect("Invalid format for iolimit");
+    let iolimit_bps =
+        parse_human_size(client_matches.value_of("iolimit").unwrap())
+            .expect("Invalid format for iolimit");
 
     let mut client = Client::new(
         host,
@@ -217,7 +235,18 @@ pub fn client_main(matches: ArgMatches) {
             iolimit_bps,
         },
         buffer_size,
-        |call| unsafe { dispatch(call, client_path) },
+        |call| unsafe {
+            let e = dispatch(call, &client_path);
+            if e as u32 != ERROR_SUCCESS {
+                println!(
+                    "Dispatch {:?} failed {:?}({})",
+                    call,
+                    io::Error::from_raw_os_error(e),
+                    e
+                );
+            }
+            e
+        },
     )
     .expect("Failed to connect to fsyncer");
 

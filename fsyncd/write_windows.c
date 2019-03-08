@@ -147,7 +147,7 @@ DWORD OpMoveFile(LPCWSTR NewFileName, BOOL ReplaceIfExisting, HANDLE handle) {
 
 	PFILE_RENAME_INFO renameInfo = NULL;
 
-	if (handle == INVALID_HANDLE_VALUE) {
+	if (!handle || handle == INVALID_HANDLE_VALUE) {
 		return ERROR_INVALID_HANDLE;
 	}
 

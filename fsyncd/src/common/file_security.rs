@@ -144,7 +144,9 @@ impl From<TRUSTEE_W> for Trustee {
         use common::wstr_to_os;
         use winapi::shared::sddl::ConvertSidToStringSidW;
         use winapi::um::accctrl::*;
-        use winapi::um::winnt::{ACE_INHERITED_OBJECT_TYPE_PRESENT, ACE_OBJECT_TYPE_PRESENT};
+        use winapi::um::winnt::{
+            ACE_INHERITED_OBJECT_TYPE_PRESENT, ACE_OBJECT_TYPE_PRESENT,
+        };
 
         unsafe fn psid_to_string(sid: PSID) -> OsString {
             let mut p: *mut u16 = ptr::null_mut();
@@ -160,13 +162,18 @@ impl From<TRUSTEE_W> for Trustee {
         let ty = TrusteeType::from(t.TrusteeType);
         let form = unsafe {
             match t.TrusteeForm {
-                TRUSTEE_IS_SID => TrusteeForm::Sid(psid_to_string(t.ptstrName as PSID)),
+                TRUSTEE_IS_SID => {
+                    TrusteeForm::Sid(psid_to_string(t.ptstrName as PSID))
+                }
                 TRUSTEE_IS_NAME => TrusteeForm::Name(wstr_to_os(t.ptstrName)),
                 TRUSTEE_IS_OBJECTS_AND_SID => {
                     use winapi::um::accctrl::OBJECTS_AND_SID;
                     let t = t.ptstrName as *const OBJECTS_AND_SID;
                     TrusteeForm::ObjectsAndSid {
-                        object_type: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT) {
+                        object_type: if flagset!(
+                            (*t).ObjectsPresent,
+                            ACE_OBJECT_TYPE_PRESENT
+                        ) {
                             Some(WinGUID::from((*t).ObjectTypeGuid))
                         } else {
                             None
@@ -196,8 +203,10 @@ impl From<TRUSTEE_W> for Trustee {
                             None
                         },
 
-                        object_type_name: if flagset!((*t).ObjectsPresent, ACE_OBJECT_TYPE_PRESENT)
-                        {
+                        object_type_name: if flagset!(
+                            (*t).ObjectsPresent,
+                            ACE_OBJECT_TYPE_PRESENT
+                        ) {
                             Some(wstr_to_os((*t).ObjectTypeName))
                         } else {
                             None
@@ -233,8 +242,11 @@ pub unsafe fn acl_entries(acl: PACL) -> Result<Vec<ACE>, Error> {
 
     assert!(!acl.is_null());
 
-    if GetExplicitEntriesFromAclW(acl, &mut count as *mut _, &mut entries as *mut _)
-        != ERROR_SUCCESS
+    if GetExplicitEntriesFromAclW(
+        acl,
+        &mut count as *mut _,
+        &mut entries as *mut _,
+    ) != ERROR_SUCCESS
     {
         return Err(Error::new(ErrorKind::Other, "Failed to get acl entries"));
     }

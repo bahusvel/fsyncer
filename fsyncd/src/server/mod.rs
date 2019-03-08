@@ -45,7 +45,10 @@ use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, RwLock};
-use std::{borrow::Cow, mem::transmute, ops::Deref, process::Command, thread, time::Duration};
+use std::{
+    borrow::Cow, mem::transmute, ops::Deref, process::Command, thread,
+    time::Duration,
+};
 
 pub static mut SERVER_PATH: Option<PathBuf> = None;
 
@@ -116,15 +119,25 @@ pub fn uncork_server() {
     println!("Uncork done");
 }
 
-fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Result<(), io::Error> {
+fn send_call<'a>(
+    call: Cow<'a, VFSCall<'a>>,
+    client: &Client,
+    ret: i32,
+) -> Result<(), io::Error> {
     match client.mode {
-        ClientMode::MODE_SYNC | ClientMode::MODE_SEMISYNC | ClientMode::MODE_FLUSHSYNC => {
+        ClientMode::MODE_SYNC
+        | ClientMode::MODE_SEMISYNC
+        | ClientMode::MODE_FLUSHSYNC => {
             // In flushsync mode all ops except for fsync are sent async
-            if client.mode == ClientMode::MODE_FLUSHSYNC && !is_variant!(&*call, VFSCall::fsync) {
+            if client.mode == ClientMode::MODE_FLUSHSYNC
+                && !is_variant!(&*call, VFSCall::fsync)
+            {
                 return client.send_msg(FsyncerMsg::AsyncOp(call), false);
             }
 
-            let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
+            let tid = unsafe {
+                transmute::<thread::ThreadId, u64>(thread::current().id())
+            };
             let client_ret = client
                 .send_msg(FsyncerMsg::SyncOp(call, tid), true)
                 .map(|_| client.wait_thread_response())?;
@@ -137,7 +150,9 @@ fn send_call<'a>(call: Cow<'a, VFSCall<'a>>, client: &Client, ret: i32) -> Resul
             }
             Ok(())
         }
-        ClientMode::MODE_ASYNC => client.send_msg(FsyncerMsg::AsyncOp(call), false),
+        ClientMode::MODE_ASYNC => {
+            client.send_msg(FsyncerMsg::AsyncOp(call), false)
+        }
         ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
     }
 }
@@ -150,8 +165,10 @@ pub fn pre_op(_call: &VFSCall) -> Option<c_int> {
             return None;
         }
         //println!("writing journal event {:?}", call);
-        let bilog = BilogEntry::from_vfscall(_call, unsafe { &SERVER_PATH.as_ref().unwrap() })
-            .expect("Failed to generate journal entry from vfscall");
+        let bilog = BilogEntry::from_vfscall(_call, unsafe {
+            &SERVER_PATH.as_ref().unwrap()
+        })
+        .expect("Failed to generate journal entry from vfscall");
         {
             // Reduce the time journal lock is held
             let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
@@ -182,7 +199,9 @@ pub fn post_op(call: &VFSCall, ret: i32) -> i32 {
         }
     }
     ret
-    /* Cork lock is held until here, it is used to make sure that any pending operations get sent over the network, the flush operation will force them to the other side */
+    /* Cork lock is held until here, it is used to make sure that any pending
+     * operations get sent over the network, the flush operation will force
+     * them to the other side */
 }
 
 #[cfg(target_family = "unix")]
@@ -209,8 +228,11 @@ fn check_mount(path: &str) -> Result<bool, io::Error> {
         .success())
 }
 
-fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Error> {
-    let mount_path = canonize_path(Path::new(matches.value_of("mount-path").unwrap()))?;
+fn figure_out_paths(
+    matches: &ArgMatches,
+) -> Result<(PathBuf, PathBuf), io::Error> {
+    let mount_path =
+        canonize_path(Path::new(matches.value_of("mount-path").unwrap()))?;
 
     debug!(mount_path);
 
@@ -219,7 +241,9 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
     #[cfg(target_os = "windows")]
     {
         if !mount_exists {
-            // On windows mount_path may exists, but may be mounted to previously crashed dokan file system. So another check is neccessary to figure out if it exists.
+            // On windows mount_path may exists, but may be mounted to
+            // previously crashed dokan file system. So another check is
+            // neccessary to figure out if it exists.
             if let Some(parent) = mount_path.parent() {
                 mount_exists = parent
                     .read_dir()?
@@ -245,7 +269,8 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
                 "Backing path does not exist",
             ));
         }
-        PathBuf::from(matches.value_of("backing-store").unwrap()).canonicalize()?
+        PathBuf::from(matches.value_of("backing-store").unwrap())
+            .canonicalize()?
     } else {
         // Implictly inferring backing store
         mount_path.with_file_name(format!(
@@ -260,7 +285,9 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), io::Erro
 
     if !backing_store.exists() && mount_exists {
         // TODO figure out how to move mountpoints on windows
-        if !cfg!(target_os = "windows") && check_mount(mount_path.to_str().unwrap())? {
+        if !cfg!(target_os = "windows")
+            && check_mount(mount_path.to_str().unwrap())?
+        {
             fs::create_dir_all(&mount_path)?;
             let res = Command::new("mount")
                 .arg("--move")
@@ -334,8 +361,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
     ))?;
 
     let dont_check = server_matches.is_present("dont-check");
-    let buffer_size =
-        parse_human_size(matches.value_of("buffer").unwrap()).expect("Buffer format incorrect");
+    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
+        .expect("Buffer format incorrect");
 
     thread::spawn(move || {
         for stream in listener.incoming() {
@@ -363,8 +390,9 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
 
     #[cfg(target_family = "unix")]
     {
-        let journal_size = parse_human_size(server_matches.value_of("journal-size").unwrap())
-            .expect("Invalid format for journal-size");
+        let journal_size =
+            parse_human_size(server_matches.value_of("journal-size").unwrap())
+                .expect("Invalid format for journal-size");
         let journal_sync = server_matches.is_present("journal-sync");
 
         match server_matches.value_of("journal").unwrap() {
@@ -381,7 +409,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
                 };
                 unsafe {
                     JOURNAL = Some(Mutex::new(
-                        open_journal(journal_path, c).expect("Failed to open journal"),
+                        open_journal(journal_path, c)
+                            .expect("Failed to open journal"),
                     ))
                 }
             }
@@ -410,8 +439,13 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         let mut options = DOKAN_OPTIONS::zero();
         let wstr_mount_path = path_to_wstr(&mount_path);
         options.MountPoint = wstr_mount_path.as_ptr();
-        //debug!(wstr_mount_path);
-        options.Options |= DOKAN_OPTION_ALT_STREAM | DOKAN_OPTION_DEBUG | DOKAN_OPTION_STDERR;
+        //debug!(wstr_mount_path)
+        options.Options |= DOKAN_OPTION_ALT_STREAM;
+
+        if matches.is_present("debug") {
+            options.Options |= DOKAN_OPTION_DEBUG | DOKAN_OPTION_STDERR;
+        }
+
         let res = unsafe { dokan_main(options, DOKAN_OPS_PTR) };
         match res {
             Ok(DokanResult::Success) => {

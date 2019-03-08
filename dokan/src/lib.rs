@@ -11,9 +11,12 @@ use winapi::shared::{
 };
 use winapi::um::consoleapi::SetConsoleCtrlHandler;
 use winapi::um::wincon::{
-    CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+    CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT,
+    CTRL_SHUTDOWN_EVENT,
 };
-use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
+use winapi::um::winnt::{
+    ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION,
+};
 
 pub const FILE_NON_DIRECTORY_FILE: DWORD = 0x00000040;
 
@@ -141,7 +144,11 @@ trait DokanWrite {
         offset: LONGLONG,
         info: PDOKAN_FILE_INFO,
     ) -> NTSTATUS;
-    fn set_file_attributes(path: LPCWSTR, attributes: DWORD, info: PDOKAN_FILE_INFO) -> NTSTATUS;
+    fn set_file_attributes(
+        path: LPCWSTR,
+        attributes: DWORD,
+        info: PDOKAN_FILE_INFO,
+    ) -> NTSTATUS;
     fn set_file_time(
         path: LPCWSTR,
         creation: *const FILETIME,
@@ -157,8 +164,16 @@ trait DokanWrite {
         replace: BOOL,
         info: PDOKAN_FILE_INFO,
     ) -> NTSTATUS;
-    fn set_end_of_file(path: LPCWSTR, offset: LONGLONG, info: PDOKAN_FILE_INFO) -> NTSTATUS;
-    fn set_allocation_size(path: LPCWSTR, size: LONGLONG, info: PDOKAN_FILE_INFO) -> NTSTATUS;
+    fn set_end_of_file(
+        path: LPCWSTR,
+        offset: LONGLONG,
+        info: PDOKAN_FILE_INFO,
+    ) -> NTSTATUS;
+    fn set_allocation_size(
+        path: LPCWSTR,
+        size: LONGLONG,
+        info: PDOKAN_FILE_INFO,
+    ) -> NTSTATUS;
     fn set_file_security(
         path: LPCWSTR,
         security: PSECURITY_INFORMATION,
@@ -182,7 +197,10 @@ extern "stdcall" {
     );
     pub fn DokanOpenRequestorToken(info: PDOKAN_FILE_INFO) -> HANDLE;
     pub fn DokanNtStatusFromWin32(error: DWORD) -> NTSTATUS;
-    pub fn DokanMain(DokanOptions: PDOKAN_OPTIONS, DokanOperations: PDOKAN_OPERATIONS) -> i32;
+    pub fn DokanMain(
+        DokanOptions: PDOKAN_OPTIONS,
+        DokanOperations: PDOKAN_OPERATIONS,
+    ) -> i32;
     pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;
 }
 
@@ -196,8 +214,8 @@ static mut MOUNT_POINT: LPCWSTR = ptr::null();
 
 unsafe extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
     match ctrl_type {
-        CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
-        | CTRL_SHUTDOWN_EVENT => {
+        CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT
+        | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT => {
             println!("Handler fired");
             SetConsoleCtrlHandler(Some(handler), 0);
             DokanRemoveMountPoint(MOUNT_POINT);

@@ -9,7 +9,8 @@ const DOKAN_PATH: &str = "C:\\Program Files\\Dokan\\Dokan Library-1.2.1\\";
 //const PACKAGE_TOP_DIR: &'static str = ".";
 
 fn main() {
-    //git_build_version::write_version(PACKAGE_TOP_DIR).expect("Saving git version");
+    //git_build_version::write_version(PACKAGE_TOP_DIR).expect("Saving git
+    // version");
 
     git_version::set_env();
 

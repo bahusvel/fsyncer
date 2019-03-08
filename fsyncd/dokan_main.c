@@ -99,8 +99,15 @@ NTSTATUS DOKAN_CALLBACK MirrorUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset,
 										 LONGLONG Length,
 										 PDOKAN_FILE_INFO DokanFileInfo);
 
-NTSTATUS DOKAN_CALLBACK MirrorMounted(PDOKAN_FILE_INFO DokanFileInfo);
-NTSTATUS DOKAN_CALLBACK MirrorUnmounted(PDOKAN_FILE_INFO DokanFileInfo);
+static NTSTATUS DOKAN_CALLBACK MirrorMounted(PDOKAN_FILE_INFO DokanFileInfo) {
+	UNREFERENCED_PARAMETER(DokanFileInfo);
+	return STATUS_SUCCESS;
+}
+
+static NTSTATUS DOKAN_CALLBACK MirrorUnmounted(PDOKAN_FILE_INFO DokanFileInfo) {
+	UNREFERENCED_PARAMETER(DokanFileInfo);
+	return STATUS_SUCCESS;
+}
 
 const DOKAN_OPERATIONS DOKAN_OPS = {
 	.ZwCreateFile = MirrorCreateFile,
@@ -119,8 +126,8 @@ const DOKAN_OPERATIONS DOKAN_OPS = {
 	.MoveFile = MirrorMoveFile,
 	.SetEndOfFile = MirrorSetEndOfFile,
 	.SetAllocationSize = MirrorSetAllocationSize,
-	.LockFile = MirrorLockFile,
-	.UnlockFile = MirrorUnlockFile,
+	.LockFile = MirrorLockFile,		// These will not be called until
+	.UnlockFile = MirrorUnlockFile, // DOKAN_OPTION_FILELOCK_USER_MODE is on
 	.GetFileSecurity = MirrorGetFileSecurity,
 	.SetFileSecurity = MirrorSetFileSecurity,
 	.GetDiskFreeSpace = NULL, // MirrorDokanGetDiskFreeSpace;

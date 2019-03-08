@@ -10,6 +10,7 @@ pub use winapi::shared::{
 };
 pub use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{DeleteFileW, RemoveDirectoryW};
+use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 pub use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
 #[link(name = "fsyncer", kind = "static")]
@@ -62,6 +63,7 @@ pub unsafe fn OpSetFileSecurity(
     descriptor: PSECURITY_DESCRIPTOR,
     handle: HANDLE,
 ) -> DWORD {
+    assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
     use winapi::um::winuser::SetUserObjectSecurity;
     if SetUserObjectSecurity(handle, security, descriptor) == 0 {
         return GetLastError();
@@ -75,6 +77,7 @@ pub unsafe fn OpSetFileTime(
     write: *const FILETIME,
     handle: HANDLE,
 ) -> DWORD {
+    assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
     use winapi::um::fileapi::SetFileTime;
     if SetFileTime(handle, creation, access, write) == 0 {
         return GetLastError();
@@ -91,6 +94,7 @@ pub unsafe fn OpSetFileAttributes(path: LPCWSTR, attributes: DWORD) -> DWORD {
 }
 
 pub unsafe fn OpSetEndOfFile(byte_offset: LONGLONG, handle: HANDLE) -> DWORD {
+    assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
     use winapi::um::fileapi::{SetEndOfFile, SetFilePointerEx};
     use winapi::um::winbase::FILE_BEGIN;
     use winapi::um::winnt::LARGE_INTEGER;
@@ -115,6 +119,7 @@ pub unsafe fn OpWriteFile(
     byte_offset: LONGLONG,
     handle: HANDLE,
 ) -> DWORD {
+    assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
     use winapi::um::fileapi::{SetFilePointerEx, WriteFile};
     use winapi::um::winbase::FILE_BEGIN;
     use winapi::um::winnt::LARGE_INTEGER;

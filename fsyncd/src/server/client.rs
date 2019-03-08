@@ -89,7 +89,8 @@ impl Client {
 
         if init.mode != ClientMode::MODE_CONTROL && (!dontcheck) {
             println!("Calculating source hash...");
-            let srchash = hash_metadata(&storage_path).expect("Hash check failed");
+            let srchash =
+                hash_metadata(&storage_path).expect("Hash check failed");
             println!("Source hash is {:x}", srchash);
             if init.dsthash != srchash {
                 println!(
@@ -98,28 +99,33 @@ impl Client {
                 );
                 println!("Dropping this client!");
                 drop(stream);
-                return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Hash mismatch",
+                ));
             }
         }
 
         let limiter = LimitWriter::new(stream.try_clone()?, init.iolimit_bps);
 
         let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(zstd::stream::Encoder::new(limiter, 0)?) as Box<Write + Send>
+            Box::new(zstd::stream::Encoder::new(limiter, 0)?)
+                as Box<Write + Send>
         } else if init.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(lz4::EncoderBuilder::new().build(limiter)?) as Box<Write + Send>
+            Box::new(lz4::EncoderBuilder::new().build(limiter)?)
+                as Box<Write + Send>
         } else {
             Box::new(limiter) as Box<Write + Send>
         };
 
-        let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_CHUNKED)
-        {
-            Some(Box::new(ChunkMap::new(0.5)))
-        } else if init.compress.contains(CompMode::RT_DSSC_ZSTD) {
-            Some(Box::new(ZstdBlock::default()))
-        } else {
-            None
-        };
+        let rt_comp: Option<Box<Compressor>> =
+            if init.compress.contains(CompMode::RT_DSSC_CHUNKED) {
+                Some(Box::new(ChunkMap::new(0.5)))
+            } else if init.compress.contains(CompMode::RT_DSSC_ZSTD) {
+                Some(Box::new(ZstdBlock::default()))
+            } else {
+                None
+            };
 
         let net = Arc::new(Mutex::new(ClientNetwork {
             write: writer,
@@ -143,7 +149,8 @@ impl Client {
     // Send a cork to this client, and block until it acknowledges
     pub fn cork(&self) -> Result<(), io::Error> {
         let current_thread = thread::current();
-        let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
+        let tid =
+            unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
         self.send_msg(FsyncerMsg::Cork(tid), true)?;
         // Cannot park on control as it will block its reader thread
         if self.mode != ClientMode::MODE_CONTROL {
@@ -163,7 +170,8 @@ impl Client {
     fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, io::Error> {
         let _size = read.read_u32::<BigEndian>()?;
         // TODO use size to restrict reading
-        Ok(deserialize_from(read).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
+        Ok(deserialize_from(read)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
     }
 
     fn reader<R: Read>(mut read: R, net: Arc<Mutex<ClientNetwork>>) {
@@ -199,7 +207,8 @@ impl Client {
     }
 
     pub fn flush(&self) -> Result<(), io::Error> {
-        //Without the nop message compression algorithms dont flush immediately.
+        //Without the nop message compression algorithms dont flush
+        // immediately.
         if self.comp.intersects(CompMode::STREAM_MASK) {
             self.send_msg(FsyncerMsg::NOP, true)?
         } else {
@@ -208,7 +217,11 @@ impl Client {
         Ok(())
     }
 
-    pub fn send_msg(&self, msg_data: FsyncerMsg, flush: bool) -> Result<(), io::Error> {
+    pub fn send_msg(
+        &self,
+        msg_data: FsyncerMsg,
+        flush: bool,
+    ) -> Result<(), io::Error> {
         fn inner(
             serbuf: &[u8],
             mut size: usize,
@@ -232,7 +245,8 @@ impl Client {
             if flush {
                 //println!("Doing funky flush");
                 net.write.flush()?;
-                // Without the nop message compression algorithms dont flush immediately.
+                // Without the nop message compression algorithms dont flush
+                // immediately.
                 if comp {
                     inner(&ENCODED_NOP[..], *NOP_SIZE, net, false, comp)?;
                     net.write.flush()?;
@@ -243,9 +257,11 @@ impl Client {
         }
 
         let size = serialized_size(&msg_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+            as usize;
 
-        let serbuf = serialize(&msg_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let serbuf = serialize(&msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
         let mut net = self.net.lock().unwrap();
@@ -272,7 +288,9 @@ impl Client {
 
     pub fn wait_thread_response(&self) -> i32 {
         {
-            let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
+            let tid = unsafe {
+                transmute::<thread::ThreadId, u64>(thread::current().id())
+            };
             let mut net = self.net.lock().unwrap();
             net.parked
                 .entry(tid)

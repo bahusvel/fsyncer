@@ -60,10 +60,6 @@ ifneq ($(stream),)
 	CLIENT_FLAGS ++ --stream-compressor=$(stream)
 endif
 
-ifeq ($(OS),Windows_NT)
-	EXEC_CMD = cmd.exe
-endif
-
 dirs:
 	mkdir test_src || true
 	mkdir test_path || true
@@ -95,7 +91,7 @@ winfs: build dirs
 client: build dirs
 	rm -rf test_dst || true
 	cp -rax .fsyncer-test_src test_dst
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client `realpath ./test_dst` $(CLIENT_FLAGS)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client ./test_dst $(CLIENT_FLAGS)
 	$(POST_CMD)
 
 cmd: build dirs

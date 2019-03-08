@@ -75,7 +75,9 @@ pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
 
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
-    for entry in WalkDir::new(path).sort_by(|a, b| a.file_name().cmp(b.file_name())) {
+    for entry in
+        WalkDir::new(path).sort_by(|a, b| a.file_name().cmp(b.file_name()))
+    {
         let e = entry?;
         let path = e.path().strip_prefix(path).unwrap();
         if path == empty {
@@ -123,7 +125,9 @@ pub fn parse_human_size(s: &str) -> Option<usize> {
     Some(match s.chars().last().unwrap() {
         'K' | 'k' => s[..s.len() - 1].parse::<usize>().ok()? * 1024,
         'M' | 'm' => s[..s.len() - 1].parse::<usize>().ok()? * 1024 * 1024,
-        'G' | 'g' => s[..s.len() - 1].parse::<usize>().ok()? * 1024 * 1024 * 1024,
+        'G' | 'g' => {
+            s[..s.len() - 1].parse::<usize>().ok()? * 1024 * 1024 * 1024
+        }
         _ => s[..s.len()].parse::<usize>().ok()?,
     })
 }
@@ -200,6 +204,5 @@ metablock!(cfg(target_os = "windows") {
             return Err(io::Error::last_os_error());
         }
         Ok(unsafe {wstr_to_path(buf[..].as_mut_ptr())})
-       
     }
 });
