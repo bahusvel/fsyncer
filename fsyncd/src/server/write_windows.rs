@@ -3,12 +3,12 @@ use libc::uint32_t;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
-use std::io::{Error, ErrorKind};
+use std::io::ErrorKind;
+use std::mem;
 use std::slice;
-use std::{mem, ptr};
 use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::winnt::{FILE_SHARE_READ, PACL, PSID, SECURITY_DESCRIPTOR};
+use winapi::um::winnt::FILE_SHARE_READ;
 
 unsafe fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
     use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
@@ -62,7 +62,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         &mut user_disposition as *mut _,
     );
 
-    debug!("Create file", wstr_to_path(path), user_disposition);
+    //debug!("Create file", wstr_to_path(path), user_disposition);
 
     if exists && attr.as_ref().unwrap().is_dir() {
         if !flagset!(dokan_options, FILE_NON_DIRECTORY_FILE) {
@@ -76,55 +76,16 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 
     let mut call = None;
     let status;
-    let desc = sec_desc as *const SECURITY_DESCRIPTOR;
 
-    let security = if desc.is_null() {
+    let security = if sec_desc.is_null() {
         // TODO if descriptor is NULL default descriptor is assigned, I probably
         // need to query it and send it to the other side
-        FileSecurity::Windows {
-            owner: None,
-            group: None,
-            dacl: None,
-            sacl: None,
-        }
+        FileSecurity::Default
     } else {
-        FileSecurity::Windows {
-            // This is invalid, I tthink I need to use GetSecurityDescriptorXXXX
-            owner: {
-                if (*desc).Owner.is_null() {
-                    None
-                } else {
-                    let (_, acc_name) =
-                        lookup_account((*desc).Owner).expect("Unknown account");
-                    Some(acc_name)
-                }
-            },
-            group: {
-                if (*desc).Group.is_null() {
-                    None
-                } else {
-                    let (_, acc_name) =
-                        lookup_account((*desc).Group).expect("Unknown account");
-                    Some(acc_name)
-                }
-            },
-            dacl: if (*desc).Dacl.is_null() {
-                None
-            } else {
-                Some(
-                    file_security::acl_entries((*desc).Dacl)
-                        .expect("Failed to parse DACL entries"),
-                )
-            },
-            sacl: if (*desc).Sacl.is_null() {
-                None
-            } else {
-                Some(
-                    file_security::acl_entries((*desc).Sacl)
-                        .expect("Failed to parse SACL entries"),
-                )
-            },
-        }
+        let s = FileSecurity::parse_security(sec_desc, None, false)
+            .expect("Failed to parse security descriptor");
+        debug!(s);
+        s
     };
 
     if !exists
@@ -167,7 +128,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
             return STATUS_CANNOT_DELETE;
         }
 
-        debug!(exists);
+        //debug!(exists);
 
         if exists
             && (user_disposition == TRUNCATE_EXISTING
@@ -463,85 +424,6 @@ pub unsafe extern "stdcall" fn MirrorSetAllocationSize(
     DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
 }
 
-unsafe fn lookup_account(psid: PSID) -> Result<(String, String), Error> {
-    // TODO keep cache of lookups
-    use std::ffi::CStr;
-    use winapi::um::winbase::LookupAccountSidA;
-    use winapi::um::winnt::SID_NAME_USE;
-
-    let name_buf: [u8; 256] = [0; 256];
-    let mut name_len = name_buf.len() as u32;
-    let domain_buf: [u8; 256] = [0; 256];
-    let mut domain_len = domain_buf.len() as u32;
-    let mut acc_type: SID_NAME_USE = 0;
-    if LookupAccountSidA(
-        ptr::null(),
-        psid,
-        name_buf.as_ptr() as *mut _,
-        &mut name_len as *mut _,
-        domain_buf.as_ptr() as *mut _,
-        &mut domain_len as *mut _,
-        &mut acc_type as *mut _,
-    ) == 0
-    {
-        return Err(Error::last_os_error());
-    }
-    let domain = String::from(
-        CStr::from_bytes_with_nul(&domain_buf[..domain_len as usize])
-            .expect("Domain is an invalid CString")
-            .to_str()
-            .expect("Domain cannot be represented in UTF-8"),
-    );
-    let name = String::from(
-        CStr::from_bytes_with_nul(&name_buf[..name_len as usize])
-            .expect("Account name is an invalid CString")
-            .to_str()
-            .expect("Account name be represented in UTF-8"),
-    );
-    return Ok((domain, name));
-}
-
-unsafe fn acl_from_descriptor(
-    descriptor: PSECURITY_DESCRIPTOR,
-    dacl: bool,
-) -> Result<(PACL, bool), Error> {
-    use winapi::um::securitybaseapi::{
-        GetSecurityDescriptorDacl, GetSecurityDescriptorSacl,
-    };
-    let mut ppacl = ptr::null_mut();
-    let mut present = 0;
-    let mut defaulted = 0;
-
-    if dacl {
-        if GetSecurityDescriptorDacl(
-            descriptor,
-            &mut present as *mut _,
-            &mut ppacl as *mut _,
-            &mut defaulted as *mut _,
-        ) == 0
-        {
-            return Err(Error::last_os_error());
-        }
-    } else {
-        if GetSecurityDescriptorSacl(
-            descriptor,
-            &mut present as *mut _,
-            &mut ppacl as *mut _,
-            &mut defaulted as *mut _,
-        ) == 0
-        {
-            return Err(Error::last_os_error());
-        }
-    }
-
-    if present == 0 {
-        debug!(dacl);
-        ppacl = ptr::null_mut();
-    }
-
-    Ok((ppacl, defaulted != 0))
-}
-
 #[no_mangle]
 pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     path: LPCWSTR,
@@ -550,57 +432,11 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     _length: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-    use winapi::um::winnt::{
-        DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-        OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
-    };
+    let file_sec =
+        FileSecurity::parse_security(descriptor, Some(security), false)
+            .expect("Failed to parse security");
 
-    let desc = descriptor as *const SECURITY_DESCRIPTOR;
-
-    let file_sec = FileSecurity::Windows {
-        dacl: if flagset!(*security, DACL_SECURITY_INFORMATION) {
-            let (dacl, _) = acl_from_descriptor(desc as *mut _, true)
-                .expect("Failed to parse DACL entries");
-            if dacl.is_null() {
-                None
-            } else {
-                Some(
-                    file_security::acl_entries(dacl)
-                        .expect("Failed to parse DACL entries"),
-                )
-            }
-        } else {
-            None
-        },
-        sacl: if flagset!(*security, SACL_SECURITY_INFORMATION) {
-            let (sacl, _) = acl_from_descriptor(desc as *mut _, false)
-                .expect("Failed to parse SACL entries");
-            if sacl.is_null() {
-                None
-            } else {
-                Some(
-                    file_security::acl_entries(sacl)
-                        .expect("Failed to parse SACL entries"),
-                )
-            }
-        } else {
-            None
-        },
-        group: if flagset!(*security, GROUP_SECURITY_INFORMATION) {
-            let (_, acc_name) =
-                lookup_account((*desc).Group).expect("Unknown account");
-            Some(acc_name)
-        } else {
-            None
-        },
-        owner: if flagset!(*security, OWNER_SECURITY_INFORMATION) {
-            let (_, acc_name) =
-                lookup_account((*desc).Owner).expect("Unknown account");
-            Some(acc_name)
-        } else {
-            None
-        },
-    };
+    println!("Security {:#?}", file_sec);
 
     let call = VFSCall::security(security {
         path: Cow::Owned(wstr_to_path(path)),

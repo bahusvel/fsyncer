@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types)]
 #![allow(unused)]
 
-use common::file_security::*;
+use common::FileSecurity;
 use libc::*;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, OsString};
@@ -10,24 +10,6 @@ use std::path::Path;
 
 #[cfg(target_os = "windows")]
 use common::FILETIME;
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-pub enum FileSecurity {
-    Windows {
-        group: Option<String>,
-        owner: Option<String>,
-        dacl: Option<Vec<ACE>>,
-        sacl: Option<Vec<ACE>>,
-    },
-    Unix {
-        uid: u32,
-        gid: u32,
-    },
-    Portable {
-        owner: Option<String>,
-        group: Option<String>,
-    },
-}
 
 macro_rules! encoded_syscall {
     ($name:ident {$($field:ident: $ft:ty,)*}) => {

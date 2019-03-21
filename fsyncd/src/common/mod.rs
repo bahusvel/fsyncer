@@ -13,6 +13,7 @@ metablock!(cfg(target_family="windows") {
 });
 
 pub use self::encoded::*;
+pub use self::file_security::FileSecurity;
 use libc::int64_t;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
