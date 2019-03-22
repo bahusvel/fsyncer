@@ -20,14 +20,12 @@ fn with_file<F: (FnOnce(HANDLE) -> DWORD)>(
 }
 
 pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
-    use std::ptr;
     use winapi::um::fileapi::CREATE_NEW;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::winnt::{
         DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ,
         FILE_SHARE_WRITE, GENERIC_WRITE, GROUP_SECURITY_INFORMATION,
         OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
-        SECURITY_DESCRIPTOR,
     };
     match call {
         VFSCall::utimens(utimens { path, timespec }) => {
@@ -56,14 +54,16 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            //let mut descriptor = mem::zeroed(); // =
-            // security.to_descriptor();
+            let mut descriptor = security
+                .clone()
+                .to_descriptor()
+                .expect("Failed to create security descriptor");
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
             let res = OpCreateFile(
                 real_path.as_ptr(),
-                ptr::null_mut(), // FIXME
+                descriptor,
                 GENERIC_WRITE,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -122,14 +122,16 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            //let mut descriptor = mem::zeroed(); // =
-            // security.to_descriptor();
+            let mut descriptor = security
+                .clone()
+                .to_descriptor()
+                .expect("Failed to create security descriptor");
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
             let res = OpCreateDirectory(
                 real_path.as_ptr(),
-                ptr::null_mut(), // FIXME
+                descriptor,
                 GENERIC_WRITE,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -167,17 +169,15 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                 panic!("Security information needs translation")
             }
 
-            //let mut descriptor = mem::zeroed(); // =
-            // security.to_descriptor();
+            let mut descriptor = security
+                .clone()
+                .to_descriptor()
+                .expect("Failed to create security descriptor");
             with_file(
                 &translate_path(path, root),
                 OpenOptions::new().write(true),
                 |handle| {
-                    OpSetFileSecurity(
-                        &mut info as *mut _,
-                        ptr::null_mut(), // FIXME
-                        handle,
-                    )
+                    OpSetFileSecurity(&mut info as *mut _, descriptor, handle)
                 },
             ) as i32
         }

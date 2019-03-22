@@ -5,12 +5,17 @@ use std::ffi::OsString;
 use std::ptr;
 
 metablock!(cfg(target_os = "windows") {
-    use winapi::um::winnt::{PACL, PSID, SID};
+    use winapi::um::winnt::{PACL, PSID};
     use std::io::{Error, ErrorKind};
     use winapi::um::winbase::LocalFree;
     use winapi::shared::guiddef::GUID;
     use winapi::um::accctrl::{TRUSTEE_TYPE, SE_OBJECT_TYPE, TRUSTEE_W};
-    use winapi::um::winnt::{PSECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR};
+    use winapi::um::winnt::{PSECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+    use std::os::windows::ffi::OsStrExt;
+    use winapi::shared::winerror::ERROR_SUCCESS;
+    use common::os_to_wstr;
+    use winapi::um::accctrl::*;
+    use std::ffi::OsStr;
 });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
@@ -49,8 +54,43 @@ pub enum TrusteeForm {
     },
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-pub enum TrusteeType {
+macro_rules! constenum {
+    ($name:ident, $t:ty, $($value:ident),+) => {
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
+        pub enum $name {
+            $(
+                $value,
+            )*
+        }
+
+        #[cfg(target_os = "windows")]
+        impl From<$t> for $name {
+            fn from(t: $t) -> Self {
+                match t {
+                    $(
+                        $value => $name::$value,
+                    )*
+                    _ => panic!("Failed to enum match"),
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        impl Into<$t> for $name {
+            fn into(self) -> $t {
+                match self {
+                    $(
+                        $name::$value => $value,
+                    )*
+                }
+            }
+        }
+    }
+}
+
+constenum!(
+    TrusteeType,
+    TRUSTEE_TYPE,
     TRUSTEE_IS_UNKNOWN,
     TRUSTEE_IS_USER,
     TRUSTEE_IS_GROUP,
@@ -59,37 +99,8 @@ pub enum TrusteeType {
     TRUSTEE_IS_WELL_KNOWN_GROUP,
     TRUSTEE_IS_DELETED,
     TRUSTEE_IS_INVALID,
-    TRUSTEE_IS_COMPUTER,
-}
-
-macro_rules! enummatch {
-    ($val:expr, $en:ident, $($flags:ident),+) => {
-        match $val {
-            $(
-                $flags => $en::$flags,
-            )*
-            _ => panic!("Failed to enum match"),
-        }
-    };
-}
-
-#[cfg(target_os = "windows")]
-impl From<TRUSTEE_TYPE> for TrusteeType {
-    fn from(t: TRUSTEE_TYPE) -> Self {
-        use winapi::um::accctrl::*;
-        enummatch! {t, TrusteeType,
-            TRUSTEE_IS_UNKNOWN,
-            TRUSTEE_IS_USER,
-            TRUSTEE_IS_GROUP,
-            TRUSTEE_IS_DOMAIN,
-            TRUSTEE_IS_ALIAS,
-            TRUSTEE_IS_WELL_KNOWN_GROUP,
-            TRUSTEE_IS_DELETED,
-            TRUSTEE_IS_INVALID,
-            TRUSTEE_IS_COMPUTER
-        }
-    }
-}
+    TRUSTEE_IS_COMPUTER
+);
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 #[repr(C)]
@@ -112,8 +123,21 @@ impl From<GUID> for WinGUID {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-pub enum ObjectType {
+#[cfg(target_os = "windows")]
+impl Into<GUID> for WinGUID {
+    fn into(self) -> GUID {
+        GUID {
+            Data1: self.data1,
+            Data2: self.data2,
+            Data3: self.data3,
+            Data4: self.data4,
+        }
+    }
+}
+
+constenum!(
+    ObjectType,
+    SE_OBJECT_TYPE,
     SE_UNKNOWN_OBJECT_TYPE,
     SE_FILE_OBJECT,
     SE_SERVICE,
@@ -127,30 +151,8 @@ pub enum ObjectType {
     SE_PROVIDER_DEFINED_OBJECT,
     SE_WMIGUID_OBJECT,
     SE_REGISTRY_WOW64_32KEY,
-    SE_REGISTRY_WOW64_64KEY,
-}
-
-#[cfg(target_os = "windows")]
-impl From<SE_OBJECT_TYPE> for ObjectType {
-    fn from(o: SE_OBJECT_TYPE) -> Self {
-        use winapi::um::accctrl::*;
-        enummatch! {o, ObjectType,  SE_UNKNOWN_OBJECT_TYPE,
-                    SE_FILE_OBJECT,
-                    SE_SERVICE,
-                    SE_PRINTER,
-                    SE_REGISTRY_KEY,
-                    SE_LMSHARE,
-                    SE_KERNEL_OBJECT,
-                    SE_WINDOW_OBJECT,
-                    SE_DS_OBJECT,
-                    SE_DS_OBJECT_ALL,
-                    SE_PROVIDER_DEFINED_OBJECT,
-                    SE_WMIGUID_OBJECT,
-                    SE_REGISTRY_WOW64_32KEY,
-                    SE_REGISTRY_WOW64_64KEY
-        }
-    }
-}
+    SE_REGISTRY_WOW64_64KEY
+);
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 pub struct Trustee {
@@ -175,7 +177,6 @@ unsafe fn psid_to_string(sid: PSID) -> OsString {
 #[cfg(target_os = "windows")]
 unsafe fn string_to_sid(ssid: OsString) -> PSID {
     use winapi::shared::sddl::ConvertStringSidToSidW;
-    use std::os::windows::ffi::OsStrExt;
     let mut p: PSID = ptr::null_mut();
     let mut buf: Vec<u16> = ssid.as_os_str().encode_wide().collect();
     buf.push(0);
@@ -259,6 +260,89 @@ impl From<TRUSTEE_W> for Trustee {
     }
 }
 
+// FIXME, Can I do it better than leak && free? Perhaps use Rc?
+fn leak_vec<T>(mut v: Vec<T>) -> *mut T {
+    use std::mem;
+    let p = v.as_mut_ptr();
+    mem::forget(v);
+    p
+}
+
+#[cfg(target_os = "windows")]
+impl Into<TRUSTEE_W> for Trustee {
+    fn into(self) -> TRUSTEE_W {
+        use std::mem;
+        use winapi::um::accctrl::*;
+        use winapi::um::winnt::{
+            ACE_INHERITED_OBJECT_TYPE_PRESENT, ACE_OBJECT_TYPE_PRESENT,
+        };
+
+        let ptstrName;
+        let form = match self.form {
+            TrusteeForm::Name(name) => {
+                ptstrName = leak_vec(os_to_wstr(&name));
+                TRUSTEE_IS_NAME
+            }
+            TrusteeForm::Sid(sid) => {
+                ptstrName = unsafe { string_to_sid(sid) } as *mut _;
+                TRUSTEE_IS_SID
+            }
+            TrusteeForm::ObjectsAndName {
+                object_type,
+                object_type_name,
+                inherited_object_type_name,
+                name,
+            } => {
+                let o = Box::new(OBJECTS_AND_NAME_W {
+                    ObjectsPresent: object_type_name
+                        .as_ref()
+                        .map_or(0, |_| ACE_OBJECT_TYPE_PRESENT)
+                        | inherited_object_type_name
+                            .as_ref()
+                            .map_or(0, |_| ACE_INHERITED_OBJECT_TYPE_PRESENT),
+                    ObjectType: object_type.into(),
+                    ObjectTypeName: object_type_name
+                        .map_or(ptr::null_mut(), |o| leak_vec(os_to_wstr(&o))),
+                    InheritedObjectTypeName: inherited_object_type_name
+                        .map_or(ptr::null_mut(), |o| leak_vec(os_to_wstr(&o))),
+                    ptstrName: leak_vec(os_to_wstr(&name)),
+                });
+                ptstrName = Box::into_raw(o) as *mut _;
+                TRUSTEE_IS_OBJECTS_AND_NAME
+            }
+            TrusteeForm::ObjectsAndSid {
+                object_type,
+                inherited_object_type,
+                sid,
+            } => unsafe {
+                let o = Box::new(OBJECTS_AND_SID {
+                    ObjectsPresent: object_type
+                        .as_ref()
+                        .map_or(0, |_| ACE_OBJECT_TYPE_PRESENT)
+                        | inherited_object_type
+                            .as_ref()
+                            .map_or(0, |_| ACE_INHERITED_OBJECT_TYPE_PRESENT),
+                    ObjectTypeGuid: object_type
+                        .map_or(mem::zeroed(), |o| o.into()),
+                    InheritedObjectTypeGuid: inherited_object_type
+                        .map_or(mem::zeroed(), |o| o.into()),
+                    pSid: string_to_sid(sid) as *mut _,
+                });
+                ptstrName = Box::into_raw(o) as *mut _;
+                TRUSTEE_IS_OBJECTS_AND_SID
+            },
+        };
+
+        TRUSTEE_W {
+            pMultipleTrustee: ptr::null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: form,
+            TrusteeType: self.ty.into(),
+            ptstrName,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 pub struct ACE {
     permisssions: u32,
@@ -303,6 +387,18 @@ unsafe fn acl_entries(acl: PACL) -> Result<Vec<ACE>, Error> {
 
     LocalFree(entries as *mut _);
     Ok(rlist)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn acl_list(aces: Vec<ACE>) -> Vec<EXPLICIT_ACCESS_W> {
+    aces.into_iter()
+        .map(|ace| EXPLICIT_ACCESS_W {
+            grfAccessPermissions: ace.permisssions,
+            grfAccessMode: ace.mode,
+            grfInheritance: ace.inheritance,
+            Trustee: ace.trustee.into(),
+        })
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -485,24 +581,17 @@ impl FileSecurity {
         })
     }
 
-    pub unsafe fn to_descriptor(&self) -> Result<SECURITY_DESCRIPTOR, Error> {
+    pub unsafe fn to_descriptor(self) -> Result<PSECURITY_DESCRIPTOR, Error> {
         use std::mem;
-        use winapi::um::securitybaseapi::{
-            InitializeSecurityDescriptor, SetSecurityDescriptorDacl,
-            SetSecurityDescriptorGroup, SetSecurityDescriptorOwner,
-            SetSecurityDescriptorSacl,
+        use winapi::um::aclapi::{
+            BuildSecurityDescriptorW, BuildTrusteeWithNameW,
         };
-        const FALSE: i32 = 0;
-        const TRUE: i32 = 1;
-        use winapi::um::winnt::SECURITY_DESCRIPTOR_REVISION;
-        let mut desc: SECURITY_DESCRIPTOR = mem::zeroed();
-        if InitializeSecurityDescriptor(
-            &mut desc as *mut _ as *mut _,
-            SECURITY_DESCRIPTOR_REVISION,
-        ) == 0
-        {
-            return Err(Error::last_os_error());
-        }
+
+        let mut ownerT: TRUSTEE_W = mem::zeroed();
+        let mut groupT: TRUSTEE_W = mem::zeroed();
+        let mut desc = ptr::null_mut();
+        let mut size: u32 = 0;
+
         if let FileSecurity::Windows {
             owner,
             group,
@@ -510,27 +599,34 @@ impl FileSecurity {
             dacl,
         } = self
         {
-            if owner.is_some() {
-                let psid = string_to_sid(OsString::from(owner.unwrap()));
-                if SetSecurityDescriptorOwner(&mut desc as *mut _ as *mut _, psid, FALSE) == 0 {
-                    return Err(Error::last_os_error());
-                }
-            }
-            if group.is_some() {
-                let psid = string_to_sid(OsString::from(group.unwrap()));
-                if SetSecurityDescriptorGroup(&mut desc as *mut _ as *mut _, psid, FALSE) == 0 {
-                    return Err(Error::last_os_error());
-                }
-            }
-            if sacl.is_some() {
-                if SetSecurityDescriptorSacl(&mut desc as *mut _ as *mut _, TRUE,, FALSE) == 0 {
-                    return Err(Error::last_os_error());
-                }
-            }
-            if dacl.is_some() {
-                if SetSecurityDescriptorDacl(&mut desc as *mut _ as *mut _, TRUE, , FALSE) == 0 {
-                    return Err(Error::last_os_error());
-                }
+            if BuildSecurityDescriptorW(
+                owner.map_or(ptr::null_mut(), |owner| {
+                    BuildTrusteeWithNameW(
+                        &mut ownerT as *mut _,
+                        leak_vec(os_to_wstr(OsStr::new(&owner))),
+                    );
+                    &mut ownerT as *mut _
+                }),
+                group.map_or(ptr::null_mut(), |group| {
+                    BuildTrusteeWithNameW(
+                        &mut groupT as *mut _,
+                        leak_vec(os_to_wstr(OsStr::new(&group))),
+                    );
+                    &mut groupT as *mut _
+                }),
+                dacl.as_ref().map_or(0, |l| l.len() as u32),
+                dacl.map_or(ptr::null_mut(), |l| leak_vec(acl_list(l))),
+                sacl.as_ref().map_or(0, |l| l.len() as u32),
+                sacl.map_or(ptr::null_mut(), |l| leak_vec(acl_list(l))),
+                ptr::null_mut(),
+                &mut size as *mut _,
+                &mut desc as *mut _,
+            ) != ERROR_SUCCESS
+            {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "Failed to set acl entries",
+                ));
             }
         } else {
             panic!("Cannot yet convert non windows filesecurity to descriptor")
