@@ -32,14 +32,27 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     dokan_options: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    debug!(wstr_to_path(path));
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
     use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
 
     let rpath = wstr_to_path(path);
     let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
     let real_path = path_to_wstr(&rrpath);
-
     let attr = symlink_metadata(rrpath);
+
+    if attr.is_err() && attr.as_ref().unwrap_err().kind() != ErrorKind::NotFound
+    {
+        //This is introduced because cmd.exe will try to open paths like
+        // \\<partial>*. This is exactly what mirror.c from Dokan does, it
+        // doesn't handle them properly, just errors with 123 code.
+        return DokanNtStatusFromWin32(
+            attr.unwrap_err()
+                .raw_os_error()
+                .expect("Failed to extract OS error") as u32,
+        );
+    }
+
     let exists = !(attr.is_err()
         && attr.as_ref().unwrap_err().kind() == ErrorKind::NotFound);
     // File exists and we need to open it
@@ -143,6 +156,12 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
                 || user_disposition == CREATE_NEW
                 || user_disposition == OPEN_ALWAYS)
         // Should also check if it can create (i.e. GENERIC_WRITE)
+        /*
+        In case of CREATE_ALWAYS, shouldn't I always replicate it? One would
+        imagine it would delete the old file and create a new one in its
+        place. But CreateFile from MSDN suggests it just overwrites it... so
+        does the new file get created or simply the data gets truncated?
+        */
         {
             call = Some(VFSCall::create(create {
                 path: Cow::Borrowed(&rpath),
@@ -243,37 +262,33 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
     let rpath = wstr_to_path(path);
-    let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
-
-    let stat = symlink_metadata(rrpath);
-    if stat.is_err() {
-        return DokanNtStatusFromWin32(GetLastError());
-    }
-    let file_size = stat.unwrap().len();
 
     if (*info).WriteToEndOfFile != 0 {
-        offset = file_size as i64;
-    } else {
-        // Paging IO cannot write after allocate file size.
-        if (*info).PagingIo != 0 {
-            if offset as u64 >= file_size {
-                *bytes_written = 0;
-                return STATUS_SUCCESS;
-            }
-            if (offset as u64 + len as u64) > file_size {
-                let bytes = file_size - offset as u64;
-                if (bytes >> 32) != 0 {
-                    len = (bytes & 0xFFFFFFFF) as u32;
-                } else {
-                    len = bytes as u32;
-                }
-            }
+        offset = std::i64::MAX;
+    } else if (*info).PagingIo != 0 {
+        println!("Write path hit \"stat\"");
+        let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
+        let stat = symlink_metadata(rrpath); // FIXME, I must avoid "stat" like wild fire in this code path!
+        if stat.is_err() {
+            return DokanNtStatusFromWin32(
+                stat.unwrap_err()
+                    .raw_os_error()
+                    .expect("Failed to get OS error") as u32,
+            );
         }
-        if offset as u64 > file_size {
-            // In the mirror sample helperZeroFileData is not necessary. NTFS
-            // will zero a hole. But if user's file system is different from
-            // NTFS( or other Windows's file systems ) then  users will have to
-            // zero the hole themselves.
+        let file_size = stat.unwrap().len();
+
+        if offset as u64 >= file_size {
+            *bytes_written = 0;
+            return STATUS_SUCCESS;
+        }
+        if (offset as u64 + len as u64) > file_size {
+            let bytes = file_size - offset as u64;
+            if (bytes >> 32) != 0 {
+                len = (bytes & 0xFFFFFFFF) as u32;
+            } else {
+                len = bytes as u32;
+            }
         }
     }
 

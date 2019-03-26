@@ -9,7 +9,7 @@ metablock!(cfg(target_os = "windows") {
     use std::io::{Error, ErrorKind};
     use winapi::um::winbase::LocalFree;
     use winapi::shared::guiddef::GUID;
-    use winapi::um::accctrl::{TRUSTEE_TYPE, SE_OBJECT_TYPE, TRUSTEE_W};
+    use winapi::um::accctrl::{TRUSTEE_W};
     use winapi::um::winnt::{PSECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
     use std::os::windows::ffi::OsStrExt;
     use winapi::shared::winerror::ERROR_SUCCESS;
@@ -47,60 +47,12 @@ pub enum TrusteeForm {
         sid: OsString,
     },
     ObjectsAndName {
-        object_type: ObjectType,
+        object_type: u32,
         object_type_name: Option<OsString>,
         inherited_object_type_name: Option<OsString>,
         name: OsString,
     },
 }
-
-macro_rules! constenum {
-    ($name:ident, $t:ty, $($value:ident),+) => {
-        #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
-        pub enum $name {
-            $(
-                $value,
-            )*
-        }
-
-        #[cfg(target_os = "windows")]
-        impl From<$t> for $name {
-            fn from(t: $t) -> Self {
-                match t {
-                    $(
-                        $value => $name::$value,
-                    )*
-                    _ => panic!("Failed to enum match"),
-                }
-            }
-        }
-
-        #[cfg(target_os = "windows")]
-        impl Into<$t> for $name {
-            fn into(self) -> $t {
-                match self {
-                    $(
-                        $name::$value => $value,
-                    )*
-                }
-            }
-        }
-    }
-}
-
-constenum!(
-    TrusteeType,
-    TRUSTEE_TYPE,
-    TRUSTEE_IS_UNKNOWN,
-    TRUSTEE_IS_USER,
-    TRUSTEE_IS_GROUP,
-    TRUSTEE_IS_DOMAIN,
-    TRUSTEE_IS_ALIAS,
-    TRUSTEE_IS_WELL_KNOWN_GROUP,
-    TRUSTEE_IS_DELETED,
-    TRUSTEE_IS_INVALID,
-    TRUSTEE_IS_COMPUTER
-);
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 #[repr(C)]
@@ -135,28 +87,9 @@ impl Into<GUID> for WinGUID {
     }
 }
 
-constenum!(
-    ObjectType,
-    SE_OBJECT_TYPE,
-    SE_UNKNOWN_OBJECT_TYPE,
-    SE_FILE_OBJECT,
-    SE_SERVICE,
-    SE_PRINTER,
-    SE_REGISTRY_KEY,
-    SE_LMSHARE,
-    SE_KERNEL_OBJECT,
-    SE_WINDOW_OBJECT,
-    SE_DS_OBJECT,
-    SE_DS_OBJECT_ALL,
-    SE_PROVIDER_DEFINED_OBJECT,
-    SE_WMIGUID_OBJECT,
-    SE_REGISTRY_WOW64_32KEY,
-    SE_REGISTRY_WOW64_64KEY
-);
-
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 pub struct Trustee {
-    ty: TrusteeType,
+    ty: u32,
     form: TrusteeForm,
 }
 
@@ -196,7 +129,6 @@ impl From<TRUSTEE_W> for Trustee {
             ACE_INHERITED_OBJECT_TYPE_PRESENT, ACE_OBJECT_TYPE_PRESENT,
         };
 
-        let ty = TrusteeType::from(t.TrusteeType);
         let form = unsafe {
             match t.TrusteeForm {
                 TRUSTEE_IS_SID => {
@@ -229,7 +161,6 @@ impl From<TRUSTEE_W> for Trustee {
                 TRUSTEE_IS_OBJECTS_AND_NAME => {
                     use winapi::um::accctrl::OBJECTS_AND_NAME_W;
                     let t = t.ptstrName as *const OBJECTS_AND_NAME_W;
-                    let ty = ObjectType::from((*t).ObjectType);
                     TrusteeForm::ObjectsAndName {
                         inherited_object_type_name: if flagset!(
                             (*t).ObjectsPresent,
@@ -248,7 +179,7 @@ impl From<TRUSTEE_W> for Trustee {
                         } else {
                             None
                         },
-                        object_type: ty,
+                        object_type: (*t).ObjectType,
                         name: wstr_to_os((*t).ptstrName),
                     }
                 }
@@ -256,7 +187,10 @@ impl From<TRUSTEE_W> for Trustee {
             }
         };
 
-        Trustee { ty, form }
+        Trustee {
+            ty: t.TrusteeType,
+            form,
+        }
     }
 }
 
@@ -300,7 +234,7 @@ impl Into<TRUSTEE_W> for Trustee {
                         | inherited_object_type_name
                             .as_ref()
                             .map_or(0, |_| ACE_INHERITED_OBJECT_TYPE_PRESENT),
-                    ObjectType: object_type.into(),
+                    ObjectType: object_type,
                     ObjectTypeName: object_type_name
                         .map_or(ptr::null_mut(), |o| leak_vec(os_to_wstr(&o))),
                     InheritedObjectTypeName: inherited_object_type_name
@@ -337,7 +271,7 @@ impl Into<TRUSTEE_W> for Trustee {
             pMultipleTrustee: ptr::null_mut(),
             MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
             TrusteeForm: form,
-            TrusteeType: self.ty.into(),
+            TrusteeType: self.ty,
             ptstrName,
         }
     }

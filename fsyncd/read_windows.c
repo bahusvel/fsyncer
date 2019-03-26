@@ -63,14 +63,12 @@ NTSTATUS DOKAN_CALLBACK MirrorReadFile(LPCWSTR FileName, LPVOID Buffer,
 									   DWORD BufferLength, LPDWORD ReadLength,
 									   LONGLONG Offset,
 									   PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	HANDLE handle = (HANDLE)DokanFileInfo->Context;
-	ULONG offset = (ULONG)Offset;
 	BOOL opened = FALSE;
 
-	win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
-
 	if (!handle || handle == INVALID_HANDLE_VALUE) {
+		WCHAR filePath[DOKAN_MAX_PATH];
+		win_translate_path(filePath, DOKAN_MAX_PATH, FileName);
 		handle = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
 							OPEN_EXISTING, 0, NULL);
 		if (handle == INVALID_HANDLE_VALUE) {
@@ -79,16 +77,11 @@ NTSTATUS DOKAN_CALLBACK MirrorReadFile(LPCWSTR FileName, LPVOID Buffer,
 		opened = TRUE;
 	}
 
-	LARGE_INTEGER distanceToMove;
-	distanceToMove.QuadPart = Offset;
-	if (!SetFilePointerEx(handle, distanceToMove, NULL, FILE_BEGIN)) {
-		DWORD error = GetLastError();
-		if (opened)
-			CloseHandle(handle);
-		return DokanNtStatusFromWin32(error);
-	}
+	OVERLAPPED off = {0};
+	off.Offset = (DWORD)Offset;
+	off.OffsetHigh = (DWORD)(Offset >> 32);
 
-	if (!ReadFile(handle, Buffer, BufferLength, ReadLength, NULL)) {
+	if (!ReadFile(handle, Buffer, BufferLength, ReadLength, &off)) {
 		DWORD error = GetLastError();
 		if (opened)
 			CloseHandle(handle);

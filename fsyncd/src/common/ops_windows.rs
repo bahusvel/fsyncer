@@ -11,7 +11,9 @@ pub use winapi::shared::{
 pub use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::{DeleteFileW, RemoveDirectoryW};
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
-pub use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
+pub use winapi::um::winnt::{
+    ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION,
+};
 
 #[link(name = "fsyncer", kind = "static")]
 extern "C" {
@@ -33,7 +35,11 @@ extern "C" {
         disposition: DWORD,
         handle: *mut HANDLE,
     ) -> DWORD;
-    pub fn OpMoveFile(new_name: LPCWSTR, replace: BOOL, handle: HANDLE) -> DWORD;
+    pub fn OpMoveFile(
+        new_name: LPCWSTR,
+        replace: BOOL,
+        handle: HANDLE,
+    ) -> DWORD;
     pub static DOKAN_OPS_PTR: *mut VOID;
 }
 
@@ -120,18 +126,14 @@ pub unsafe fn OpWriteFile(
     handle: HANDLE,
 ) -> DWORD {
     assert!(!handle.is_null() && handle != INVALID_HANDLE_VALUE);
-    use winapi::um::fileapi::{SetFilePointerEx, WriteFile};
-    use winapi::um::winbase::FILE_BEGIN;
-    use winapi::um::winnt::LARGE_INTEGER;
+    use winapi::um::fileapi::WriteFile;
+    use winapi::um::minwinbase::OVERLAPPED;
 
-    let mut offset: LARGE_INTEGER = mem::zeroed();
-    *offset.QuadPart_mut() = byte_offset;
+    let mut off: OVERLAPPED = mem::zeroed();
+    off.u.s_mut().Offset = byte_offset as u32;
+    off.u.s_mut().OffsetHigh = (byte_offset >> 32) as u32;
 
-    if SetFilePointerEx(handle, offset, ptr::null_mut(), FILE_BEGIN) == 0 {
-        return GetLastError();
-    }
-
-    if WriteFile(handle, buffer, len, bytes_written, ptr::null_mut()) == 0 {
+    if WriteFile(handle, buffer, len, bytes_written, &mut off as *mut _) == 0 {
         return GetLastError();
     }
     return ERROR_SUCCESS;
