@@ -6,6 +6,8 @@ pub use self::dispatch_unix::dispatch;
 metablock!(cfg(target_os = "windows") {
 mod dispatch_windows;
 pub use self::dispatch_windows::dispatch;
+extern crate dokan;
+use self::dokan::AddSeSecurityNamePrivilege;
 });
 
 use bincode::deserialize;
@@ -221,6 +223,13 @@ pub fn client_main(matches: ArgMatches) {
     let iolimit_bps =
         parse_human_size(client_matches.value_of("iolimit").unwrap())
             .expect("Invalid format for iolimit");
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        if AddSeSecurityNamePrivilege() == 0 {
+            panic!("Failed to add security priviledge");
+        }
+    }
 
     let mut client = Client::new(
         host,

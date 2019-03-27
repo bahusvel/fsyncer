@@ -1,4 +1,5 @@
 CFLAGS= -g -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
+UNAME := $(shell uname)
 
 ifneq ($(foreground), no)
 	FUSE_FLAGS += -f
@@ -26,9 +27,20 @@ endif
 
 ifeq ($(release), no)
 	FSYNCD_BIN = target/debug/fsyncd
+	ifneq ($(UNAME), Linux)
+		FSYNCD_BIN = $(shell cygpath -wa target/debug/fsyncd.exe)
+	endif
 else 
 	CARGO_BUILD_FLAGS += --release
 	FSYNCD_BIN = target/release/fsyncd
+	ifneq ($(UNAME), Linux)
+		FSYNCD_BIN = $(shell cygpath -wa target/release/fsyncd.exe)
+	endif
+endif
+
+ifneq ($(UNAME), Linux)
+	EXEC_CMD = runas /savecred /env /user:Administrator "cmd /k
+	END_CMD = "
 endif
 
 ifeq ($(journal), bilog)
@@ -80,19 +92,16 @@ build:
 
 fs: build dirs
 	fusermount3 -u -z test_src || true
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)
-	$(POST_CMD)
-
-winfs: build dirs
-	# fusermount3 -u -z test_src || true
-	$(ENV) runas /user:Administrator "$(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)"
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) test_src -- $(FUSE_FLAGS) $(END_CMD)
 	$(POST_CMD)
 
 client: build dirs
 	rm -rf test_dst || true
 	cp -rax .fsyncer-test_src test_dst
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client ./test_dst $(CLIENT_FLAGS)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client test_dst $(CLIENT_FLAGS) $(END_CMD)
 	$(POST_CMD)
+
+test: build fs client
 
 cmd: build dirs
 	ifeq ($(command),)

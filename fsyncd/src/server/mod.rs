@@ -36,12 +36,11 @@ metablock!(cfg(target_os = "windows") {
 //#[cfg(target_os = "windows")]
 mod client;
 use self::client::{Client, ClientStatus};
-
 use clap::ArgMatches;
 use common::*;
 use libc::c_int;
 use std::fs;
-use std::io;
+use std::io::{Error, ErrorKind};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, RwLock};
@@ -123,7 +122,7 @@ fn send_call<'a>(
     call: Cow<'a, VFSCall<'a>>,
     client: &Client,
     ret: i32,
-) -> Result<(), io::Error> {
+) -> Result<(), Error> {
     match client.mode {
         ClientMode::MODE_SYNC
         | ClientMode::MODE_SEMISYNC
@@ -220,7 +219,7 @@ pub fn display_fuse_help() {
     unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
 }
 
-fn check_mount(path: &str) -> Result<bool, io::Error> {
+fn check_mount(path: &str) -> Result<bool, Error> {
     Ok(Command::new("mountpoint")
         .arg(path)
         .spawn()?
@@ -228,9 +227,75 @@ fn check_mount(path: &str) -> Result<bool, io::Error> {
         .success())
 }
 
-fn figure_out_paths(
-    matches: &ArgMatches,
-) -> Result<(PathBuf, PathBuf), io::Error> {
+#[cfg(target_os = "windows")]
+fn copy_security(src: &Path, dst: &Path) -> Result<(), Error> {
+    use common::with_file;
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+    use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
+    use winapi::um::winnt::{
+        ACCESS_SYSTEM_SECURITY, DACL_SECURITY_INFORMATION, GENERIC_READ,
+        GENERIC_WRITE, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        READ_CONTROL, SACL_SECURITY_INFORMATION, WRITE_DAC,
+    };
+    use winapi::um::winuser::{GetUserObjectSecurity, SetUserObjectSecurity};
+    const DESC_LENGTH: usize = 4096;
+    let info = OWNER_SECURITY_INFORMATION
+        | GROUP_SECURITY_INFORMATION
+        | DACL_SECURITY_INFORMATION
+        | SACL_SECURITY_INFORMATION;
+    let mut desc: [u8; DESC_LENGTH] = [0; DESC_LENGTH];
+    let mut needed: u32 = 0;
+    with_file(
+        src,
+        OpenOptions::new()
+            .access_mode(ACCESS_SYSTEM_SECURITY | GENERIC_READ | READ_CONTROL)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS),
+        |handle| {
+            if unsafe {
+                GetUserObjectSecurity(
+                    handle,
+                    &info as *const _ as *mut _,
+                    &mut desc as *mut _ as *mut _,
+                    DESC_LENGTH as u32,
+                    &mut needed as *mut _,
+                )
+            } == 0
+            {
+                Err(Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        },
+    )??;
+    if needed as usize > DESC_LENGTH {
+        panic!("Failed to copy really large descriptor, Denis is lazy.");
+    }
+    with_file(
+        dst,
+        OpenOptions::new()
+            .access_mode(ACCESS_SYSTEM_SECURITY | GENERIC_WRITE | WRITE_DAC)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS),
+        |handle| {
+            if unsafe {
+                SetUserObjectSecurity(
+                    handle,
+                    &info as *const _ as *mut _,
+                    &desc as *const _ as *mut _,
+                )
+            } == 0
+            {
+                Err(Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        },
+    )??;
+
+    Ok(())
+}
+
+fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
     let mount_path =
         canonize_path(Path::new(matches.value_of("mount-path").unwrap()))?;
 
@@ -264,8 +329,8 @@ fn figure_out_paths(
         // Backing store specified
         let path = Path::new(matches.value_of("backing-store").unwrap());
         if !path.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
+            return Err(Error::new(
+                ErrorKind::NotFound,
                 "Backing path does not exist",
             ));
         }
@@ -296,8 +361,8 @@ fn figure_out_paths(
                 .spawn()?
                 .wait()?;
             if !res.success() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(Error::new(
+                    ErrorKind::Other,
                     "Failed to move old mountpoint",
                 ));
             }
@@ -308,18 +373,57 @@ fn figure_out_paths(
 
     if backing_store.exists() && !mount_exists {
         fs::create_dir_all(&mount_path)?;
+        copy_security(&backing_store, &mount_path)?;
     } else if !backing_store.exists() && !mount_exists {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
+        return Err(Error::new(
+            ErrorKind::NotFound,
             "Mount path does not exist",
         ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // On windows mount path may exist, but cannot be used by dokan because
+        // some other process is already accessing it.
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut recreated = false;
+        loop {
+            let err = fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS)
+                .share_mode(0)
+                .open(&mount_path);
+            if err.is_err()
+                && err
+                    .unwrap_err()
+                    .raw_os_error()
+                    .expect("Failed to get OS error code")
+                    as u32
+                    == winapi::shared::winerror::ERROR_SHARING_VIOLATION
+            {
+                if !recreated {
+                    println!("Mount path is busy, attempting to recreate it");
+                    fs::remove_dir(&mount_path)?;
+                    fs::create_dir(&mount_path)?;
+                    copy_security(&backing_store, &mount_path)?;
+                    recreated = true
+                } else {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Failed to establish ownership of the mount path",
+                    ));
+                }
+            } else {
+                break;
+            }
+        }
     }
 
     Ok((mount_path.to_path_buf(), backing_store))
 }
 
 #[cfg(target_family = "unix")]
-fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, io::Error> {
+fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, Error> {
     let exists = Path::new(path).exists();
     let f = OpenOptions::new()
         .read(true)
@@ -343,7 +447,7 @@ fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, io::Error> {
     }
 }
 
-pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
+pub fn server_main(matches: ArgMatches) -> Result<(), Error> {
     let server_matches = matches.subcommand_matches("server").unwrap();
     let (mount_path, backing_store) = figure_out_paths(&server_matches)?;
     println!("{:?}, {:?}", mount_path, backing_store);
@@ -438,6 +542,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), io::Error> {
         use self::dokan::*;
         let mut options = DOKAN_OPTIONS::zero();
         let wstr_mount_path = path_to_wstr(&mount_path);
+
         options.MountPoint = wstr_mount_path.as_ptr();
         //debug!(wstr_mount_path)
         options.Options |= DOKAN_OPTION_ALT_STREAM;

@@ -34,7 +34,9 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 ) -> NTSTATUS {
     debug!(wstr_to_path(path));
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
-    use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
+    use winapi::um::winbase::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_DELETE_ON_CLOSE,
+    };
 
     let rpath = wstr_to_path(path);
     let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
@@ -46,6 +48,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         //This is introduced because cmd.exe will try to open paths like
         // \\<partial>*. This is exactly what mirror.c from Dokan does, it
         // doesn't handle them properly, just errors with 123 code.
+        println!("Attr failed {:?}", attr.as_ref().unwrap_err());
         return DokanNtStatusFromWin32(
             attr.unwrap_err()
                 .raw_os_error()
@@ -74,8 +77,6 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         &mut user_attributes as *mut _,
         &mut user_disposition as *mut _,
     );
-
-    //debug!("Create file", wstr_to_path(path), user_disposition);
 
     if exists && attr.as_ref().unwrap().is_dir() {
         if !flagset!(dokan_options, FILE_NON_DIRECTORY_FILE) {
@@ -128,7 +129,6 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     } else {
         use std::os::windows::fs::MetadataExt;
         use winapi::shared::ntstatus::STATUS_CANNOT_DELETE;
-        use winapi::um::winbase::FILE_FLAG_DELETE_ON_CLOSE;
         use winapi::um::winnt::FILE_ATTRIBUTE_READONLY;
         if (exists
             && flagset!(

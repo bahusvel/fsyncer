@@ -17,8 +17,9 @@ pub use self::file_security::FileSecurity;
 use libc::int64_t;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
+use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
-use std::io;
+use std::io::Error;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -71,7 +72,7 @@ bitflags! {
 }
 
 #[cfg(target_family = "unix")]
-pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
+pub fn hash_metadata(path: &Path) -> Result<u64, Error> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let mut hasher = DefaultHasher::new();
@@ -99,7 +100,7 @@ pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn hash_metadata(path: &Path) -> Result<u64, io::Error> {
+pub fn hash_metadata(path: &Path) -> Result<u64, Error> {
     use std::os::windows::fs::MetadataExt;
     let mut hasher = DefaultHasher::new();
     let empty = Path::new("");
@@ -168,7 +169,7 @@ metablock!(cfg(target_family = "unix") {
     pub fn trans_cstr(path: &CStr, root: &Path) -> CString {
         translate_path(path.to_path()).into_cstring()
     }
-    pub fn canonize_path(path: &Path) -> Result<PathBuf, io::Error> {
+    pub fn canonize_path(path: &Path) -> Result<PathBuf, Error> {
         path.canonicalize()
     }
 });
@@ -197,7 +198,7 @@ metablock!(cfg(target_os = "windows") {
     pub unsafe fn trans_wstr(path: LPCWSTR, root: &Path) -> Vec<u16> {
         path_to_wstr(&translate_path(&wstr_to_path(path), root))
     }
-    pub fn canonize_path(path: &Path) -> Result<PathBuf, io::Error> {
+    pub fn canonize_path(path: &Path) -> Result<PathBuf, Error> {
         // Rust implementation of Path::canonicalize() on windows is retarded, hence this
         use winapi::um::fileapi::GetFullPathNameW;
         use std::ptr;
@@ -205,8 +206,21 @@ metablock!(cfg(target_os = "windows") {
         let wpath = path_to_wstr(path);
         let mut buf: [u16; MAX_PATH] = [0; MAX_PATH];
         if unsafe {GetFullPathNameW(wpath.as_ptr(), buf.len() as u32,  buf.as_mut_ptr(), ptr::null_mut())} == 0 {
-            return Err(io::Error::last_os_error());
+            return Err(Error::last_os_error());
         }
         Ok(unsafe {wstr_to_path(buf[..].as_mut_ptr())})
     }
+    pub fn with_file<T, F: (FnOnce(HANDLE) -> T)>(
+    path: &Path,
+    options: &OpenOptions,
+    f: F,
+) -> Result<T, Error> {
+    use std::os::windows::io::{IntoRawHandle, FromRawHandle};
+    use std::fs::File;
+    let file = options.open(path)?;
+    let handle = file.into_raw_handle();
+    let res = f(handle);
+    unsafe {File::from_raw_handle(handle)};
+    Ok(res)
+}
 });

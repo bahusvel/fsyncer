@@ -55,7 +55,6 @@ macro_rules! debug {
             println!();
         }
     }
-    ;
 }
 
 #[macro_export]

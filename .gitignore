@@ -6,6 +6,8 @@ build
 .fsyncer-*
 bindgen
 *.fj
+doc/mirror.exe
+doc/mirror.obj
 
 # Magic rule to exclude binaries in test 
 test/*

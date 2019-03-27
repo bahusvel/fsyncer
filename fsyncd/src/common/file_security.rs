@@ -526,46 +526,49 @@ impl FileSecurity {
         let mut desc = ptr::null_mut();
         let mut size: u32 = 0;
 
-        if let FileSecurity::Windows {
-            owner,
-            group,
-            sacl,
-            dacl,
-        } = self
-        {
-            if BuildSecurityDescriptorW(
-                owner.map_or(ptr::null_mut(), |owner| {
-                    BuildTrusteeWithNameW(
-                        &mut ownerT as *mut _,
-                        leak_vec(os_to_wstr(OsStr::new(&owner))),
-                    );
-                    &mut ownerT as *mut _
-                }),
-                group.map_or(ptr::null_mut(), |group| {
-                    BuildTrusteeWithNameW(
-                        &mut groupT as *mut _,
-                        leak_vec(os_to_wstr(OsStr::new(&group))),
-                    );
-                    &mut groupT as *mut _
-                }),
-                dacl.as_ref().map_or(0, |l| l.len() as u32),
-                dacl.map_or(ptr::null_mut(), |l| leak_vec(acl_list(l))),
-                sacl.as_ref().map_or(0, |l| l.len() as u32),
-                sacl.map_or(ptr::null_mut(), |l| leak_vec(acl_list(l))),
-                ptr::null_mut(),
-                &mut size as *mut _,
-                &mut desc as *mut _,
-            ) != ERROR_SUCCESS
-            {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Failed to set acl entries",
-                ));
+        match self {
+            FileSecurity::Windows {
+                owner,
+                group,
+                sacl,
+                dacl,
+            } => {
+                if BuildSecurityDescriptorW(
+                    owner.map_or(ptr::null_mut(), |owner| {
+                        BuildTrusteeWithNameW(
+                            &mut ownerT as *mut _,
+                            leak_vec(os_to_wstr(OsStr::new(&owner))),
+                        );
+                        &mut ownerT as *mut _
+                    }),
+                    group.map_or(ptr::null_mut(), |group| {
+                        BuildTrusteeWithNameW(
+                            &mut groupT as *mut _,
+                            leak_vec(os_to_wstr(OsStr::new(&group))),
+                        );
+                        &mut groupT as *mut _
+                    }),
+                    dacl.as_ref().map_or(0, |l| l.len() as u32),
+                    dacl.map_or(ptr::null_mut(), |l| leak_vec(acl_list(l))),
+                    sacl.as_ref().map_or(0, |l| l.len() as u32),
+                    sacl.map_or(ptr::null_mut(), |l| leak_vec(acl_list(l))),
+                    ptr::null_mut(),
+                    &mut size as *mut _,
+                    &mut desc as *mut _,
+                ) != ERROR_SUCCESS
+                {
+                    Err(Error::new(
+                        ErrorKind::Other,
+                        "Failed to set acl entries",
+                    ))
+                } else {
+                    Ok(desc)
+                }
             }
-        } else {
-            panic!("Cannot yet convert non windows filesecurity to descriptor")
+            FileSecurity::Default => Ok(ptr::null_mut()),
+            _ => panic!(
+                "Cannot yet convert non windows filesecurity to descriptor"
+            ),
         }
-
-        Ok(desc)
     }
 }

@@ -1,22 +1,20 @@
 use common::*;
 use libc::c_int;
 use std::fs::OpenOptions;
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 
-fn with_file<F: (FnOnce(HANDLE) -> DWORD)>(
-    path: &Path,
-    options: &OpenOptions,
-    f: F,
-) -> DWORD {
-    use std::os::windows::io::IntoRawHandle;
-    let file = options.open(path);
-    if file.is_err() {
-        return winapi::shared::winerror::ERROR_INVALID_HANDLE;
+trait ErrorOrOk<T> {
+    fn err_or_ok(self) -> T;
+}
+
+impl<T> ErrorOrOk<T> for Result<T, T> {
+    fn err_or_ok(self) -> T {
+        match self {
+            Err(t) => t,
+            Ok(t) => t,
+        }
     }
-    let handle = file.unwrap().into_raw_handle();
-    let res = f(handle);
-    unsafe { winapi::um::handleapi::CloseHandle(handle) };
-    res
 }
 
 pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
@@ -41,9 +39,11 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                         &accessed as *const FILETIME,
                         &written as *const FILETIME,
                         handle,
-                    )
+                    ) as i32
                 },
-            ) as i32
+            )
+            .map_err(|e| e.raw_os_error().unwrap())
+            .err_or_ok()
         }
 
         VFSCall::create(create {
@@ -54,7 +54,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let mut descriptor = security
+            let descriptor = security
                 .clone()
                 .to_descriptor()
                 .expect("Failed to create security descriptor");
@@ -87,23 +87,32 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                         &mut bytes_written as *mut _,
                         *offset,
                         handle,
-                    )
+                    ) as i32
                 },
-            ) as i32
+            )
+            .map_err(|e| e.raw_os_error().unwrap())
+            .err_or_ok()
         }
         VFSCall::truncate(truncate { path, size }) => with_file(
             &translate_path(path, root),
             OpenOptions::new().write(true),
-            |handle| OpSetEndOfFile(*size, handle),
-        ) as i32,
+            |handle| OpSetEndOfFile(*size, handle) as i32,
+        )
+        .map_err(|e| e.raw_os_error().unwrap())
+        .err_or_ok(),
         VFSCall::rename(rename { from, to, flags }) => {
+            use winapi::um::winnt::FILE_SHARE_DELETE;
             let rto = translate_path(to, root);
             let real_to = path_to_wstr(&rto);
             with_file(
                 &translate_path(from, root),
-                OpenOptions::new().write(true),
-                |handle| OpMoveFile(real_to.as_ptr(), *flags as i32, handle),
-            ) as i32
+                OpenOptions::new().write(true).share_mode(FILE_SHARE_DELETE),
+                |handle| {
+                    OpMoveFile(real_to.as_ptr(), *flags as i32, handle) as i32
+                },
+            )
+            .map_err(|e| e.raw_os_error().unwrap())
+            .err_or_ok()
         }
         VFSCall::rmdir(rmdir { path }) => {
             let rpath = translate_path(path, root);
@@ -122,7 +131,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let mut descriptor = security
+            let descriptor = security
                 .clone()
                 .to_descriptor()
                 .expect("Failed to create security descriptor");
@@ -144,6 +153,9 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             res as i32
         }
         VFSCall::security(security { path, security }) => {
+            use winapi::um::winnt::{
+                ACCESS_SYSTEM_SECURITY, GENERIC_WRITE, WRITE_DAC,
+            };
             let mut info = 0;
 
             if let FileSecurity::Windows {
@@ -169,17 +181,22 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                 panic!("Security information needs translation")
             }
 
-            let mut descriptor = security
+            let descriptor = security
                 .clone()
                 .to_descriptor()
                 .expect("Failed to create security descriptor");
             with_file(
                 &translate_path(path, root),
-                OpenOptions::new().write(true),
+                OpenOptions::new().access_mode(
+                    ACCESS_SYSTEM_SECURITY | GENERIC_WRITE | WRITE_DAC,
+                ), // may need to set this SE_TAKE_OWNERSHIP_NAME
                 |handle| {
                     OpSetFileSecurity(&mut info as *mut _, descriptor, handle)
+                        as i32
                 },
-            ) as i32
+            )
+            .map_err(|e| e.raw_os_error().unwrap())
+            .err_or_ok()
         }
         VFSCall::chmod(chmod { path, mode }) => {
             let rpath = translate_path(path, root);
