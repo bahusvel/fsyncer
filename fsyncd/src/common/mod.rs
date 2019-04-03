@@ -205,7 +205,11 @@ metablock!(cfg(target_os = "windows") {
         const MAX_PATH: usize = 32767; // Supports the longest path
         let wpath = path_to_wstr(path);
         let mut buf: [u16; MAX_PATH] = [0; MAX_PATH];
-        if unsafe {GetFullPathNameW(wpath.as_ptr(), buf.len() as u32,  buf.as_mut_ptr(), ptr::null_mut())} == 0 {
+        buf[0] = '\\' as u16;
+        buf[1] = '\\' as u16;
+        buf[2] = '?' as u16;
+        buf[3] = '\\' as u16;
+        if unsafe {GetFullPathNameW(wpath.as_ptr(), buf.len() as u32,  buf.as_mut_ptr().offset(4), ptr::null_mut())} == 0 {
             return Err(Error::last_os_error());
         }
         Ok(unsafe {wstr_to_path(buf[..].as_mut_ptr())})

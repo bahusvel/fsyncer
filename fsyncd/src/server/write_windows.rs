@@ -3,23 +3,12 @@ use libc::uint32_t;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
-use std::io::ErrorKind;
+use std::io::{Error, ErrorKind};
 use std::mem;
 use std::slice;
 use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::winnt::FILE_SHARE_READ;
-
-unsafe fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
-    use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
-    if ImpersonateLoggedOnUser(handle) == 0 {
-        panic!("Error impersonating logged on user");
-    }
-    let res = f();
-    RevertToSelf();
-    CloseHandle(handle);
-    res
-}
 
 #[no_mangle]
 pub unsafe extern "stdcall" fn MirrorCreateFile(
@@ -32,8 +21,48 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     dokan_options: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    unsafe fn as_user<O, F: (FnOnce() -> O)>(handle: HANDLE, f: F) -> O {
+        use winapi::um::securitybaseapi::{
+            ImpersonateLoggedOnUser, RevertToSelf,
+        };
+        if ImpersonateLoggedOnUser(handle) == 0 {
+            panic!("Error impersonating logged on user");
+        }
+        let res = f();
+        RevertToSelf();
+        CloseHandle(handle);
+        res
+    }
+
+    unsafe fn user_from_token(token: HANDLE) -> Result<String, Error> {
+        use common::file_security::psid_to_string;
+        use winapi::um::securitybaseapi::GetTokenInformation;
+        use winapi::um::winnt::{TokenUser, TOKEN_USER};
+
+        let mut user_buff: [u8; 4096] = [0; 4096];
+        let mut length: u32 = 0;
+
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            user_buff.as_mut_ptr() as *mut _,
+            4096,
+            &mut length as *mut _,
+        ) == 0
+        {
+            return Err(Error::last_os_error());
+        }
+
+        let user = user_buff.as_ptr() as *const TOKEN_USER;
+
+        Ok(psid_to_string((*user).User.Sid)
+            .into_string()
+            .expect("Failed to convert SID to string"))
+    }
+
     debug!(wstr_to_path(path));
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
+
     use winapi::um::winbase::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_DELETE_ON_CLOSE,
     };
@@ -67,6 +96,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 
     let user_handle = DokanOpenRequestorToken(info);
     assert!(user_handle != INVALID_HANDLE_VALUE);
+    let user_sid = user_from_token(user_handle)
+        .expect("Failed to retrieve user from handle");
 
     DokanMapKernelToUserCreateFileFlags(
         dokan_access,
@@ -94,10 +125,15 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     let security = if sec_desc.is_null() {
         // TODO if descriptor is NULL default descriptor is assigned, I probably
         // need to query it and send it to the other side
-        FileSecurity::Default
+        FileSecurity::Default { creator: user_sid }
     } else {
-        let s = FileSecurity::parse_security(sec_desc, None, false)
+        let mut s = FileSecurity::parse_security(sec_desc, None, false)
             .expect("Failed to parse security descriptor");
+        if let FileSecurity::Windows { ref mut owner, .. } = s {
+            if owner.is_none() {
+                *owner = Some(user_sid)
+            }
+        }
         debug!(s);
         s
     };
@@ -447,11 +483,22 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     _length: ULONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    use winapi::um::winnt::{
+        PROTECTED_DACL_SECURITY_INFORMATION,
+        PROTECTED_SACL_SECURITY_INFORMATION,
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
+        UNPROTECTED_SACL_SECURITY_INFORMATION,
+    };
     let file_sec =
         FileSecurity::parse_security(descriptor, Some(security), false)
             .expect("Failed to parse security");
 
     println!("Security {:#?}", file_sec);
+
+    debug!(flagset!((*security), UNPROTECTED_DACL_SECURITY_INFORMATION));
+    debug!(flagset!((*security), PROTECTED_DACL_SECURITY_INFORMATION));
+    debug!(flagset!((*security), UNPROTECTED_SACL_SECURITY_INFORMATION));
+    debug!(flagset!((*security), PROTECTED_SACL_SECURITY_INFORMATION));
 
     let call = VFSCall::security(security {
         path: Cow::Owned(wstr_to_path(path)),

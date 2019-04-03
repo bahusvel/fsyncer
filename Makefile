@@ -69,7 +69,13 @@ else
 endif
 
 ifneq ($(stream),)
-	CLIENT_FLAGS ++ --stream-compressor=$(stream)
+	CLIENT_FLAGS += --stream-compressor=$(stream)
+endif
+
+ifeq ($(UNAME), Linux)
+	CLIENT_CP=cp -rax .fsyncer-test_src test_dst
+else
+	CLIENT_CP=robocopy .fsyncer-test_src test_dst /mir /it || true
 endif
 
 dirs:
@@ -92,13 +98,13 @@ build:
 
 fs: build dirs
 	fusermount3 -u -z test_src || true
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) test_src -- $(FUSE_FLAGS) $(END_CMD)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) server $(SERVER_FLAGS) test_src -- $(FUSE_FLAGS) $(END_CMD)
 	$(POST_CMD)
 
 client: build dirs
 	rm -rf test_dst || true
-	cp -rax .fsyncer-test_src test_dst
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client test_dst $(CLIENT_FLAGS) $(END_CMD)
+	$(CLIENT_CP)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) client test_dst $(CLIENT_FLAGS) $(END_CMD)
 	$(POST_CMD)
 
 test: build fs client

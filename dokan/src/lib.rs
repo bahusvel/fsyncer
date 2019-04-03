@@ -207,7 +207,7 @@ extern "stdcall" {
 #[link(name = "helper", kind = "static")]
 extern "stdcall" {
     static CONST_DOKAN_VERSION: u16;
-    pub fn AddSeSecurityNamePrivilege() -> BOOL;
+    pub fn AddPrivileges() -> BOOL;
 }
 
 static mut MOUNT_POINT: LPCWSTR = ptr::null();
@@ -230,9 +230,6 @@ pub unsafe fn dokan_main(
     ops: PDOKAN_OPERATIONS,
 ) -> Result<DokanResult, i32> {
     MOUNT_POINT = options.MountPoint;
-    if AddSeSecurityNamePrivilege() == 0 {
-        panic!("Failed tp add security priviledge");
-    }
     if SetConsoleCtrlHandler(Some(handler), 1) == 0 {
         panic!("Failed to set dokan exit handler");
     }

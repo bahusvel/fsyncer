@@ -1,12 +1,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use error::Error;
 use std::ffi::OsString;
 use std::ptr;
 
 metablock!(cfg(target_os = "windows") {
     use winapi::um::winnt::{PACL, PSID};
-    use std::io::{Error, ErrorKind};
+    use std::io::{self, ErrorKind};
     use winapi::um::winbase::LocalFree;
     use winapi::shared::guiddef::GUID;
     use winapi::um::accctrl::{TRUSTEE_W};
@@ -21,6 +22,7 @@ metablock!(cfg(target_os = "windows") {
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 pub enum FileSecurity {
     Windows {
+        info: Option<u32>,
         group: Option<String>,
         owner: Option<String>,
         dacl: Option<Vec<ACE>>,
@@ -34,7 +36,9 @@ pub enum FileSecurity {
         owner: Option<String>,
         group: Option<String>,
     },
-    Default,
+    Default {
+        creator: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
@@ -94,7 +98,7 @@ pub struct Trustee {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn psid_to_string(sid: PSID) -> OsString {
+pub unsafe fn psid_to_string(sid: PSID) -> OsString {
     use common::wstr_to_os;
     use winapi::shared::sddl::ConvertSidToStringSidW;
     let mut p: *mut u16 = ptr::null_mut();
@@ -286,7 +290,7 @@ pub struct ACE {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn acl_entries(acl: PACL) -> Result<Vec<ACE>, Error> {
+unsafe fn acl_entries(acl: PACL) -> Result<Vec<ACE>, Error<io::Error>> {
     use winapi::shared::winerror::ERROR_SUCCESS;
     use winapi::um::accctrl::EXPLICIT_ACCESS_W;
     use winapi::um::aclapi::GetExplicitEntriesFromAclW;
@@ -302,24 +306,24 @@ unsafe fn acl_entries(acl: PACL) -> Result<Vec<ACE>, Error> {
         &mut entries as *mut _,
     ) != ERROR_SUCCESS
     {
-        return Err(Error::new(ErrorKind::Other, "Failed to get acl entries"));
+        return Err(make_err!(io::Error::last_os_error()));
     }
-
-    assert!(!entries.is_null());
 
     let mut rlist = Vec::new();
-
-    for i in 0..count {
-        let entry = entries.offset(i as isize);
-        rlist.push(ACE {
-            permisssions: (*entry).grfAccessPermissions,
-            mode: (*entry).grfAccessMode,
-            inheritance: (*entry).grfInheritance,
-            trustee: Trustee::from((*entry).Trustee),
-        });
+    if count != 0 {
+        assert!(!entries.is_null());
+        for i in 0..count {
+            let entry = entries.offset(i as isize);
+            rlist.push(ACE {
+                permisssions: (*entry).grfAccessPermissions,
+                mode: (*entry).grfAccessMode,
+                inheritance: (*entry).grfInheritance,
+                trustee: Trustee::from((*entry).Trustee),
+            });
+        }
+        LocalFree(entries as *mut _);
     }
 
-    LocalFree(entries as *mut _);
     Ok(rlist)
 }
 
@@ -336,7 +340,9 @@ unsafe fn acl_list(aces: Vec<ACE>) -> Vec<EXPLICIT_ACCESS_W> {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn lookup_account(psid: PSID) -> Result<(String, String), Error> {
+unsafe fn lookup_account(
+    psid: PSID,
+) -> Result<(String, String), Error<io::Error>> {
     // TODO keep cache of lookups
     use std::ffi::CStr;
     use winapi::um::winbase::LookupAccountSidA;
@@ -357,7 +363,7 @@ unsafe fn lookup_account(psid: PSID) -> Result<(String, String), Error> {
         &mut acc_type as *mut _,
     ) == 0
     {
-        return Err(Error::last_os_error());
+        return Err(make_err!(io::Error::last_os_error()));
     }
     let domain = String::from(
         CStr::from_bytes_with_nul(&domain_buf[..domain_len as usize])
@@ -378,7 +384,7 @@ unsafe fn lookup_account(psid: PSID) -> Result<(String, String), Error> {
 unsafe fn acl_from_descriptor(
     descriptor: PSECURITY_DESCRIPTOR,
     dacl: bool,
-) -> Result<(PACL, bool), Error> {
+) -> Result<(PACL, bool), Error<io::Error>> {
     use winapi::um::securitybaseapi::{
         GetSecurityDescriptorDacl, GetSecurityDescriptorSacl,
     };
@@ -394,7 +400,7 @@ unsafe fn acl_from_descriptor(
             &mut defaulted as *mut _,
         ) == 0
         {
-            return Err(Error::last_os_error());
+            return Err(make_err!(io::Error::last_os_error()));
         }
     } else {
         if GetSecurityDescriptorSacl(
@@ -404,7 +410,7 @@ unsafe fn acl_from_descriptor(
             &mut defaulted as *mut _,
         ) == 0
         {
-            return Err(Error::last_os_error());
+            return Err(make_err!(io::Error::last_os_error()));
         }
     }
     if present == 0 {
@@ -419,7 +425,7 @@ unsafe fn acl_from_descriptor(
 unsafe fn psid_from_descriptor(
     descriptor: PSECURITY_DESCRIPTOR,
     owner: bool,
-) -> Result<(PSID, bool), Error> {
+) -> Result<(PSID, bool), Error<io::Error>> {
     use winapi::um::securitybaseapi::{
         GetSecurityDescriptorGroup, GetSecurityDescriptorOwner,
     };
@@ -433,7 +439,7 @@ unsafe fn psid_from_descriptor(
             &mut defaulted as *mut _,
         ) == 0
         {
-            return Err(Error::last_os_error());
+            return Err(make_err!(io::Error::last_os_error()));
         }
     } else {
         if GetSecurityDescriptorGroup(
@@ -442,7 +448,7 @@ unsafe fn psid_from_descriptor(
             &mut defaulted as *mut _,
         ) == 0
         {
-            return Err(Error::last_os_error());
+            return Err(make_err!(io::Error::last_os_error()));
         }
     }
 
@@ -455,21 +461,56 @@ impl FileSecurity {
         desc: PSECURITY_DESCRIPTOR,
         info: Option<PSECURITY_INFORMATION>,
         translate_sid: bool,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error<io::Error>> {
+        use common::wstr_to_os;
+        use winapi::shared::sddl::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW,
+            SDDL_REVISION_1,
+        };
         use winapi::um::winnt::{
             DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-            OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+            PROTECTED_SACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+            UNPROTECTED_DACL_SECURITY_INFORMATION,
+            UNPROTECTED_SACL_SECURITY_INFORMATION,
         };
+
+        let mut s: *mut u16 = ptr::null_mut();
+        if ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            desc,
+            SDDL_REVISION_1 as u32,
+            info.map(|i| *i).unwrap_or(
+                DACL_SECURITY_INFORMATION
+                    | PROTECTED_DACL_SECURITY_INFORMATION
+                    | PROTECTED_SACL_SECURITY_INFORMATION
+                    | OWNER_SECURITY_INFORMATION
+                    | SACL_SECURITY_INFORMATION
+                    | DACL_SECURITY_INFORMATION
+                    | GROUP_SECURITY_INFORMATION
+                    | UNPROTECTED_DACL_SECURITY_INFORMATION
+                    | UNPROTECTED_SACL_SECURITY_INFORMATION,
+            ),
+            &mut s as *mut _,
+            ptr::null_mut(),
+        ) == 0
+        {
+            debug!(io::Error::last_os_error());
+        } else {
+            debug!(wstr_to_os(s));
+            LocalFree(s as _);
+        }
+
         Ok(FileSecurity::Windows {
-            // This is invalid, I tthink I need to use GetSecurityDescriptorXXXX
             owner: if info.is_some()
                 && !flagset!(*info.unwrap(), OWNER_SECURITY_INFORMATION)
             {
                 None
             } else {
-                let (psid, _) = psid_from_descriptor(desc, true)?;
+                let (psid, _) = psid_from_descriptor(desc, true)
+                    .map_err(|e| trace_err!(e))?;
                 if translate_sid {
-                    let (_, acc_name) = lookup_account(psid)?;
+                    let (_, acc_name) =
+                        lookup_account(psid).map_err(|e| trace_err!(e))?;
                     Some(acc_name)
                 } else {
                     Some(
@@ -484,9 +525,11 @@ impl FileSecurity {
             {
                 None
             } else {
-                let (psid, _) = psid_from_descriptor(desc, false)?;
+                let (psid, _) = psid_from_descriptor(desc, false)
+                    .map_err(|e| trace_err!(e))?;
                 if translate_sid {
-                    let (_, acc_name) = lookup_account(psid)?;
+                    let (_, acc_name) =
+                        lookup_account(psid).map_err(|e| trace_err!(e))?;
                     Some(acc_name)
                 } else {
                     Some(
@@ -501,24 +544,40 @@ impl FileSecurity {
             {
                 None
             } else {
-                let (acl, _) = acl_from_descriptor(desc, true)?;
-                Some(acl_entries(acl)?)
+                let (acl, _) = acl_from_descriptor(desc, true)
+                    .map_err(|e| trace_err!(e))?;
+                Some(acl_entries(acl).map_err(|e| trace_err!(e))?)
             },
             sacl: if info.is_some()
                 && !flagset!(*info.unwrap(), SACL_SECURITY_INFORMATION)
             {
                 None
             } else {
-                let (acl, _) = acl_from_descriptor(desc, false)?;
-                Some(acl_entries(acl)?)
+                let (acl, _) = acl_from_descriptor(desc, false)
+                    .map_err(|e| trace_err!(e))?;
+                Some(acl_entries(acl).map_err(|e| trace_err!(e))?)
             },
+            info: info.map(|i| {
+                (*i) & (DACL_SECURITY_INFORMATION
+                    | PROTECTED_DACL_SECURITY_INFORMATION
+                    | PROTECTED_SACL_SECURITY_INFORMATION
+                    | OWNER_SECURITY_INFORMATION
+                    | SACL_SECURITY_INFORMATION
+                    | DACL_SECURITY_INFORMATION
+                    | GROUP_SECURITY_INFORMATION
+                    | UNPROTECTED_DACL_SECURITY_INFORMATION
+                    | UNPROTECTED_SACL_SECURITY_INFORMATION)
+            }),
         })
     }
 
-    pub unsafe fn to_descriptor(self) -> Result<PSECURITY_DESCRIPTOR, Error> {
+    pub unsafe fn to_descriptor(
+        self,
+    ) -> Result<PSECURITY_DESCRIPTOR, Error<io::Error>> {
         use std::mem;
         use winapi::um::aclapi::{
             BuildSecurityDescriptorW, BuildTrusteeWithNameW,
+            BuildTrusteeWithSidW,
         };
 
         let mut ownerT: TRUSTEE_W = mem::zeroed();
@@ -532,6 +591,7 @@ impl FileSecurity {
                 group,
                 sacl,
                 dacl,
+                ..
             } => {
                 if BuildSecurityDescriptorW(
                     owner.map_or(ptr::null_mut(), |owner| {
@@ -557,15 +617,31 @@ impl FileSecurity {
                     &mut desc as *mut _,
                 ) != ERROR_SUCCESS
                 {
-                    Err(Error::new(
-                        ErrorKind::Other,
-                        "Failed to set acl entries",
-                    ))
-                } else {
-                    Ok(desc)
+                    return Err(make_err!(io::Error::last_os_error()));
                 }
+                Ok(desc)
             }
-            FileSecurity::Default => Ok(ptr::null_mut()),
+            FileSecurity::Default { creator } => {
+                BuildTrusteeWithSidW(
+                    &mut ownerT as *mut _,
+                    string_to_sid(OsString::from(creator)),
+                );
+                if BuildSecurityDescriptorW(
+                    &mut ownerT as *mut _,
+                    ptr::null_mut(),
+                    0,
+                    ptr::null_mut(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut size as *mut _,
+                    &mut desc as *mut _,
+                ) != ERROR_SUCCESS
+                {
+                    return Err(make_err!(io::Error::last_os_error()));
+                }
+                Ok(desc)
+            }
             _ => panic!(
                 "Cannot yet convert non windows filesecurity to descriptor"
             ),

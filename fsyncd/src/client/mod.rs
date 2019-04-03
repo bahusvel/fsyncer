@@ -7,7 +7,7 @@ metablock!(cfg(target_os = "windows") {
 mod dispatch_windows;
 pub use self::dispatch_windows::dispatch;
 extern crate dokan;
-use self::dokan::AddSeSecurityNamePrivilege;
+use self::dokan::AddPrivileges;
 });
 
 use bincode::deserialize;
@@ -30,6 +30,7 @@ use zstd;
 pub struct Client<F: Fn(&VFSCall) -> i32> {
     write: Box<Write + Send>,
     read: Box<Read + Send>,
+    rcv_buf: Vec<u8>,
     mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
     op_callback: F,
@@ -42,7 +43,7 @@ fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
 
     //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
     write.write_u32::<BigEndian>(size as u32)?;
-    serialize_into(&mut write, &msg)
+    serialize_into(&mut write, &msg) // Could this cause performance concerns? On server side it does.
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     write.flush()
 }
@@ -83,6 +84,7 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
         Ok(Client {
             write: Box::new(stream),
             read: reader,
+            rcv_buf: Vec::with_capacity(32 * 1024),
             mode: init_msg.mode,
             rt_comp: rt_comp,
             op_callback,
@@ -94,19 +96,26 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
     }
 
     fn read_msg<'a, 'b>(&'a mut self) -> Result<FsyncerMsg<'b>, io::Error> {
-        let mut rcv_buf = [0; 33 * 1024];
         let length = self.read.read_u32::<BigEndian>()? as usize;
 
-        assert!(length <= rcv_buf.len());
+        debug!(length);
 
-        self.read.read_exact(&mut rcv_buf[..length])?;
+        if self.rcv_buf.len() < length {
+            if self.rcv_buf.capacity() < length {
+                let extra = length - self.rcv_buf.len();
+                self.rcv_buf.reserve(extra);
+            }
+            unsafe { self.rcv_buf.set_len(length) };
+        }
+
+        self.read.read_exact(&mut self.rcv_buf[..length])?;
 
         let mut dbuf = Vec::new();
         let msgbuf = if let Some(ref mut rt_comp) = self.rt_comp {
-            rt_comp.decode(&rcv_buf[size_of::<u32>()..length], &mut dbuf);
+            rt_comp.decode(&self.rcv_buf[size_of::<u32>()..length], &mut dbuf);
             &dbuf[..]
         } else {
-            &rcv_buf[..length]
+            &self.rcv_buf[..length]
         };
         deserialize(msgbuf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
@@ -150,6 +159,7 @@ impl<F: Fn(&VFSCall) -> i32> Client<F> {
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
                     // TODO check return status
+                    //debug!(call);
                     let _res = (self.op_callback)(&call);
                 }
                 Ok(FsyncerMsg::Cork(tid)) => {
@@ -226,7 +236,7 @@ pub fn client_main(matches: ArgMatches) {
 
     #[cfg(target_os = "windows")]
     unsafe {
-        if AddSeSecurityNamePrivilege() == 0 {
+        if AddPrivileges() == 0 {
             panic!("Failed to add security priviledge");
         }
     }

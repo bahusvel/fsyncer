@@ -27,6 +27,9 @@ extern crate serde;
 extern crate walkdir;
 extern crate zstd;
 
+#[macro_use]
+pub mod error;
+
 #[macro_export]
 macro_rules! iter_try {
     ($e:expr) => {

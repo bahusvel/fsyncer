@@ -1,8 +1,10 @@
+use common::FileSecurity;
 use common::*;
 use libc::c_int;
 use std::fs::OpenOptions;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
+use std::ptr;
 
 trait ErrorOrOk<T> {
     fn err_or_ok(self) -> T;
@@ -21,9 +23,8 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
     use winapi::um::fileapi::CREATE_NEW;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::winnt::{
-        DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, GENERIC_WRITE, GROUP_SECURITY_INFORMATION,
-        OWNER_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_WRITE,
+        OWNER_SECURITY_INFORMATION, WRITE_DAC, WRITE_OWNER,
     };
     match call {
         VFSCall::utimens(utimens { path, timespec }) => {
@@ -61,15 +62,31 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
-            let res = OpCreateFile(
+            let mut res = OpCreateFile(
                 real_path.as_ptr(),
-                descriptor,
-                GENERIC_WRITE,
+                if let FileSecurity::Windows { .. } = security {
+                    descriptor
+                } else {
+                    ptr::null_mut()
+                },
+                GENERIC_WRITE | WRITE_OWNER | WRITE_DAC,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
                 *flags as u32, // disposition
                 &mut handle as *mut _,
             );
+
+            if res == ERROR_SUCCESS {
+                let info = OWNER_SECURITY_INFORMATION;
+                if let FileSecurity::Default { .. } = security {
+                    res = OpSetFileSecurity(
+                        &info as *const _ as *mut _,
+                        descriptor,
+                        handle,
+                    );
+                }
+            }
+
             if handle != INVALID_HANDLE_VALUE {
                 CloseHandle(handle);
             }
@@ -101,12 +118,12 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         .map_err(|e| e.raw_os_error().unwrap())
         .err_or_ok(),
         VFSCall::rename(rename { from, to, flags }) => {
-            use winapi::um::winnt::FILE_SHARE_DELETE;
+            use winapi::um::winnt::DELETE;
             let rto = translate_path(to, root);
             let real_to = path_to_wstr(&rto);
             with_file(
                 &translate_path(from, root),
-                OpenOptions::new().write(true).share_mode(FILE_SHARE_DELETE),
+                OpenOptions::new().access_mode(DELETE),
                 |handle| {
                     OpMoveFile(real_to.as_ptr(), *flags as i32, handle) as i32
                 },
@@ -138,64 +155,69 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
-            let res = OpCreateDirectory(
+            let mut res = OpCreateDirectory(
                 real_path.as_ptr(),
-                descriptor,
+                if let FileSecurity::Windows { .. } = security {
+                    descriptor
+                } else {
+                    ptr::null_mut()
+                },
                 GENERIC_WRITE,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
                 CREATE_NEW, // disposition
                 &mut handle as *mut _,
             );
+
+            if res == ERROR_SUCCESS {
+                let info = OWNER_SECURITY_INFORMATION;
+                if let FileSecurity::Default { .. } = security {
+                    res = OpSetFileSecurity(
+                        &info as *const _ as *mut _,
+                        descriptor,
+                        handle,
+                    );
+                }
+            }
+
             if handle != INVALID_HANDLE_VALUE {
                 CloseHandle(handle);
             }
             res as i32
         }
         VFSCall::security(security { path, security }) => {
-            use winapi::um::winnt::{
-                ACCESS_SYSTEM_SECURITY, GENERIC_WRITE, WRITE_DAC,
-            };
-            let mut info = 0;
-
-            if let FileSecurity::Windows {
-                owner,
-                group,
-                dacl,
-                sacl,
-            } = security
-            {
-                if owner.is_some() {
-                    info |= OWNER_SECURITY_INFORMATION;
-                }
-                if group.is_some() {
-                    info |= GROUP_SECURITY_INFORMATION;
-                }
-                if dacl.is_some() {
-                    info |= DACL_SECURITY_INFORMATION;
-                }
-                if sacl.is_some() {
-                    info |= SACL_SECURITY_INFORMATION;
-                }
+            use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
+            use winapi::um::winnt::ACCESS_SYSTEM_SECURITY;
+            let info = if let FileSecurity::Windows { info, .. } = security {
+                info.unwrap()
             } else {
-                panic!("Security information needs translation")
-            }
+                panic!("Security information needs translation");
+            };
+
+            debug!(security);
 
             let descriptor = security
                 .clone()
                 .to_descriptor()
                 .expect("Failed to create security descriptor");
+
             with_file(
                 &translate_path(path, root),
                 OpenOptions::new().access_mode(
-                    ACCESS_SYSTEM_SECURITY | GENERIC_WRITE | WRITE_DAC,
-                ), // may need to set this SE_TAKE_OWNERSHIP_NAME
+                    ACCESS_SYSTEM_SECURITY | GENERIC_WRITE | WRITE_DAC | WRITE_OWNER,
+                ).attributes(FILE_FLAG_BACKUP_SEMANTICS), // may need to set this SE_TAKE_OWNERSHIP_NAME
                 |handle| {
-                    OpSetFileSecurity(&mut info as *mut _, descriptor, handle)
-                        as i32
+                    OpSetFileSecurity(
+                        &info as *const _ as *mut _,
+                        descriptor,
+                        handle,
+                    ) as i32
                 },
             )
-            .map_err(|e| e.raw_os_error().unwrap())
+            .map_err(|e| {
+                debug!(e);
+                e.raw_os_error().unwrap()
+            })
             .err_or_ok()
         }
         VFSCall::chmod(chmod { path, mode }) => {

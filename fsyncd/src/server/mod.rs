@@ -31,16 +31,17 @@ metablock!(cfg(target_os = "windows") {
         assert!(real_path.len() < path_len as usize);
         slice::from_raw_parts_mut(buf, path_len as usize)[..real_path.len()].copy_from_slice(&real_path)
     }
+    use self::dokan::AddPrivileges;
 });
 
-//#[cfg(target_os = "windows")]
 mod client;
 use self::client::{Client, ClientStatus};
 use clap::ArgMatches;
 use common::*;
+use error::Error;
 use libc::c_int;
 use std::fs;
-use std::io::{Error, ErrorKind};
+use std::io::{self, ErrorKind};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, RwLock};
@@ -122,7 +123,7 @@ fn send_call<'a>(
     call: Cow<'a, VFSCall<'a>>,
     client: &Client,
     ret: i32,
-) -> Result<(), Error> {
+) -> Result<(), Error<io::Error>> {
     match client.mode {
         ClientMode::MODE_SYNC
         | ClientMode::MODE_SEMISYNC
@@ -219,16 +220,18 @@ pub fn display_fuse_help() {
     unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
 }
 
-fn check_mount(path: &str) -> Result<bool, Error> {
+fn check_mount(path: &str) -> Result<bool, Error<io::Error>> {
     Ok(Command::new("mountpoint")
         .arg(path)
-        .spawn()?
-        .wait()?
+        .spawn()
+        .map_err(|e| make_err!(e))?
+        .wait()
+        .map_err(|e| make_err!(e))?
         .success())
 }
 
 #[cfg(target_os = "windows")]
-fn copy_security(src: &Path, dst: &Path) -> Result<(), Error> {
+fn copy_security(src: &Path, dst: &Path) -> Result<(), Error<io::Error>> {
     use common::with_file;
     use std::fs::OpenOptions;
     use std::os::windows::fs::OpenOptionsExt;
@@ -262,12 +265,14 @@ fn copy_security(src: &Path, dst: &Path) -> Result<(), Error> {
                 )
             } == 0
             {
-                Err(Error::last_os_error())
+                Err(make_err!(io::Error::last_os_error()))
             } else {
                 Ok(())
             }
         },
-    )??;
+    )
+    .map_err(|e| make_err!(e))?
+    .map_err(|e| trace_err!(e))?;
     if needed as usize > DESC_LENGTH {
         panic!("Failed to copy really large descriptor, Denis is lazy.");
     }
@@ -285,19 +290,24 @@ fn copy_security(src: &Path, dst: &Path) -> Result<(), Error> {
                 )
             } == 0
             {
-                Err(Error::last_os_error())
+                Err(make_err!(io::Error::last_os_error()))
             } else {
                 Ok(())
             }
         },
-    )??;
+    )
+    .map_err(|e| make_err!(e))?
+    .map_err(|e| trace_err!(e))?;
 
     Ok(())
 }
 
-fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
+fn figure_out_paths(
+    matches: &ArgMatches,
+) -> Result<(PathBuf, PathBuf), Error<io::Error>> {
     let mount_path =
-        canonize_path(Path::new(matches.value_of("mount-path").unwrap()))?;
+        canonize_path(Path::new(matches.value_of("mount-path").unwrap()))
+            .map_err(|e| make_err!(e))?;
 
     debug!(mount_path);
 
@@ -311,7 +321,8 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
             // neccessary to figure out if it exists.
             if let Some(parent) = mount_path.parent() {
                 mount_exists = parent
-                    .read_dir()?
+                    .read_dir()
+                    .map_err(|e| make_err!(e))?
                     .filter(|e| {
                         if let Ok(entry) = e {
                             entry.path() == mount_path
@@ -329,13 +340,14 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
         // Backing store specified
         let path = Path::new(matches.value_of("backing-store").unwrap());
         if !path.exists() {
-            return Err(Error::new(
+            return Err(make_err!(io::Error::new(
                 ErrorKind::NotFound,
                 "Backing path does not exist",
-            ));
+            )));
         }
         PathBuf::from(matches.value_of("backing-store").unwrap())
-            .canonicalize()?
+            .canonicalize()
+            .map_err(|e| make_err!(e))?
     } else {
         // Implictly inferring backing store
         mount_path.with_file_name(format!(
@@ -353,32 +365,35 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
         if !cfg!(target_os = "windows")
             && check_mount(mount_path.to_str().unwrap())?
         {
-            fs::create_dir_all(&mount_path)?;
+            fs::create_dir_all(&mount_path).map_err(|e| make_err!(e))?;
             let res = Command::new("mount")
                 .arg("--move")
                 .arg(matches.value_of("mount-path").unwrap())
                 .arg(backing_store.to_str().unwrap())
-                .spawn()?
-                .wait()?;
+                .spawn()
+                .map_err(|e| make_err!(e))?
+                .wait()
+                .map_err(|e| make_err!(e))?;
             if !res.success() {
-                return Err(Error::new(
+                return Err(make_err!(io::Error::new(
                     ErrorKind::Other,
                     "Failed to move old mountpoint",
-                ));
+                )));
             }
         } else {
-            fs::rename(&mount_path, &backing_store)?;
+            fs::rename(&mount_path, &backing_store)
+                .map_err(|e| make_err!(e))?;
         }
     }
 
     if backing_store.exists() && !mount_exists {
-        fs::create_dir_all(&mount_path)?;
+        fs::create_dir_all(&mount_path).map_err(|e| make_err!(e))?;
         copy_security(&backing_store, &mount_path)?;
     } else if !backing_store.exists() && !mount_exists {
-        return Err(Error::new(
+        return Err(make_err!(io::Error::new(
             ErrorKind::NotFound,
             "Mount path does not exist",
-        ));
+        )));
     }
 
     #[cfg(target_os = "windows")]
@@ -403,15 +418,15 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
             {
                 if !recreated {
                     println!("Mount path is busy, attempting to recreate it");
-                    fs::remove_dir(&mount_path)?;
-                    fs::create_dir(&mount_path)?;
+                    fs::remove_dir(&mount_path).map_err(|e| make_err!(e))?;
+                    fs::create_dir(&mount_path).map_err(|e| make_err!(e))?;
                     copy_security(&backing_store, &mount_path)?;
                     recreated = true
                 } else {
-                    return Err(Error::new(
+                    return Err(make_err!(io::Error::new(
                         ErrorKind::Other,
                         "Failed to establish ownership of the mount path",
-                    ));
+                    )));
                 }
             } else {
                 break;
@@ -423,13 +438,17 @@ fn figure_out_paths(matches: &ArgMatches) -> Result<(PathBuf, PathBuf), Error> {
 }
 
 #[cfg(target_family = "unix")]
-fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, Error> {
+fn open_journal(
+    path: &str,
+    c: JournalConfig,
+) -> Result<Journal, Error<io::Error>> {
     let exists = Path::new(path).exists();
     let f = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(path)?;
+        .open(path)
+        .map_err(|e| make_err!(e))?;
 
     if exists {
         if f.metadata()
@@ -447,9 +466,19 @@ fn open_journal(path: &str, c: JournalConfig) -> Result<Journal, Error> {
     }
 }
 
-pub fn server_main(matches: ArgMatches) -> Result<(), Error> {
+pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
     let server_matches = matches.subcommand_matches("server").unwrap();
-    let (mount_path, backing_store) = figure_out_paths(&server_matches)?;
+    #[cfg(target_os = "windows")]
+    unsafe {
+        if AddPrivileges() == 0 {
+            panic!(
+                "Failed to add security priviledge, make sure you run as \
+                 Administrator"
+            );
+        }
+    }
+    let (mount_path, backing_store) =
+        figure_out_paths(&server_matches).map_err(|e| trace_err!(e))?;
     println!("{:?}, {:?}", mount_path, backing_store);
     unsafe {
         SERVER_PATH = Some(backing_store.clone());
@@ -462,7 +491,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error> {
             .value_of("port")
             .map(|v| v.parse::<i32>().expect("Invalid format for port"))
             .unwrap()
-    ))?;
+    ))
+    .map_err(|e| make_err!(e))?;
 
     let dont_check = server_matches.is_present("dont-check");
     let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
