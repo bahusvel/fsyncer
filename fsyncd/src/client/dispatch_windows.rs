@@ -23,8 +23,9 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
     use winapi::um::fileapi::CREATE_NEW;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::winnt::{
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_WRITE,
-        OWNER_SECURITY_INFORMATION, WRITE_DAC, WRITE_OWNER,
+        DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GENERIC_WRITE, OWNER_SECURITY_INFORMATION,
+        UNPROTECTED_DACL_SECURITY_INFORMATION, WRITE_DAC, WRITE_OWNER,
     };
     match call {
         VFSCall::utimens(utimens { path, timespec }) => {
@@ -59,16 +60,15 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
                 .clone()
                 .to_descriptor()
                 .expect("Failed to create security descriptor");
+
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
             let mut res = OpCreateFile(
                 real_path.as_ptr(),
-                if let FileSecurity::Windows { .. } = security {
-                    descriptor
-                } else {
-                    ptr::null_mut()
-                },
+                descriptor
+                    .map(|d| d.as_ptr() as *mut _)
+                    .unwrap_or(ptr::null_mut()),
                 GENERIC_WRITE | WRITE_OWNER | WRITE_DAC,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -77,11 +77,26 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             );
 
             if res == ERROR_SUCCESS {
-                let info = OWNER_SECURITY_INFORMATION;
-                if let FileSecurity::Default { .. } = security {
+                if let FileSecurity::Windows {
+                    creator: Some(creator),
+                    ..
+                } = security
+                {
+                    use std::ffi::OsString;
+                    let sddl = format!("O:{}D:ARAI", creator.to_str().unwrap());
+                    debug!(sddl);
+                    let security =
+                        FileSecurity::from_sddl(OsString::from(sddl));
+                    let descriptor = security
+                        .to_descriptor()
+                        .expect("Failed to make creator descriptor")
+                        .unwrap();
+                    let info = OWNER_SECURITY_INFORMATION
+                        | UNPROTECTED_DACL_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION;
                     res = OpSetFileSecurity(
                         &info as *const _ as *mut _,
-                        descriptor,
+                        descriptor.as_ptr() as *mut _,
                         handle,
                     );
                 }
@@ -157,11 +172,9 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             // need to replicate.
             let mut res = OpCreateDirectory(
                 real_path.as_ptr(),
-                if let FileSecurity::Windows { .. } = security {
-                    descriptor
-                } else {
-                    ptr::null_mut()
-                },
+                descriptor
+                    .map(|d| d.as_ptr() as *mut _)
+                    .unwrap_or(ptr::null_mut()),
                 GENERIC_WRITE,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -170,11 +183,17 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             );
 
             if res == ERROR_SUCCESS {
-                let info = OWNER_SECURITY_INFORMATION;
-                if let FileSecurity::Default { .. } = security {
+                if let FileSecurity::Windows {
+                    creator: Some(_), ..
+                } = security
+                {
+                    let descriptor = security
+                        .creator_descriptor()
+                        .expect("Failed to make creator descriptor");
+                    let info = OWNER_SECURITY_INFORMATION;
                     res = OpSetFileSecurity(
                         &info as *const _ as *mut _,
-                        descriptor,
+                        descriptor.as_ptr() as *mut _,
                         handle,
                     );
                 }
@@ -199,17 +218,23 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let descriptor = security
                 .clone()
                 .to_descriptor()
-                .expect("Failed to create security descriptor");
+                .expect("Failed to create security descriptor")
+                .expect("Descriptor must be present for SetFileSecurity");
 
             with_file(
                 &translate_path(path, root),
-                OpenOptions::new().access_mode(
-                    ACCESS_SYSTEM_SECURITY | GENERIC_WRITE | WRITE_DAC | WRITE_OWNER,
-                ).attributes(FILE_FLAG_BACKUP_SEMANTICS), // may need to set this SE_TAKE_OWNERSHIP_NAME
+                OpenOptions::new()
+                    .access_mode(
+                        ACCESS_SYSTEM_SECURITY
+                            | GENERIC_WRITE
+                            | WRITE_DAC
+                            | WRITE_OWNER,
+                    )
+                    .attributes(FILE_FLAG_BACKUP_SEMANTICS),
                 |handle| {
                     OpSetFileSecurity(
                         &info as *const _ as *mut _,
-                        descriptor,
+                        descriptor.as_ptr() as *mut _,
                         handle,
                     ) as i32
                 },

@@ -215,16 +215,85 @@ metablock!(cfg(target_os = "windows") {
         Ok(unsafe {wstr_to_path(buf[..].as_mut_ptr())})
     }
     pub fn with_file<T, F: (FnOnce(HANDLE) -> T)>(
-    path: &Path,
-    options: &OpenOptions,
-    f: F,
-) -> Result<T, Error> {
-    use std::os::windows::io::{IntoRawHandle, FromRawHandle};
-    use std::fs::File;
-    let file = options.open(path)?;
-    let handle = file.into_raw_handle();
-    let res = f(handle);
-    unsafe {File::from_raw_handle(handle)};
-    Ok(res)
-}
+        path: &Path,
+        options: &OpenOptions,
+        f: F,
+    ) -> Result<T, Error> {
+        use std::fs::File;
+        use std::os::windows::io::{FromRawHandle, IntoRawHandle};
+        let file = options.open(path)?;
+        let handle = file.into_raw_handle();
+        let res = f(handle);
+        unsafe { File::from_raw_handle(handle) };
+        Ok(res)
+    }
+    use std::ffi::c_void;
+    use std::ops::{Deref, DerefMut, Drop};
+    pub struct WinapiBox<T> {
+        t: *mut T,
+        borrows: Vec<WinapiBox<c_void>>,
+    }
+    impl<T> Deref for WinapiBox<T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            unsafe { &(*self.t) }
+        }
+    }
+    impl<T> DerefMut for WinapiBox<T> {
+        fn deref_mut(&mut self) -> &mut T {
+            unsafe { &mut (*self.t) }
+        }
+    }
+    impl<T> Drop for WinapiBox<T> {
+        fn drop(&mut self) {
+            use winapi::um::winbase::LocalFree;
+            unsafe { LocalFree(self.t as *mut _) };
+        }
+    }
+    impl<T> WinapiBox<T> {
+        pub fn add_borrow<O>(&mut self, b: WinapiBox<O>) {
+            self.borrows
+                .push(unsafe { WinapiBox::from_raw(b.as_ptr() as *mut c_void) });
+            std::mem::forget(b); // Forget the box which has been added as a borrow
+        }
+        pub unsafe fn from_raw(t: *mut T) -> Self {
+            assert!(!t.is_null());
+            WinapiBox {
+                t,
+                borrows: Vec::new(),
+            }
+        }
+        pub fn as_ptr(&self) -> *mut T {
+            self.t
+        }
+    }
 });
+
+pub struct Lazy<T, F: FnOnce() -> T> {
+    f: Option<F>,
+    t: Option<T>,
+}
+
+impl<T, F: FnOnce() -> T> Lazy<T, F> {
+    pub fn new(f: F) -> Self {
+        Lazy {
+            f: Some(f),
+            t: None,
+        }
+    }
+    pub fn get_or_create(&mut self) -> &mut T {
+        match self.t {
+            Some(ref mut t) => t,
+            None => {
+                self.t = Some((self.f.take().unwrap())());
+                self.t.as_mut().unwrap()
+            }
+        }
+    }
+    pub fn take(mut self) -> T {
+        match self.t {
+            Some(t) => t,
+            None => (self.f.take().unwrap())(),
+        }
+    }
+}

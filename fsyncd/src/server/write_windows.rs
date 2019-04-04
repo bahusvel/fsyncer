@@ -2,6 +2,7 @@ use common::*;
 use libc::uint32_t;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::fs::symlink_metadata;
 use std::io::{Error, ErrorKind};
 use std::mem;
@@ -34,7 +35,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         res
     }
 
-    unsafe fn user_from_token(token: HANDLE) -> Result<String, Error> {
+    unsafe fn user_from_token(token: HANDLE) -> Result<OsString, Error> {
         use common::file_security::psid_to_string;
         use winapi::um::securitybaseapi::GetTokenInformation;
         use winapi::um::winnt::{TokenUser, TOKEN_USER};
@@ -55,9 +56,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 
         let user = user_buff.as_ptr() as *const TOKEN_USER;
 
-        Ok(psid_to_string((*user).User.Sid)
-            .into_string()
-            .expect("Failed to convert SID to string"))
+        Ok(psid_to_string((*user).User.Sid))
     }
 
     debug!(wstr_to_path(path));
@@ -96,8 +95,6 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 
     let user_handle = DokanOpenRequestorToken(info);
     assert!(user_handle != INVALID_HANDLE_VALUE);
-    let user_sid = user_from_token(user_handle)
-        .expect("Failed to retrieve user from handle");
 
     DokanMapKernelToUserCreateFileFlags(
         dokan_access,
@@ -122,21 +119,31 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     let mut call = None;
     let status;
 
-    let security = if sec_desc.is_null() {
-        // TODO if descriptor is NULL default descriptor is assigned, I probably
-        // need to query it and send it to the other side
-        FileSecurity::Default { creator: user_sid }
-    } else {
-        let mut s = FileSecurity::parse_security(sec_desc, None, false)
-            .expect("Failed to parse security descriptor");
-        if let FileSecurity::Windows { ref mut owner, .. } = s {
-            if owner.is_none() {
-                *owner = Some(user_sid)
+    // This is relatively expensive, and is not always needed, so it is made
+    // lazy.
+    let security = Lazy::new(|| {
+        let user_sid = user_from_token(user_handle)
+            .expect("Failed to retrieve user from handle");
+        if sec_desc.is_null() {
+            use winapi::um::winnt::OWNER_SECURITY_INFORMATION;
+            FileSecurity::Windows {
+                creator: Some(user_sid),
+                str_desc: None,
+                info: Some(OWNER_SECURITY_INFORMATION),
             }
+        } else {
+            let mut s = FileSecurity::parse_security(sec_desc, None, false)
+                .expect("Failed to parse security descriptor");
+            if let FileSecurity::Windows {
+                ref mut creator, ..
+            } = s
+            {
+                *creator = Some(user_sid)
+            }
+            debug!(s);
+            s
         }
-        debug!(s);
-        s
-    };
+    });
 
     if !exists
         && (user_disposition == CREATE_ALWAYS || user_disposition == CREATE_NEW)
@@ -145,7 +152,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         // Path does not exist, need to create it, and it is a directory
         call = Some(VFSCall::mkdir(mkdir {
             path: Cow::Borrowed(&rpath),
-            security,
+            security: security.take(),
             mode: user_attributes,
         }));
         if let Some(r) = pre_op(call.as_ref().unwrap()) {
@@ -201,7 +208,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         {
             call = Some(VFSCall::create(create {
                 path: Cow::Borrowed(&rpath),
-                security,
+                security: security.take(),
                 mode: user_attributes,
                 flags: user_disposition as i32,
             }));
