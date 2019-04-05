@@ -1,15 +1,76 @@
 use common::*;
+use error::Error;
 use libc::uint32_t;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
-use std::ffi::OsString;
 use std::fs::symlink_metadata;
-use std::io::{Error, ErrorKind};
+use std::io::{self, ErrorKind};
 use std::mem;
 use std::slice;
 use winapi::um::fileapi::*;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::winnt::FILE_SHARE_READ;
+use winapi::um::winnt::{FILE_SHARE_READ, SECURITY_DESCRIPTOR};
+
+unsafe fn defaulted_descriptor(
+    sec_desc: *const SECURITY_DESCRIPTOR,
+    user_handle: HANDLE,
+) -> Result<FileSecurity, Error<io::Error>> {
+    unsafe fn user_from_token(
+        token: HANDLE,
+    ) -> Result<(String, String), Error<io::Error>> {
+        use common::file_security::psid_to_string;
+        use winapi::um::securitybaseapi::GetTokenInformation;
+        use winapi::um::winnt::{TokenUser, TOKEN_USER};
+
+        let mut user_buff: [u8; 4096] = [0; 4096];
+        let mut length: u32 = 0;
+
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            user_buff.as_mut_ptr() as *mut _,
+            4096,
+            &mut length as *mut _,
+        ) == 0
+        {
+            return Err(make_err!(io::Error::last_os_error()));
+        }
+
+        let user = user_buff.as_ptr() as *const TOKEN_USER;
+
+        Ok((
+            psid_to_string((*user).User.Sid).into_string().unwrap(),
+            String::new(),
+        )) // TODO extract primary group
+    }
+
+    let mut s = FileSecurity::parse_security(
+        sec_desc as PSECURITY_DESCRIPTOR,
+        None,
+        false,
+    )
+    .map_err(|e| trace_err!(e))?;
+
+    // Just prepend the relevant parameters
+    if sec_desc.is_null()
+        || (*sec_desc).Owner.is_null()
+        || (*sec_desc).Group.is_null()
+    {
+        let (user_sid, _group_sid) = user_from_token(user_handle)?;
+        let mut owner_group = String::new();
+        if sec_desc.is_null() || (*sec_desc).Owner.is_null() {
+            owner_group.push_str("O:");
+            owner_group.push_str(&user_sid);
+        }
+        // if sec_desc.is_null() || (*sec_desc).Group.is_null() {
+        //     owner_group.push("G:");
+        //     owner_group.push(&group_sid);
+        // }
+        owner_group.push_str(s.mut_sddl());
+        *s.mut_sddl() = owner_group;
+    }
+    Ok(s)
+}
 
 #[no_mangle]
 pub unsafe extern "stdcall" fn MirrorCreateFile(
@@ -35,30 +96,6 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         res
     }
 
-    unsafe fn user_from_token(token: HANDLE) -> Result<OsString, Error> {
-        use common::file_security::psid_to_string;
-        use winapi::um::securitybaseapi::GetTokenInformation;
-        use winapi::um::winnt::{TokenUser, TOKEN_USER};
-
-        let mut user_buff: [u8; 4096] = [0; 4096];
-        let mut length: u32 = 0;
-
-        if GetTokenInformation(
-            token,
-            TokenUser,
-            user_buff.as_mut_ptr() as *mut _,
-            4096,
-            &mut length as *mut _,
-        ) == 0
-        {
-            return Err(Error::last_os_error());
-        }
-
-        let user = user_buff.as_ptr() as *const TOKEN_USER;
-
-        Ok(psid_to_string((*user).User.Sid))
-    }
-
     debug!(wstr_to_path(path));
     use winapi::shared::ntstatus::STATUS_FILE_IS_A_DIRECTORY;
 
@@ -73,9 +110,11 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
 
     if attr.is_err() && attr.as_ref().unwrap_err().kind() != ErrorKind::NotFound
     {
-        //This is introduced because cmd.exe will try to open paths like
-        // \\<partial>*. This is exactly what mirror.c from Dokan does, it
-        // doesn't handle them properly, just errors with 123 code.
+        /*
+        This is introduced because cmd.exe will try to open paths like \\<partial>*.
+        This is exactly what mirror.c from Dokan does,
+        it doesn't handle them properly, just errors with 123 code.
+        */
         println!("Attr failed {:?}", attr.as_ref().unwrap_err());
         return DokanNtStatusFromWin32(
             attr.unwrap_err()
@@ -122,27 +161,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     // This is relatively expensive, and is not always needed, so it is made
     // lazy.
     let security = Lazy::new(|| {
-        let user_sid = user_from_token(user_handle)
-            .expect("Failed to retrieve user from handle");
-        if sec_desc.is_null() {
-            use winapi::um::winnt::OWNER_SECURITY_INFORMATION;
-            FileSecurity::Windows {
-                creator: Some(user_sid),
-                str_desc: None,
-                info: Some(OWNER_SECURITY_INFORMATION),
-            }
-        } else {
-            let mut s = FileSecurity::parse_security(sec_desc, None, false)
-                .expect("Failed to parse security descriptor");
-            if let FileSecurity::Windows {
-                ref mut creator, ..
-            } = s
-            {
-                *creator = Some(user_sid)
-            }
-            debug!(s);
-            s
-        }
+        defaulted_descriptor(sec_desc as *mut _ as *const _, user_handle)
+            .expect("Failed to serialize descriptor")
     });
 
     if !exists

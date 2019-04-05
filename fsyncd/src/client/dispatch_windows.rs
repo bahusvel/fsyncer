@@ -4,7 +4,6 @@ use libc::c_int;
 use std::fs::OpenOptions;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
-use std::ptr;
 
 trait ErrorOrOk<T> {
     fn err_or_ok(self) -> T;
@@ -23,9 +22,8 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
     use winapi::um::fileapi::CREATE_NEW;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
     use winapi::um::winnt::{
-        DACL_SECURITY_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, GENERIC_WRITE, OWNER_SECURITY_INFORMATION,
-        UNPROTECTED_DACL_SECURITY_INFORMATION, WRITE_DAC, WRITE_OWNER,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_WRITE,
+        WRITE_DAC, WRITE_OWNER,
     };
     match call {
         VFSCall::utimens(utimens { path, timespec }) => {
@@ -56,51 +54,33 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let descriptor = security
+            let mut descriptor = security
                 .clone()
-                .to_descriptor()
+                .to_descriptor(false)
                 .expect("Failed to create security descriptor");
 
+            use winapi::um::winnt::{
+                SE_DACL_DEFAULTED, SE_DACL_PRESENT, SE_SACL_DEFAULTED,
+                SE_SACL_PRESENT,
+            };
+            if !flagset!(descriptor.Control, SE_DACL_PRESENT) {
+                descriptor.Control |= SE_DACL_DEFAULTED;
+            }
+            if !flagset!(descriptor.Control, SE_SACL_PRESENT) {
+                descriptor.Control |= SE_SACL_DEFAULTED;
+            }
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
             let mut res = OpCreateFile(
                 real_path.as_ptr(),
-                descriptor
-                    .map(|d| d.as_ptr() as *mut _)
-                    .unwrap_or(ptr::null_mut()),
+                descriptor.as_ptr() as *mut _,
                 GENERIC_WRITE | WRITE_OWNER | WRITE_DAC,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
                 *flags as u32, // disposition
                 &mut handle as *mut _,
             );
-
-            if res == ERROR_SUCCESS {
-                if let FileSecurity::Windows {
-                    creator: Some(creator),
-                    ..
-                } = security
-                {
-                    use std::ffi::OsString;
-                    let sddl = format!("O:{}D:ARAI", creator.to_str().unwrap());
-                    debug!(sddl);
-                    let security =
-                        FileSecurity::from_sddl(OsString::from(sddl));
-                    let descriptor = security
-                        .to_descriptor()
-                        .expect("Failed to make creator descriptor")
-                        .unwrap();
-                    let info = OWNER_SECURITY_INFORMATION
-                        | UNPROTECTED_DACL_SECURITY_INFORMATION
-                        | DACL_SECURITY_INFORMATION;
-                    res = OpSetFileSecurity(
-                        &info as *const _ as *mut _,
-                        descriptor.as_ptr() as *mut _,
-                        handle,
-                    );
-                }
-            }
 
             if handle != INVALID_HANDLE_VALUE {
                 CloseHandle(handle);
@@ -163,41 +143,33 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
         }) => {
             let rpath = translate_path(path, root);
             let real_path = path_to_wstr(&rpath);
-            let descriptor = security
+            let mut descriptor = security
                 .clone()
-                .to_descriptor()
+                .to_descriptor(false)
                 .expect("Failed to create security descriptor");
+
+            use winapi::um::winnt::{
+                SE_DACL_DEFAULTED, SE_DACL_PRESENT, SE_SACL_DEFAULTED,
+                SE_SACL_PRESENT,
+            };
+            if !flagset!(descriptor.Control, SE_DACL_PRESENT) {
+                descriptor.Control |= SE_DACL_DEFAULTED;
+            }
+            if !flagset!(descriptor.Control, SE_SACL_PRESENT) {
+                descriptor.Control |= SE_SACL_DEFAULTED;
+            }
             let mut handle = INVALID_HANDLE_VALUE;
             // Giving it loosest sharing access may not be a good idea, I may
             // need to replicate.
             let mut res = OpCreateDirectory(
                 real_path.as_ptr(),
-                descriptor
-                    .map(|d| d.as_ptr() as *mut _)
-                    .unwrap_or(ptr::null_mut()),
+                descriptor.as_ptr() as *mut _,
                 GENERIC_WRITE,
                 *mode, // attributes
                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
                 CREATE_NEW, // disposition
                 &mut handle as *mut _,
             );
-
-            if res == ERROR_SUCCESS {
-                if let FileSecurity::Windows {
-                    creator: Some(_), ..
-                } = security
-                {
-                    let descriptor = security
-                        .creator_descriptor()
-                        .expect("Failed to make creator descriptor");
-                    let info = OWNER_SECURITY_INFORMATION;
-                    res = OpSetFileSecurity(
-                        &info as *const _ as *mut _,
-                        descriptor.as_ptr() as *mut _,
-                        handle,
-                    );
-                }
-            }
 
             if handle != INVALID_HANDLE_VALUE {
                 CloseHandle(handle);
@@ -217,9 +189,8 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
 
             let descriptor = security
                 .clone()
-                .to_descriptor()
-                .expect("Failed to create security descriptor")
-                .expect("Descriptor must be present for SetFileSecurity");
+                .to_descriptor(false)
+                .expect("Failed to create security descriptor");
 
             with_file(
                 &translate_path(path, root),

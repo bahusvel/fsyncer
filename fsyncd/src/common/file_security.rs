@@ -2,30 +2,47 @@
 #![allow(non_snake_case)]
 
 use error::Error;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::ptr;
+
+/*
+' is chosed as delimeter in SDDL to store names instead of SIDs,
+it can technically be contained within SDDL itself but that is unlikely.
+If it is ever encountered this code will panic,
+and delimeter can be changed to something more unique like <{[name]}>
+ */
+macro_rules! SDDL_DELIM {
+    () => {
+        "'"
+    };
+}
 
 metablock!(cfg(target_os = "windows") {
     use winapi::um::winnt::{PSID, SID};
     use std::io;
+    use std::ffi::OsStr;
     use winapi::um::winbase::LocalFree;
-    use winapi::um::accctrl::{TRUSTEE_W};
     use winapi::um::winnt::{PSECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR};
-    use winapi::shared::winerror::ERROR_SUCCESS;
     use common::{os_to_wstr, WinapiBox};
     use winapi::shared::sddl::{
         ConvertSecurityDescriptorToStringSecurityDescriptorW,
         ConvertStringSecurityDescriptorToSecurityDescriptorW,
         SDDL_REVISION_1,
     };
+    use regex::{Regex, Captures};
+    lazy_static! {
+        static ref SID_REGEX: Regex = Regex::new("S-1-5(-[0-9]+)+").unwrap();
+        static ref NAME_REGEX: Regex = Regex::new(concat!(SDDL_DELIM!(), ".+?", SDDL_DELIM!())).unwrap();
+    }
 });
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash)]
 pub enum FileSecurity {
     Windows {
-        str_desc: Option<OsString>,
+        str_desc: String,
         info: Option<u32>,
-        creator: Option<OsString>,
+        /* control: u32, may need to replicate control bits instead of
+         * deriving them on client side */
     },
     Unix {
         uid: u32,
@@ -103,12 +120,47 @@ unsafe fn lookup_account(
 }
 
 #[cfg(target_os = "windows")]
+unsafe fn lookup_sid(name: &str) -> Result<String, Error<io::Error>> {
+    use std::mem;
+    use winapi::um::winbase::LookupAccountNameW;
+    use winapi::um::winnt::SID_NAME_USE;
+    let wname = os_to_wstr(OsStr::new(name));
+    let mut sid_buf: [u8; 256] = [0; 256];
+    let mut sid_len = sid_buf.len() as u32;
+    let mut domain_buf: [u16; 256] = [0; 256];
+    let mut domain_len = domain_buf.len() as u32;
+    let mut name_use: SID_NAME_USE = mem::zeroed();
+    if LookupAccountNameW(
+        ptr::null_mut(),
+        wname.as_ptr() as *mut _,
+        sid_buf.as_mut_ptr() as *mut _,
+        &mut sid_len as *mut _,
+        domain_buf.as_mut_ptr(),
+        &mut domain_len as *mut _,
+        &mut name_use as *mut _,
+    ) == 0
+    {
+        return Err(make_err!(io::Error::last_os_error()));
+    }
+
+    Ok(psid_to_string(sid_buf.as_ptr() as *mut _)
+        .into_string()
+        .expect("SID contains weird charachters"))
+}
+
+#[cfg(target_os = "windows")]
 impl FileSecurity {
-    pub fn from_sddl(sddl: OsString) -> FileSecurity {
-        FileSecurity::Windows {
-            str_desc: Some(sddl),
-            info: None,
-            creator: None,
+    // pub fn from_sddl(sddl: OsString) -> FileSecurity {
+    //     FileSecurity::Windows {
+    //         str_desc: sddl,
+    //         info: None,
+    //     }
+    // }
+    pub fn mut_sddl(&mut self) -> &mut String {
+        if let FileSecurity::Windows { str_desc, .. } = self {
+            return str_desc;
+        } else {
+            panic!("Cannot retrieve sddl of non windows security");
         }
     }
     pub unsafe fn parse_security(
@@ -124,6 +176,13 @@ impl FileSecurity {
             UNPROTECTED_DACL_SECURITY_INFORMATION,
             UNPROTECTED_SACL_SECURITY_INFORMATION,
         };
+
+        if desc.is_null() {
+            return Ok(FileSecurity::Windows {
+                str_desc: String::new(),
+                info: info.map(|i| *i),
+            });
+        }
 
         let mut s: *mut u16 = ptr::null_mut();
         if ConvertSecurityDescriptorToStringSecurityDescriptorW(
@@ -146,87 +205,62 @@ impl FileSecurity {
         {
             return Err(make_err!(io::Error::last_os_error()));
         }
-        let str_desc = wstr_to_os(s);
+        let mut str_desc = wstr_to_os(s)
+            .into_string()
+            .expect("SDDL contains weird charachters");
 
         if translate_sid {
-            panic!("Not implemented");
+            assert!(!str_desc.contains(SDDL_DELIM!()));
+            str_desc = SID_REGEX
+                .replace_all(&str_desc, |caps: &Captures| {
+                    let psid = string_to_sid(OsStr::new(&caps[0]));
+                    match lookup_account(psid.as_ptr() as *mut _) {
+                        Ok((_domain, name)) => format!("'{}'", name),
+                        Err(e) => {
+                            println!("Account lookup failed {:?}", e);
+                            String::from(&caps[0])
+                        }
+                    }
+                })
+                .into_owned();
         }
 
         LocalFree(s as _);
         Ok(FileSecurity::Windows {
-            creator: None,
-            str_desc: Some(str_desc),
+            str_desc: str_desc,
             info: info.map(|i| *i),
         })
     }
 
-    pub unsafe fn creator_descriptor(
-        &self,
-    ) -> Result<WinapiBox<SECURITY_DESCRIPTOR>, Error<io::Error>> {
-        use std::mem;
-        use winapi::um::aclapi::{
-            BuildSecurityDescriptorW, BuildTrusteeWithSidW,
-        };
-        use winapi::um::securitybaseapi::SetSecurityDescriptorControl;
-        use winapi::um::winnt::SE_DACL_PROTECTED;
-        let mut ownerT: TRUSTEE_W = mem::zeroed();
-        let mut desc: PSECURITY_DESCRIPTOR = ptr::null_mut();
-        let mut size: u32 = 0;
-
-        match self {
-            FileSecurity::Windows {
-                creator: Some(creator),
-                ..
-            } => {
-                let creator_sid = string_to_sid(creator);
-                BuildTrusteeWithSidW(
-                    &mut ownerT as *mut _,
-                    creator_sid.as_ptr() as *mut _,
-                );
-                if BuildSecurityDescriptorW(
-                    &mut ownerT as *mut _,
-                    ptr::null_mut(),
-                    0,
-                    ptr::null_mut(),
-                    0,
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                    &mut size as *mut _,
-                    &mut desc as *mut _,
-                ) != ERROR_SUCCESS
-                {
-                    return Err(make_err!(io::Error::last_os_error()));
-                }
-
-                if SetSecurityDescriptorControl(desc, SE_DACL_PROTECTED, 0) == 0
-                {
-                    return Err(make_err!(io::Error::last_os_error()));
-                }
-
-                let mut descriptor =
-                    WinapiBox::from_raw(desc as *mut SECURITY_DESCRIPTOR);
-                descriptor.add_borrow(creator_sid);
-                Ok(descriptor)
-            }
-            FileSecurity::Windows { creator: None, .. } => {
-                panic!("Creator is not set")
-            }
-            _ => panic!(
-                "Cannot yet convert non windows filesecurity to descriptor"
-            ),
-        }
-    }
-
     pub unsafe fn to_descriptor(
         &self,
-    ) -> Result<Option<WinapiBox<SECURITY_DESCRIPTOR>>, Error<io::Error>> {
+        transate_sid: bool,
+    ) -> Result<WinapiBox<SECURITY_DESCRIPTOR>, Error<io::Error>> {
         let mut desc: PSECURITY_DESCRIPTOR = ptr::null_mut();
+        use std::borrow::Cow;
         match self {
-            FileSecurity::Windows {
-                str_desc: Some(str_desc),
-                ..
-            } => {
-                let owned_s = os_to_wstr(&str_desc);
+            FileSecurity::Windows { str_desc, .. } => {
+                let sddl = if transate_sid {
+                    Cow::Owned(
+                        NAME_REGEX
+                            .replace_all(&str_desc, |caps: &Captures| {
+                                match lookup_sid(&caps[0]) {
+                                    Ok(sid) => sid,
+                                    Err(e) => {
+                                        println!(
+                                            "Account lookup failed {:?}",
+                                            e
+                                        );
+                                        String::from("S-1-0-0") // Nobody SID
+                                    }
+                                }
+                            })
+                            .into_owned(),
+                    )
+                } else {
+                    Cow::Borrowed(str_desc)
+                };
+                let owned_s = os_to_wstr(OsStr::new(&*sddl));
                 if ConvertStringSecurityDescriptorToSecurityDescriptorW(
                     owned_s.as_ptr() as *mut _,
                     SDDL_REVISION_1 as u32,
@@ -236,9 +270,8 @@ impl FileSecurity {
                 {
                     return Err(make_err!(io::Error::last_os_error()));
                 }
-                Ok(Some(WinapiBox::from_raw(desc as *mut _)))
+                Ok(WinapiBox::from_raw(desc as *mut _))
             }
-            FileSecurity::Windows { str_desc: None, .. } => Ok(None),
             _ => panic!(
                 "Cannot yet convert non windows filesecurity to descriptor"
             ),

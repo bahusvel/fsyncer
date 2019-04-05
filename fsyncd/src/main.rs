@@ -23,6 +23,7 @@ extern crate errno;
 extern crate libc;
 extern crate lz4;
 extern crate net2;
+extern crate regex;
 extern crate serde;
 extern crate walkdir;
 extern crate zstd;

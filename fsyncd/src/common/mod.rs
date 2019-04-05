@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 mod encoded;
 pub mod file_security;
 
