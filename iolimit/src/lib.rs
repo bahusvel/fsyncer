@@ -65,7 +65,8 @@ impl<W: Write> Write for LimitWriter<W> {
             let now = Instant::now();
             // Check the time
             self.bytes_left += min(
-                now.duration_since(self.last_updated).as_millis() as usize * (self.bps / 1000),
+                now.duration_since(self.last_updated).as_millis() as usize
+                    * (self.bps / 1000),
                 max(buf.len() - self.bytes_left, self.bps),
             );
             self.last_updated = now;
@@ -83,12 +84,16 @@ impl<W: Write> Write for LimitWriter<W> {
                 self.last_updated = sleep_until(now + wait_for);
                 break;
             } else {
-                return Err(Error::new(ErrorKind::WouldBlock, "IO limit exceeded"));
+                return Err(Error::new(
+                    ErrorKind::WouldBlock,
+                    "IO limit exceeded",
+                ));
             }
         }
 
         let written = self.inner.write(buf)?;
-        self.bytes_left -= max(written, self.bytes_left);
+
+        self.bytes_left -= min(written, self.bytes_left);
         Ok(written)
     }
     fn flush(&mut self) -> Result<()> {

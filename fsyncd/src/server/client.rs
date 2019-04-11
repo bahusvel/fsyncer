@@ -5,6 +5,7 @@ use bincode::{deserialize_from, serialize, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
+use error::Error;
 use net2::TcpStreamExt;
 use server::{cork_server, uncork_server};
 use std::collections::HashMap;
@@ -86,9 +87,9 @@ impl Client {
         storage_path: PathBuf,
         dontcheck: bool,
         buffer_size: usize,
-    ) -> Result<Self, io::Error> {
+    ) -> Result<Self, Error<io::Error>> {
         println!("Received connection from client {:?}", stream.peer_addr());
-        stream.set_send_buffer_size(buffer_size)?;
+        trace!(stream.set_send_buffer_size(buffer_size));
 
         let init = match Client::read_msg(&mut stream) {
             Ok(FsyncerMsg::InitMsg(msg)) => msg,
@@ -101,7 +102,8 @@ impl Client {
 
         if init.mode != ClientMode::MODE_CONTROL && (!dontcheck) {
             println!("Calculating source hash...");
-            let srchash = hash_metadata(&storage_path).expect("Hash check failed");
+            let srchash =
+                hash_metadata(&storage_path).expect("Hash check failed");
             println!("Source hash is {:x}", srchash);
             if init.dsthash != srchash {
                 println!(
@@ -110,28 +112,36 @@ impl Client {
                 );
                 println!("Dropping this client!");
                 drop(stream);
-                return Err(io::Error::new(io::ErrorKind::Other, "Hash mismatch"));
+                return Err(trace_err!(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Hash mismatch",
+                )));
             }
         }
 
-        let limiter = LimitWriter::new(NagleFlush(stream.try_clone()?), init.iolimit_bps);
+        let limiter = LimitWriter::new(
+            NagleFlush(trace!(stream.try_clone())),
+            init.iolimit_bps,
+        );
 
         let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(zstd::stream::Encoder::new(limiter, 0)?) as Box<Write + Send>
+            Box::new(trace!(zstd::stream::Encoder::new(limiter, 0)))
+                as Box<Write + Send>
         } else if init.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(lz4::EncoderBuilder::new().build(limiter)?) as Box<Write + Send>
+            Box::new(trace!(lz4::EncoderBuilder::new().build(limiter)))
+                as Box<Write + Send>
         } else {
             Box::new(limiter) as Box<Write + Send>
         };
 
-        let rt_comp: Option<Box<Compressor>> = if init.compress.contains(CompMode::RT_DSSC_CHUNKED)
-        {
-            Some(Box::new(ChunkMap::new(0.5)))
-        } else if init.compress.contains(CompMode::RT_DSSC_ZSTD) {
-            Some(Box::new(ZstdBlock::default()))
-        } else {
-            None
-        };
+        let rt_comp: Option<Box<Compressor>> =
+            if init.compress.contains(CompMode::RT_DSSC_CHUNKED) {
+                Some(Box::new(ChunkMap::new(0.5)))
+            } else if init.compress.contains(CompMode::RT_DSSC_ZSTD) {
+                Some(Box::new(ZstdBlock::default()))
+            } else {
+                None
+            };
 
         let net = Arc::new(Mutex::new(ClientNetwork {
             write: writer,
@@ -153,10 +163,11 @@ impl Client {
     }
 
     // Send a cork to this client, and block until it acknowledges
-    pub fn cork(&self) -> Result<(), io::Error> {
+    pub fn cork(&self) -> Result<(), Error<io::Error>> {
         let current_thread = thread::current();
-        let tid = unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
-        self.send_msg(FsyncerMsg::Cork(tid), true)?;
+        let tid =
+            unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
+        trace!(self.send_msg(FsyncerMsg::Cork(tid), true));
         // Cannot park on control as it will block its reader thread
         if self.mode != ClientMode::MODE_CONTROL {
             self.wait_thread_response();
@@ -168,14 +179,15 @@ impl Client {
         self.net.lock().unwrap().status
     }
 
-    pub fn uncork(&self) -> Result<(), io::Error> {
-        self.send_msg(FsyncerMsg::Uncork, false)
+    pub fn uncork(&self) -> Result<(), Error<io::Error>> {
+        Ok(trace!(self.send_msg(FsyncerMsg::Uncork, false)))
     }
 
-    fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, io::Error> {
-        let _size = read.read_u32::<BigEndian>()?;
+    fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, Error<io::Error>> {
+        let _size = trace!(read.read_u32::<BigEndian>());
         // TODO use size to restrict reading
-        Ok(deserialize_from(read).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
+        Ok(trace!(deserialize_from(read)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))))
     }
 
     fn reader<R: Read>(mut read: R, net: Arc<Mutex<ClientNetwork>>) {
@@ -210,24 +222,29 @@ impl Client {
         }
     }
 
-    pub fn flush(&self) -> Result<(), io::Error> {
-        //Without the nop message compression algorithms dont flush immediately.
+    pub fn flush(&self) -> Result<(), Error<io::Error>> {
+        //Without the nop message compression algorithms dont flush
+        // immediately.
         if self.comp.intersects(CompMode::STREAM_MASK) {
-            self.send_msg(FsyncerMsg::NOP, true)?
+            trace!(self.send_msg(FsyncerMsg::NOP, true))
         } else {
-            self.net.lock().unwrap().write.flush()?
+            trace!(self.net.lock().unwrap().write.flush())
         }
         Ok(())
     }
 
-    pub fn send_msg(&self, msg_data: FsyncerMsg, flush: bool) -> Result<(), io::Error> {
+    pub fn send_msg(
+        &self,
+        msg_data: FsyncerMsg,
+        flush: bool,
+    ) -> Result<(), Error<io::Error>> {
         fn inner(
             serbuf: &[u8],
             mut size: usize,
             net: &mut ClientNetwork,
             flush: bool,
             comp: bool,
-        ) -> Result<(), io::Error> {
+        ) -> Result<(), Error<io::Error>> {
             let mut nbuf = Vec::new();
 
             let buf = if let Some(ref mut rt_comp) = net.rt_comp {
@@ -239,25 +256,34 @@ impl Client {
             };
 
             // Uggly way to shortcut error checking
-            net.write.write_u32::<BigEndian>(size as u32)?;
-            net.write.write_all(&buf)?;
+            trace!(net.write.write_u32::<BigEndian>(size as u32));
+            trace!(net.write.write_all(&buf));
             if flush {
                 //println!("Doing funky flush");
-                net.write.flush()?;
-                // Without the nop message compression algorithms dont flush immediately.
+                trace!(net.write.flush());
+                // Without the nop message compression algorithms dont flush
+                // immediately.
                 if comp {
-                    inner(&ENCODED_NOP[..], *NOP_SIZE, net, false, comp)?;
-                    net.write.flush()?;
+                    trace!(inner(
+                        &ENCODED_NOP[..],
+                        *NOP_SIZE,
+                        net,
+                        false,
+                        comp
+                    ));
+                    trace!(net.write.flush());
                 }
                 //println!("Finished funky flush");
             }
             Ok(())
         }
 
-        let size = serialized_size(&msg_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+        let size = trace!(serialized_size(&msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)))
+            as usize;
 
-        let serbuf = serialize(&msg_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let serbuf = trace!(serialize(&msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
 
         //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
         let mut net = self.net.lock().unwrap();
@@ -284,7 +310,9 @@ impl Client {
 
     pub fn wait_thread_response(&self) -> i32 {
         {
-            let tid = unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
+            let tid = unsafe {
+                transmute::<thread::ThreadId, u64>(thread::current().id())
+            };
             let mut net = self.net.lock().unwrap();
             net.parked
                 .entry(tid)

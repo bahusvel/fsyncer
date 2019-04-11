@@ -1,8 +1,19 @@
+metablock!(cfg(target_family = "unix") {
+    mod dispatch_unix;
+    pub use self::dispatch_unix::dispatch;
+    const STATUS_SUCCESS: i32 = 0;
+});
+
+metablock!(cfg(target_os = "windows") {
+    mod dispatch_windows;
+    pub use self::dispatch_windows::dispatch;
+    extern crate dokan;
+    use self::dokan::AddPrivileges;
+    use common::ERROR_SUCCESS;
+    const STATUS_SUCCESS: i32 = ERROR_SUCCESS;
+});
+
 extern crate threadpool;
-
-mod dispatch;
-
-pub use self::dispatch::dispatch;
 use self::threadpool::ThreadPool;
 use bincode::{deserialize, serialize_into, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -19,18 +30,23 @@ use zstd;
 pub struct Client<F: Send + Fn(&VFSCall) -> i32> {
     write: Arc<Mutex<Box<Write + Send>>>,
     read: Box<Read + Send>,
-    rt_comp: Option<Box<Compressor>>,
+    rcv_buf: Vec<u8>,
     mode: ClientMode,
+    rt_comp: Option<Box<Compressor>>,
     pool: Option<ThreadPool>,
     op_callback: F,
 }
 
 fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
-    let size = serialized_size(&msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))? as usize;
+    let size = serialized_size(&msg)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        as usize;
 
     //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
     write.write_u32::<BigEndian>(size as u32)?;
-    serialize_into(&mut write, &msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    serialize_into(&mut write, &msg) // Could this cause performance concerns? On server side it does.
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    write.flush()
 }
 
 impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
@@ -43,7 +59,10 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
         op_callback: F,
     ) -> Result<Self, io::Error> {
         if dispatch_threads != 1 && init_msg.mode != ClientMode::MODE_SYNC {
-            panic!("Only synchronous mode is compatible with multiple dispatch threads");
+            panic!(
+                "Only synchronous mode is compatible with multiple dispatch \
+                 threads"
+            );
         }
 
         let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
@@ -57,9 +76,11 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
         send_msg(&mut stream, FsyncerMsg::InitMsg(init_msg.clone()))?;
 
         let reader = if init_msg.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
+            Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?)
+                as Box<Read + Send>
         } else if init_msg.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(lz4::Decoder::new(stream.try_clone()?)?) as Box<Read + Send>
+            Box::new(lz4::Decoder::new(stream.try_clone()?)?)
+                as Box<Read + Send>
         } else {
             Box::new(stream.try_clone()?) as Box<Read + Send>
         };
@@ -76,6 +97,7 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
         Ok(Client {
             write: Arc::new(Mutex::new(Box::new(stream))),
             read: reader,
+            rcv_buf: Vec::with_capacity(32 * 1024),
             mode: init_msg.mode,
             rt_comp: rt_comp,
             pool: if dispatch_threads == 1 {
@@ -92,19 +114,26 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
     }
 
     fn read_msg<'a, 'b>(&'a mut self) -> Result<FsyncerMsg<'b>, io::Error> {
-        let mut rcv_buf = [0; 33 * 1024];
         let length = self.read.read_u32::<BigEndian>()? as usize;
 
-        assert!(length <= rcv_buf.len());
+        debug!(length);
 
-        self.read.read_exact(&mut rcv_buf[..length])?;
+        if self.rcv_buf.len() < length {
+            if self.rcv_buf.capacity() < length {
+                let extra = length - self.rcv_buf.len();
+                self.rcv_buf.reserve(extra);
+            }
+            unsafe { self.rcv_buf.set_len(length) };
+        }
+
+        self.read.read_exact(&mut self.rcv_buf[..length])?;
 
         let mut dbuf = Vec::new();
         let msgbuf = if let Some(ref mut rt_comp) = self.rt_comp {
-            rt_comp.decode(&rcv_buf[size_of::<u32>()..length], &mut dbuf);
+            rt_comp.decode(&self.rcv_buf[size_of::<u32>()..length], &mut dbuf);
             &dbuf[..]
         } else {
-            &rcv_buf[..length]
+            &self.rcv_buf[..length]
         };
         deserialize(msgbuf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
@@ -129,7 +158,10 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
             match self.read_msg() {
                 Ok(FsyncerMsg::SyncOp(call, tid)) => {
                     if self.mode == ClientMode::MODE_SEMISYNC {
-                        self.send_msg(FsyncerMsg::Ack(AckMsg { retcode: 0, tid }))?;
+                        self.send_msg(FsyncerMsg::Ack(AckMsg {
+                            retcode: 0,
+                            tid,
+                        }))?;
                     }
 
                     let need_ack = self.mode == ClientMode::MODE_SYNC
@@ -156,15 +188,19 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
                     // TODO check return status
+                    //debug!(call);
                     let _res = (self.op_callback)(&call);
                 }
                 Ok(FsyncerMsg::Cork(tid)) => {
                     println!("Received cork request");
                     self.send_msg(FsyncerMsg::AckCork(tid))?
                 }
-                Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} // Nothing, safe to ingore
+                Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} /* Nothing, safe to ingore */
                 Err(err) => return Err(err),
-                msg => println!("Unexpected message for current client state {:?}", msg),
+                msg => println!(
+                    "Unexpected message for current client state {:?}",
+                    msg
+                ),
             }
         }
     }
@@ -178,7 +214,8 @@ pub fn client_main(matches: ArgMatches) {
             .value_of("mount-path")
             .expect("Destination not specified"),
     )
-    .to_path_buf();
+    .canonicalize()
+    .expect("Failed to normalize path");
 
     let dsthash = hash_metadata(&client_path).expect("Hash failed");
     println!("Destinaton hash is {:x}", dsthash);
@@ -222,8 +259,16 @@ pub fn client_main(matches: ArgMatches) {
         "none" | _ => (),
     }
 
-    let iolimit_bps = parse_human_size(client_matches.value_of("iolimit").unwrap())
-        .expect("Invalid format for iolimit");
+    let iolimit_bps =
+        parse_human_size(client_matches.value_of("iolimit").unwrap())
+            .expect("Invalid format for iolimit");
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        if AddPrivileges() == 0 {
+            panic!("Failed to add security priviledge");
+        }
+    }
 
     let mut client = Client::new(
         host,
@@ -242,7 +287,18 @@ pub fn client_main(matches: ArgMatches) {
             .value_of("threads")
             .map(|v| v.parse().expect("Invalid thread number"))
             .unwrap(),
-        move |call| unsafe { dispatch(call, &client_path) },
+        move |call| unsafe {
+            let e = dispatch(call, &client_path);
+            if e != STATUS_SUCCESS {
+                println!(
+                    "Dispatch {:?} failed {:?}({})",
+                    call,
+                    io::Error::from_raw_os_error(e),
+                    e
+                );
+            }
+            e
+        },
     )
     .expect("Failed to connect to fsyncer");
 

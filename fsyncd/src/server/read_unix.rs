@@ -1,6 +1,8 @@
-use common::{neg_errno, translate_path};
+use common::{neg_errno, trans_cstr};
 use libc::*;
-use server::fuseops::{fuse_bufvec, fuse_file_info, fuse_fill_dir_t, fuse_readdir_flags};
+use server::fuseops::{
+    fuse_bufvec, fuse_file_info, fuse_fill_dir_t, fuse_readdir_flags,
+};
 use server::SERVER_PATH;
 use std::ffi::CStr;
 use std::ptr;
@@ -30,7 +32,10 @@ struct xmp_dirp {
     offset: off_t,
 }
 
-pub unsafe extern "C" fn xmp_opendir(path: *const c_char, fi: *mut fuse_file_info) -> c_int {
+pub unsafe extern "C" fn xmp_opendir(
+    path: *const c_char,
+    fi: *mut fuse_file_info,
+) -> c_int {
     let mut d = Box::new(xmp_dirp {
         offset: 0,
         dp: ptr::null_mut(),
@@ -46,7 +51,10 @@ pub unsafe extern "C" fn xmp_opendir(path: *const c_char, fi: *mut fuse_file_inf
     0
 }
 
-pub unsafe extern "C" fn xmp_releasedir(_path: *const c_char, fi: *mut fuse_file_info) -> c_int {
+pub unsafe extern "C" fn xmp_releasedir(
+    _path: *const c_char,
+    fi: *mut fuse_file_info,
+) -> c_int {
     if fi.is_null() {
         panic!("Cannot releasedir by path")
     }
@@ -81,7 +89,10 @@ pub unsafe extern "C" fn xmp_getxattr(
     res as i32
 }
 
-pub unsafe extern "C" fn xmp_release(_path: *const c_char, fi: *mut fuse_file_info) -> c_int {
+pub unsafe extern "C" fn xmp_release(
+    _path: *const c_char,
+    fi: *mut fuse_file_info,
+) -> c_int {
     if !fi.is_null() {
         close((*fi).fh as i32);
         0
@@ -90,7 +101,10 @@ pub unsafe extern "C" fn xmp_release(_path: *const c_char, fi: *mut fuse_file_in
     }
 }
 
-pub unsafe extern "C" fn xmp_flush(_path: *const c_char, fi: *mut fuse_file_info) -> c_int {
+pub unsafe extern "C" fn xmp_flush(
+    _path: *const c_char,
+    fi: *mut fuse_file_info,
+) -> c_int {
     if !fi.is_null() {
         /* This is called from every close on an open file, so call the
         close on the underlying filesystem.	But since flush may be
@@ -106,7 +120,10 @@ pub unsafe extern "C" fn xmp_flush(_path: *const c_char, fi: *mut fuse_file_info
     }
 }
 
-pub unsafe extern "C" fn xmp_statfs(path: *const c_char, stbuf: *mut statvfs) -> c_int {
+pub unsafe extern "C" fn xmp_statfs(
+    path: *const c_char,
+    stbuf: *mut statvfs,
+) -> c_int {
     let real_path = trans_ppath!(path);
     if statvfs(real_path.as_ptr(), stbuf) == -1 {
         return neg_errno();
@@ -143,7 +160,10 @@ pub unsafe extern "C" fn xmp_read(
         res as i32
     }
 }
-pub unsafe extern "C" fn xmp_open(path: *const c_char, fi: *mut fuse_file_info) -> c_int {
+pub unsafe extern "C" fn xmp_open(
+    path: *const c_char,
+    fi: *mut fuse_file_info,
+) -> c_int {
     let real_path = trans_ppath!(path);
     let fd = open(real_path.as_ptr(), (*fi).flags);
     if fd == -1 {
@@ -153,7 +173,11 @@ pub unsafe extern "C" fn xmp_open(path: *const c_char, fi: *mut fuse_file_info) 
     return 0;
 }
 
-pub unsafe extern "C" fn xmp_readlink(path: *const c_char, buf: *mut c_char, size: usize) -> c_int {
+pub unsafe extern "C" fn xmp_readlink(
+    path: *const c_char,
+    buf: *mut c_char,
+    size: usize,
+) -> c_int {
     let real_path = trans_ppath!(path);
     let res = readlink(real_path.as_ptr(), buf, size - 1);
     if res == -1 {

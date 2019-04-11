@@ -1,20 +1,20 @@
-use common::ffi::*;
 use common::*;
 use journal::*;
 
 extern crate either;
 
 use self::either::Either;
+use error::Error;
 use journal::crc32;
 use journal::FileStore;
 use std::cmp::min;
+use std::ffi::CString;
 use std::fs::read_link;
 use std::hash::{Hash, Hasher};
-use std::io::Error;
+use std::io;
+use std::marker::PhantomData;
 use std::os::unix::fs::FileExt;
 use std::sync::Mutex;
-
-use std::marker::PhantomData;
 
 lazy_static! {
     static ref FILESTORE: Mutex<Option<FileStore>> = Mutex::new(None);
@@ -41,7 +41,10 @@ trait Bilog: XorS {
     fn new(call: &VFSCall) -> Self::N;
     fn xor(o: &Self::O, n: &Self::N) -> Self::X;
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String>;
-    fn old(Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error>;
+    fn old(
+        Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>>;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -55,7 +58,7 @@ pub enum BilogEntry {
     link(bilog_link<Xor>),
     node(bilog_node<Xor>),
     file(bilog_file<Xor>),
-    filestore { path: CString, token: u64 },
+    filestore { path: PathBuf, token: u64 },
     truncate(bilog_truncate<Xor>),
     write(bilog_write<Xor>),
     xattr(bilog_xattr<Xor>),
@@ -81,7 +84,7 @@ macro_rules! bilog_entry {
 
 macro_rules! path_bilog {
     ($name:ident {$($field:ident: $ft:ty),*}) => {
-         bilog_entry!($name {path:  CString, $($field: $ft,)* });
+         bilog_entry!($name {path:  PathBuf, $($field: $ft,)* });
     }
 }
 
@@ -112,35 +115,47 @@ fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
 }
 
 impl<'a> JournalEntry<'a> for BilogEntry {
-    fn journal(mut self, j: &mut Journal) -> Result<(), Error> {
+    fn journal(mut self, j: &mut Journal) -> Result<(), Error<io::Error>> {
         if let BilogEntry::filestore { path, .. } = self {
-            let token = FileStore::store(j, path.to_path())?;
+            let token = trace!(FileStore::store(j, &path));
             self = BilogEntry::filestore { path, token }
         }
         j.write_entry(self)
     }
-    fn from_vfscall(call: &VFSCall, fspath: &Path) -> Result<Self, Error> {
+    fn from_vfscall(
+        call: &VFSCall,
+        fspath: &Path,
+    ) -> Result<Self, Error<io::Error>> {
         Ok(match call {
-            VFSCall::mknod(s) => BilogEntry::node(bilog_node {
-                path: s.path.clone().into_owned(),
-                mode: s.mode,
-                rdev: s.rdev,
+            VFSCall::mknod(mknod {
+                path,
+                mode,
+                rdev,
+                security: FileSecurity::Unix { uid, gid },
+            }) => BilogEntry::node(bilog_node {
+                path: path.clone().into_owned(),
+                mode: *mode,
+                rdev: *rdev,
                 exists: true,
-                uid: s.uid,
-                gid: s.gid,
+                uid: *uid,
+                gid: *gid,
                 s: PhantomData,
             }),
-            VFSCall::mkdir(m) => BilogEntry::dir(bilog_dir {
-                path: m.path.clone().into_owned(),
-                mode: m.mode,
-                uid: m.uid,
-                gid: m.gid,
+            VFSCall::mkdir(mkdir {
+                path,
+                mode,
+                security: FileSecurity::Unix { uid, gid },
+            }) => BilogEntry::dir(bilog_dir {
+                path: path.clone().into_owned(),
+                mode: *mode,
+                uid: *uid,
+                gid: *gid,
                 dir_exists: true,
                 s: PhantomData,
             }),
             VFSCall::rmdir(_) => {
                 let new = bilog_dir::new(call);
-                let old = bilog_dir::old(Either::Left(&new), fspath)?;
+                let old = trace!(bilog_dir::old(Either::Left(&new), fspath));
                 BilogEntry::dir(bilog_dir::xor(&old, &new))
             }
             VFSCall::unlink(u) => {
@@ -148,22 +163,25 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                 fn is_type(mode: uint32_t, ftype: uint32_t) -> bool {
                     mode & S_IFMT == ftype
                 }
-                let stbuf = translate_and_stat(&u.path, fspath)?;
+                let stbuf = trace!(translate_and_stat(&u.path, fspath));
                 let m = stbuf.st_mode;
 
                 if is_type(m, S_IFLNK) {
                     let new = bilog_symlink::new(call);
-                    let old = bilog_symlink::old(Either::Left(&new), fspath)?;
+                    let old =
+                        trace!(bilog_symlink::old(Either::Left(&new), fspath));
                     BilogEntry::symlink(bilog_symlink::xor(&old, &new))
                 } else if is_type(m, S_IFREG) {
                     if stbuf.st_nlink > 1 {
                         let new = bilog_link::new(call);
-                        let old = bilog_link::old(Either::Left(&new), fspath)?;
+                        let old =
+                            trace!(bilog_link::old(Either::Left(&new), fspath));
                         BilogEntry::link(bilog_link::xor(&old, &new))
                     } else if stbuf.st_size == 0 {
                         // empty normal file
                         let new = bilog_file::new(call);
-                        let old = bilog_file::old(Either::Left(&new), fspath)?;
+                        let old =
+                            trace!(bilog_file::old(Either::Left(&new), fspath));
                         BilogEntry::file(bilog_file::xor(&old, &new))
                     } else {
                         // normal file
@@ -178,17 +196,22 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                     || is_type(m, S_IFSOCK)
                 {
                     let new = bilog_node::new(call);
-                    let old = bilog_node::old(Either::Left(&new), fspath)?;
+                    let old =
+                        trace!(bilog_node::old(Either::Left(&new), fspath));
                     BilogEntry::node(bilog_node::xor(&old, &new))
                 } else {
                     panic!("Unknown file type deleted");
                 }
             }
-            VFSCall::symlink(s) => BilogEntry::symlink(bilog_symlink {
-                from: s.from.clone().into_owned(),
-                to: s.to.clone().into_owned(),
-                uid: s.uid,
-                gid: s.gid,
+            VFSCall::symlink(symlink {
+                from,
+                to,
+                security: FileSecurity::Unix { uid, gid },
+            }) => BilogEntry::symlink(bilog_symlink {
+                from: from.clone().into_owned(),
+                to: to.clone().into_owned(),
+                uid: *uid,
+                gid: *gid,
                 to_exists: true,
                 s: PhantomData,
             }),
@@ -198,55 +221,67 @@ impl<'a> JournalEntry<'a> for BilogEntry {
                 from_exists: true,
                 s: PhantomData,
             }),
-            VFSCall::link(s) => BilogEntry::link(bilog_link {
-                from: s.from.clone().into_owned(),
-                to: s.to.clone().into_owned(),
+            VFSCall::link(link {
+                from,
+                to,
+                security: FileSecurity::Unix { uid, gid },
+            }) => BilogEntry::link(bilog_link {
+                from: from.clone().into_owned(),
+                to: to.clone().into_owned(),
                 to_exists: true,
-                uid: s.uid,
-                gid: s.gid,
+                uid: *uid,
+                gid: *gid,
                 s: PhantomData,
             }),
             VFSCall::chmod(_) => {
                 let new = bilog_chmod::new(call);
-                let old = bilog_chmod::old(Either::Left(&new), fspath)?;
+                let old = trace!(bilog_chmod::old(Either::Left(&new), fspath));
                 BilogEntry::chmod(bilog_chmod::xor(&old, &new))
             }
-            VFSCall::chown(_) => {
+            VFSCall::security(_) => {
                 let new = bilog_chown::new(call);
-                let old = bilog_chown::old(Either::Left(&new), fspath)?;
+                let old = trace!(bilog_chown::old(Either::Left(&new), fspath));
                 BilogEntry::chown(bilog_chown::xor(&old, &new))
             }
             VFSCall::truncate(_) => {
                 let new = bilog_truncate::new(call);
-                let old = bilog_truncate::old(Either::Left(&new), fspath)?;
+                let old =
+                    trace!(bilog_truncate::old(Either::Left(&new), fspath));
                 BilogEntry::truncate(bilog_truncate::xor(&old, &new))
             }
             VFSCall::write(_) => {
                 let new = bilog_write::new(call);
-                let old = bilog_write::old(Either::Left(&new), fspath)?;
+                let old = trace!(bilog_write::old(Either::Left(&new), fspath));
                 BilogEntry::write(bilog_write::xor(&old, &new))
             }
             VFSCall::setxattr(_) | VFSCall::removexattr(_) => {
                 let new = bilog_xattr::new(call);
-                let old = bilog_xattr::old(Either::Left(&new), fspath)?;
+                let old = trace!(bilog_xattr::old(Either::Left(&new), fspath));
                 BilogEntry::xattr(bilog_xattr::xor(&old, &new))
             }
-            VFSCall::create(s) => BilogEntry::file(bilog_file {
-                path: s.path.clone().into_owned(),
-                mode: s.mode,
+            VFSCall::create(create {
+                path,
+                mode,
+                security: FileSecurity::Unix { uid, gid },
+                ..
+            }) => BilogEntry::file(bilog_file {
+                path: path.clone().into_owned(),
+                mode: *mode,
                 exists: false,
-                uid: s.uid,
-                gid: s.gid,
+                uid: *uid,
+                gid: *gid,
                 s: PhantomData,
             }),
             VFSCall::utimens(_) => {
                 let new = bilog_utimens::new(call);
-                let old = bilog_utimens::old(Either::Left(&new), fspath)?;
+                let old =
+                    trace!(bilog_utimens::old(Either::Left(&new), fspath));
                 BilogEntry::utimens(bilog_utimens::xor(&old, &new))
             }
             VFSCall::truncating_write { .. } => panic!("Not a fuse syscall"),
             VFSCall::fallocate(_) => panic!("Not implemented"),
             VFSCall::fsync(_) => panic!("Not an IO call"),
+            _ => panic!("Not implemented"),
         })
     }
     fn describe(&self, detail: bool) -> String {
@@ -256,18 +291,36 @@ impl<'a> JournalEntry<'a> for BilogEntry {
         match self {
             BilogEntry::chmod(c) => format!("{:?} changed permissions", c.path),
             BilogEntry::chown(c) => format!("{:?} changed onwership", c.path),
-            BilogEntry::utimens(c) => format!("{:?} changed mtime/ctime", c.path),
-            BilogEntry::rename(c) => format!("{:?} and {:?} exchanged names", c.from, c.to),
-            BilogEntry::dir(c) => format!("{:?} created or removed directory", c.path),
-            BilogEntry::symlink(c) => format!("{:?} created or removed symlink", c.to),
-            BilogEntry::link(c) => format!("{:?} created or removed link", c.to),
-            BilogEntry::node(c) => format!("{:?} created or removed special file", c.path),
-            BilogEntry::file(c) => format!("{:?} created or removed normal file", c.path),
+            BilogEntry::utimens(c) => {
+                format!("{:?} changed mtime/ctime", c.path)
+            }
+            BilogEntry::rename(c) => {
+                format!("{:?} and {:?} exchanged names", c.from, c.to)
+            }
+            BilogEntry::dir(c) => {
+                format!("{:?} created or removed directory", c.path)
+            }
+            BilogEntry::symlink(c) => {
+                format!("{:?} created or removed symlink", c.to)
+            }
+            BilogEntry::link(c) => {
+                format!("{:?} created or removed link", c.to)
+            }
+            BilogEntry::node(c) => {
+                format!("{:?} created or removed special file", c.path)
+            }
+            BilogEntry::file(c) => {
+                format!("{:?} created or removed normal file", c.path)
+            }
             BilogEntry::filestore { path, .. } => {
                 format!("{:?} recovered or deleted filestore file", path)
             }
-            BilogEntry::truncate(c) => format!("{:?} truncated or extended file", c.path),
-            BilogEntry::write(c) => format!("{:?} changed contents at offset {}", c.path, c.offset),
+            BilogEntry::truncate(c) => {
+                format!("{:?} truncated or extended file", c.path)
+            }
+            BilogEntry::write(c) => {
+                format!("{:?} changed contents at offset {}", c.path, c.offset)
+            }
             BilogEntry::xattr(c) => format!(
                 "{:?} set, changed or removed extended attribute {:?}",
                 c.path, c.name,
@@ -276,84 +329,56 @@ impl<'a> JournalEntry<'a> for BilogEntry {
     }
     fn affected_paths(&self) -> Vec<&Path> {
         match self {
-            BilogEntry::chmod(c) => vec![&c.path.to_path()],
-            BilogEntry::chown(c) => vec![&c.path.to_path()],
-            BilogEntry::utimens(c) => vec![&c.path.to_path()],
-            BilogEntry::rename(c) => vec![&c.from.to_path(), &c.to.to_path()],
-            BilogEntry::dir(c) => vec![&c.path.to_path()],
-            BilogEntry::symlink(c) => vec![&c.to.to_path()],
-            BilogEntry::link(c) => vec![&c.to.to_path()],
-            BilogEntry::node(c) => vec![&c.path.to_path()],
-            BilogEntry::file(c) => vec![&c.path.to_path()],
-            BilogEntry::filestore { path, .. } => vec![&path.to_path()],
-            BilogEntry::truncate(c) => vec![&c.path.to_path()],
-            BilogEntry::write(c) => vec![&c.path.to_path()],
-            BilogEntry::xattr(c) => vec![&c.path.to_path()],
+            BilogEntry::chmod(c) => vec![&c.path],
+            BilogEntry::chown(c) => vec![&c.path],
+            BilogEntry::utimens(c) => vec![&c.path],
+            BilogEntry::rename(c) => vec![&c.from, &c.to],
+            BilogEntry::dir(c) => vec![&c.path],
+            BilogEntry::symlink(c) => vec![&c.to],
+            BilogEntry::link(c) => vec![&c.to],
+            BilogEntry::node(c) => vec![&c.path],
+            BilogEntry::file(c) => vec![&c.path],
+            BilogEntry::filestore { path, .. } => vec![&path],
+            BilogEntry::truncate(c) => vec![&c.path],
+            BilogEntry::write(c) => vec![&c.path],
+            BilogEntry::xattr(c) => vec![&c.path],
         }
     }
-    fn apply(&self, fspath: &Path) -> Result<VFSCall, Error> {
-        match self {
-            BilogEntry::chmod(x) => {
-                let current = bilog_chmod::old(Either::Right(x), fspath)?;
-                bilog_chmod::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::chown(x) => {
-                let current = bilog_chown::old(Either::Right(x), fspath)?;
-                bilog_chown::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::utimens(x) => {
-                let current = bilog_utimens::old(Either::Right(x), fspath)?;
-                bilog_utimens::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::rename(x) => {
-                let current = bilog_rename::old(Either::Right(x), fspath)?;
-                bilog_rename::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::dir(x) => {
-                let current = bilog_dir::old(Either::Right(x), fspath)?;
-                bilog_dir::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::symlink(x) => {
-                let current = bilog_symlink::old(Either::Right(x), fspath)?;
-                bilog_symlink::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::link(x) => {
-                let current = bilog_link::old(Either::Right(x), fspath)?;
-                bilog_link::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::node(x) => {
-                let current = bilog_node::old(Either::Right(x), fspath)?;
-                bilog_node::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::file(x) => {
-                let current = bilog_file::old(Either::Right(x), fspath)?;
-                bilog_file::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
+
+    fn apply(&self, fspath: &Path) -> Result<VFSCall, Error<io::Error>> {
+        macro_rules! bilog_apply {
+            ($x: expr, $i:ident) => {{
+                let current = trace!($i::old(Either::Right($x), fspath));
+                trace!($i::apply($x, &current)
+                    .map_err(|e| io::Error::new(ErrorKind::Other, e)))
+            }};
+        }
+        Ok(match self {
+            BilogEntry::chmod(x) => bilog_apply!(x, bilog_chmod),
+            BilogEntry::chown(x) => bilog_apply!(x, bilog_chown),
+            BilogEntry::utimens(x) => bilog_apply!(x, bilog_utimens),
+            BilogEntry::rename(x) => bilog_apply!(x, bilog_rename),
+            BilogEntry::dir(x) => bilog_apply!(x, bilog_dir),
+            BilogEntry::symlink(x) => bilog_apply!(x, bilog_symlink),
+            BilogEntry::link(x) => bilog_apply!(x, bilog_link),
+            BilogEntry::node(x) => bilog_apply!(x, bilog_node),
+            BilogEntry::file(x) => bilog_apply!(x, bilog_file),
+            BilogEntry::truncate(x) => bilog_apply!(x, bilog_truncate),
+            BilogEntry::write(x) => bilog_apply!(x, bilog_write),
+            BilogEntry::xattr(x) => bilog_apply!(x, bilog_xattr),
             BilogEntry::filestore { path, token } => {
                 let stbuf = translate_and_stat(&path, fspath);
                 match stbuf {
                     Err(ref e) if e.kind() == ErrorKind::NotFound => {
-                        FileStore::recover(fspath, *token, path.to_path())
+                        trace!(FileStore::recover(fspath, *token, &path))
                     }
-                    Err(e) => Err(e),
-                    Ok(_) => Ok(VFSCall::unlink(unlink {
+                    Err(e) => return Err(trace_err!(e)),
+                    Ok(_) => VFSCall::unlink(unlink {
                         path: Cow::Borrowed(path),
-                    })),
+                    }),
                 }
             }
-            BilogEntry::truncate(x) => {
-                let current = bilog_truncate::old(Either::Right(x), fspath)?;
-                bilog_truncate::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::write(x) => {
-                let current = bilog_write::old(Either::Right(x), fspath)?;
-                bilog_write::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-            BilogEntry::xattr(x) => {
-                let current = bilog_xattr::old(Either::Right(x), fspath)?;
-                bilog_xattr::apply(x, &current).map_err(|e| Error::new(ErrorKind::Other, e))
-            }
-        }
+        })
     }
 }
 
@@ -401,9 +426,12 @@ impl Bilog for bilog_chmod<Xor> {
             mode: x.mode ^ o.mode,
         }))
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
-        let stbuf = translate_and_stat(&path, fspath)?;
+        let stbuf = trace!(translate_and_stat(&path, fspath));
         Ok(set_csum!(bilog_chmod {
             path: path,
             mode: stbuf.st_mode,
@@ -427,11 +455,15 @@ impl Bilog for bilog_chown<Xor> {
     type O = bilog_chown<Old>;
     type X = bilog_chown<Xor>;
     fn new(call: &VFSCall) -> Self::N {
-        if let VFSCall::chown(c) = call {
+        if let VFSCall::security(security {
+            path,
+            security: FileSecurity::Unix { uid, gid },
+        }) = call
+        {
             set_csum!(bilog_chown {
-                path: c.path.clone().into_owned(),
-                uid: c.uid,
-                gid: c.gid,
+                path: path.clone().into_owned(),
+                uid: *uid,
+                gid: *gid,
                 checksum: 0,
                 s: PhantomData,
             })
@@ -449,20 +481,26 @@ impl Bilog for bilog_chown<Xor> {
         }
     }
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String> {
-        if hash_crc32!(x.uid ^ o.uid, x.gid ^ o.gid) ^ o.checksum != x.checksum {
+        if hash_crc32!(x.uid ^ o.uid, x.gid ^ o.gid) ^ o.checksum != x.checksum
+        {
             return Err(String::from(
                 "Cannot apply bilog entry, state checksum mismatch",
             ));
         }
-        Ok(VFSCall::chown(chown {
+        Ok(VFSCall::security(security {
             path: Cow::Borrowed(&x.path),
-            uid: x.uid ^ o.uid,
-            gid: x.gid ^ o.gid,
+            security: FileSecurity::Unix {
+                uid: x.uid ^ o.uid,
+                gid: x.gid ^ o.gid,
+            },
         }))
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
-        let stbuf = translate_and_stat(&path, fspath)?;
+        let stbuf = trace!(translate_and_stat(&path, fspath));
         Ok(set_csum!(bilog_chown {
             path: path,
             uid: stbuf.st_uid,
@@ -473,9 +511,10 @@ impl Bilog for bilog_chown<Xor> {
     }
 }
 path_bilog!(bilog_utimens {
-    timespec: [enc_timespec; 2],
+    timespec: [enc_timespec; 3],
     checksum: u32
 });
+
 impl<S: BilogState> bilog_utimens<S> {
     fn crc32(&self) -> u32 {
         hash_crc32!(self.timespec)
@@ -501,8 +540,9 @@ impl Bilog for bilog_utimens<Xor> {
         bilog_utimens {
             path: n.path.clone(),
             timespec: [
-                n.timespec[0].xor(&o.timespec[0]),
-                n.timespec[1].xor(&o.timespec[1]),
+                n.timespec[0] ^ o.timespec[0],
+                n.timespec[1] ^ o.timespec[1],
+                n.timespec[2] ^ o.timespec[2],
             ],
             checksum: n.checksum ^ o.checksum,
             s: PhantomData,
@@ -510,8 +550,9 @@ impl Bilog for bilog_utimens<Xor> {
     }
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String> {
         if hash_crc32!([
-            x.timespec[0].xor(&o.timespec[0]),
-            x.timespec[1].xor(&o.timespec[1]),
+            x.timespec[0] ^ o.timespec[0],
+            x.timespec[1] ^ o.timespec[1],
+            x.timespec[2] ^ o.timespec[2],
         ]) ^ o.checksum
             != x.checksum
         {
@@ -522,25 +563,30 @@ impl Bilog for bilog_utimens<Xor> {
         Ok(VFSCall::utimens(utimens {
             path: Cow::Borrowed(&x.path),
             timespec: [
-                x.timespec[0].xor(&o.timespec[0]),
-                x.timespec[1].xor(&o.timespec[1]),
+                x.timespec[0] ^ o.timespec[0],
+                x.timespec[1] ^ o.timespec[1],
+                x.timespec[2] ^ o.timespec[2],
             ],
         }))
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
-        let stbuf = translate_and_stat(&path, fspath)?;
+        let stbuf = trace!(translate_and_stat(&path, fspath));
         Ok(set_csum!(bilog_utimens {
             path: path,
             timespec: [
                 enc_timespec {
-                    tv_sec: stbuf.st_atime,
-                    tv_nsec: stbuf.st_atime_nsec,
+                    high: stbuf.st_atime,
+                    low: stbuf.st_atime_nsec,
                 },
                 enc_timespec {
-                    tv_sec: stbuf.st_mtime,
-                    tv_nsec: stbuf.st_mtime_nsec,
+                    high: stbuf.st_mtime,
+                    low: stbuf.st_mtime_nsec,
                 },
+                enc_timespec { high: 0, low: 0 }
             ],
             checksum: 0,
             s: PhantomData,
@@ -548,8 +594,8 @@ impl Bilog for bilog_utimens<Xor> {
     }
 }
 bilog_entry!(bilog_rename {
-    from: CString,
-    to: CString,
+    from: PathBuf,
+    to: PathBuf,
     from_exists: bool
 });
 impl Bilog for bilog_rename<Xor> {
@@ -577,7 +623,10 @@ impl Bilog for bilog_rename<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, _: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        _: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let from = r.either(|n| n.from.clone(), |x| x.from.clone());
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         Ok(bilog_rename {
@@ -629,13 +678,18 @@ impl Bilog for bilog_dir<Xor> {
         } else {
             VFSCall::mkdir(mkdir {
                 path: Cow::Borrowed(&x.path),
-                uid: x.uid,
-                gid: x.gid,
+                security: FileSecurity::Unix {
+                    uid: x.uid,
+                    gid: x.gid,
+                },
                 mode: x.mode,
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath);
         match stbuf {
@@ -660,8 +714,8 @@ impl Bilog for bilog_dir<Xor> {
     }
 }
 bilog_entry!(bilog_symlink {
-    from: CString,
-    to: CString,
+    from: PathBuf,
+    to: PathBuf,
     to_exists: bool,
     uid: uint32_t,
     gid: uint32_t
@@ -674,7 +728,7 @@ impl Bilog for bilog_symlink<Xor> {
     fn new(call: &VFSCall) -> Self::N {
         match call {
             VFSCall::unlink(u) => bilog_symlink {
-                from: CString::new("").unwrap(),
+                from: PathBuf::new(),
                 to: u.path.clone().into_owned(),
                 uid: 0,
                 gid: 0,
@@ -707,18 +761,23 @@ impl Bilog for bilog_symlink<Xor> {
             VFSCall::symlink(symlink {
                 from: Cow::Borrowed(&x.from),
                 to: Cow::Borrowed(&x.to),
-                uid: x.uid,
-                gid: x.gid,
+                security: FileSecurity::Unix {
+                    uid: x.uid,
+                    gid: x.gid,
+                },
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         let stbuf = translate_and_stat(&to, fspath);
-        if let Err(e) = stbuf {
+        if let Err(ref e) = stbuf {
             if e.kind() == ErrorKind::NotFound {
                 return Ok(bilog_symlink {
-                    from: CString::new("").unwrap(),
+                    from: PathBuf::new(),
                     to: to,
                     uid: 0,
                     gid: 0,
@@ -726,14 +785,13 @@ impl Bilog for bilog_symlink<Xor> {
                     s: PhantomData,
                 });
             }
-            return Err(e);
         }
-        let stbuf = stbuf?;
+        let stbuf = trace!(stbuf);
         let real_path = translate_path(&to, fspath);
-        let from = read_link(real_path.to_str().unwrap())?;
+        let from = trace!(read_link(real_path.to_str().unwrap()));
 
         Ok(bilog_symlink {
-            from: CString::new(from.to_str().unwrap()).unwrap(),
+            from: from,
             to,
             to_exists: true,
             uid: stbuf.st_uid,
@@ -743,8 +801,8 @@ impl Bilog for bilog_symlink<Xor> {
     }
 }
 bilog_entry!(bilog_link {
-    from: CString,
-    to: CString,
+    from: PathBuf,
+    to: PathBuf,
     to_exists: bool,
     uid: uint32_t,
     gid: uint32_t
@@ -756,7 +814,7 @@ impl Bilog for bilog_link<Xor> {
     fn new(call: &VFSCall) -> Self::N {
         match call {
             VFSCall::unlink(u) => bilog_link {
-                from: CString::new("").unwrap(),
+                from: PathBuf::new(),
                 to: u.path.clone().into_owned(),
                 to_exists: true,
                 uid: 0,
@@ -789,18 +847,23 @@ impl Bilog for bilog_link<Xor> {
             VFSCall::link(link {
                 from: Cow::Borrowed(&x.from),
                 to: Cow::Borrowed(&x.to),
-                uid: x.uid,
-                gid: x.gid,
+                security: FileSecurity::Unix {
+                    uid: x.uid,
+                    gid: x.gid,
+                },
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let to = r.either(|n| n.to.clone(), |x| x.to.clone());
         let stbuf = translate_and_stat(&to, fspath);
 
         match stbuf {
             Err(ref e) if e.kind() == ErrorKind::NotFound => Ok(bilog_link {
-                from: CString::new("").unwrap(),
+                from: PathBuf::new(),
                 to: to,
                 to_exists: false,
                 uid: 0,
@@ -809,16 +872,16 @@ impl Bilog for bilog_link<Xor> {
             }),
             Err(e) => Err(e),
             Ok(stbuf) => {
-                let from = find_hardlink(stbuf.st_ino, fspath)?;
+                let from = trace!(find_hardlink(stbuf.st_ino, fspath));
                 if from.is_none() {
-                    return Err(Error::new(
+                    trace!(Err(io::Error::new(
                         ErrorKind::Other,
                         "File is hardlinked outside fsyncer path",
-                    ));
+                    )));
                 }
 
                 Ok(bilog_link {
-                    from: from.unwrap().into_cstring(),
+                    from: from.unwrap(),
                     to,
                     to_exists: true,
                     uid: stbuf.st_uid,
@@ -875,15 +938,20 @@ impl Bilog for bilog_node<Xor> {
                 path: Cow::Borrowed(&x.path),
                 mode: x.mode,
                 rdev: x.rdev,
-                uid: x.uid,
-                gid: x.gid,
+                security: FileSecurity::Unix {
+                    uid: x.uid,
+                    gid: x.gid,
+                },
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath);
-        if let Err(e) = stbuf {
+        if let Err(ref e) = stbuf {
             if e.kind() == ErrorKind::NotFound {
                 return Ok(bilog_node {
                     path: path,
@@ -895,9 +963,8 @@ impl Bilog for bilog_node<Xor> {
                     s: PhantomData,
                 });
             }
-            return Err(e);
         }
-        let stbuf = stbuf?;
+        let stbuf = trace!(stbuf);
         Ok(bilog_node {
             path: path,
             mode: stbuf.st_mode,
@@ -953,16 +1020,21 @@ impl Bilog for bilog_file<Xor> {
                 path: Cow::Borrowed(&x.path),
                 mode: x.mode,
                 flags: O_CREAT | O_RDONLY,
-                uid: x.uid,
-                gid: x.gid,
+                security: FileSecurity::Unix {
+                    uid: x.uid,
+                    gid: x.gid,
+                },
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         //debug!(new, xor);
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let stbuf = translate_and_stat(&path, fspath);
-        if let Err(e) = stbuf {
+        if let Err(ref e) = stbuf {
             if e.kind() == ErrorKind::NotFound {
                 return Ok(bilog_file {
                     path: path,
@@ -973,9 +1045,8 @@ impl Bilog for bilog_file<Xor> {
                     s: PhantomData,
                 });
             }
-            return Err(e);
         }
-        let stbuf = stbuf?;
+        let stbuf = trace!(stbuf);
         Ok(bilog_file {
             path: path,
             mode: stbuf.st_mode,
@@ -1042,9 +1113,12 @@ impl Bilog for bilog_truncate<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
-        let stbuf = translate_and_stat(&path, fspath)?;
+        let stbuf = trace!(translate_and_stat(&path, fspath));
         let osize = stbuf.st_size;
         let nsize = r.either(|n| n.size, |x| x.size ^ osize);
 
@@ -1052,11 +1126,11 @@ impl Bilog for bilog_truncate<Xor> {
 
         if osize < nsize {
             let real_path = translate_path(&path, &fspath);
-            let f = File::open(real_path.to_path())?;
+            let f = trace!(File::open(&real_path));
 
             buf.reserve((nsize - osize) as usize);
             unsafe { buf.set_len((nsize - osize) as usize) };
-            f.read_exact_at(&mut buf[..], osize as u64)?;
+            trace!(f.read_exact_at(&mut buf[..], osize as u64));
         }
 
         Ok(set_csum!(bilog_truncate {
@@ -1146,14 +1220,17 @@ impl Bilog for bilog_write<Xor> {
             }
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let offset = r.either(|n| n.offset, |x| x.offset);
         let write_len = r.either(|n| n.buf.len(), |x| x.buf.len());
         let real_path = translate_path(&path, fspath);
 
-        let f = File::open(real_path.to_path())?;
-        let osize = f.metadata()?.len();
+        let f = trace!(File::open(&real_path));
+        let osize = trace!(f.metadata()).len();
 
         let mut buf = Vec::new();
 
@@ -1162,7 +1239,7 @@ impl Bilog for bilog_write<Xor> {
             let overlap = min(osize - offset as u64, write_len as u64) as usize;
             buf.reserve(overlap);
             unsafe { buf.set_len(overlap) };
-            f.read_exact_at(&mut buf[..], offset as u64)?;
+            trace!(f.read_exact_at(&mut buf[..], offset as u64));
         }
 
         Ok(set_csum!(bilog_write {
@@ -1175,7 +1252,7 @@ impl Bilog for bilog_write<Xor> {
         }))
     }
 }
-path_bilog!( bilog_xattr {
+path_bilog!(bilog_xattr {
     name: CString,
     value: Option<Vec<u8>>,
     remove: bool,
@@ -1225,7 +1302,10 @@ impl Bilog for bilog_xattr<Xor> {
                 remove = true;
                 n.value
                     .as_ref()
-                    .expect("If old state doesn't have the value, newstate must set it")
+                    .expect(
+                        "If old state doesn't have the value, newstate must \
+                         set it",
+                    )
                     .clone()
             } else {
                 let ovalue = o.value.as_ref().unwrap();
@@ -1288,10 +1368,13 @@ impl Bilog for bilog_xattr<Xor> {
             })
         })
     }
-    fn old(r: Either<&Self::N, &Self::X>, fspath: &Path) -> Result<Self::O, Error> {
+    fn old(
+        r: Either<&Self::N, &Self::X>,
+        fspath: &Path,
+    ) -> Result<Self::O, Error<io::Error>> {
         let path = r.either(|n| n.path.clone(), |x| x.path.clone());
         let name = r.either(|n| n.name.clone(), |x| x.name.clone());
-        let real_path = translate_path(&path, &fspath);
+        let real_path = translate_path(&path, &fspath).into_cstring();
         let mut val_buf: [u8; 4096] = [0; 4096];
         let len = unsafe {
             lgetxattr(
@@ -1314,7 +1397,7 @@ impl Bilog for bilog_xattr<Xor> {
                     s: PhantomData,
                 }));
             }
-            return Err(Error::from(err));
+            trace!(Err(io::Error::from(err)));
         }
         // Value exists
         Ok(set_csum!(bilog_xattr {

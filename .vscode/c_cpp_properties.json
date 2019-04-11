@@ -10,6 +10,12 @@
             "cStandard": "c11",
             "cppStandard": "c++17",
             "intelliSenseMode": "clang-x64"
+        },
+        {
+            "name": "Windows",
+            "includePath": [
+                "C:/Program Files/Dokan/Dokan Library-1.2.1/include"
+            ]
         }
     ],
     "version": 4

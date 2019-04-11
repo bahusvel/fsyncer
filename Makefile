@@ -1,4 +1,5 @@
 CFLAGS= -g -D_FILE_OFFSET_BITS=64 -Wall -Iinclude `pkg-config fuse3 --cflags`
+UNAME := $(shell uname)
 
 ifneq ($(foreground), no)
 	FUSE_FLAGS += -f
@@ -25,10 +26,21 @@ ifneq ($(profile),)
 endif
 
 ifeq ($(release), no)
-	FSYNCD_BIN = "target/debug/fsyncd"
+	FSYNCD_BIN = target/debug/fsyncd
+	ifneq ($(UNAME), Linux)
+		FSYNCD_BIN = $(shell cygpath -wa target/debug/fsyncd.exe)
+	endif
 else 
 	CARGO_BUILD_FLAGS += --release
-	FSYNCD_BIN = "target/release/fsyncd"
+	FSYNCD_BIN = target/release/fsyncd
+	ifneq ($(UNAME), Linux)
+		FSYNCD_BIN = $(shell cygpath -wa target/release/fsyncd.exe)
+	endif
+endif
+
+ifneq ($(UNAME), Linux)
+	EXEC_CMD = runas /savecred /env /user:Administrator "cmd /k
+	END_CMD = "
 endif
 
 ifeq ($(journal), bilog)
@@ -64,6 +76,12 @@ ifneq ($(threads),)
 	CLIENT_FLAGS += --threads=$(threads)
 endif
 
+ifeq ($(UNAME), Linux)
+	CLIENT_CP=cp -rax .fsyncer-test_src test_dst
+else
+	CLIENT_CP=robocopy .fsyncer-test_src test_dst /mir /it || true
+endif
+
 dirs:
 	mkdir test_src || true
 	mkdir test_path || true
@@ -84,14 +102,16 @@ build:
 
 fs: build dirs
 	fusermount3 -u -z test_src || true
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) server $(SERVER_FLAGS) ./test_src -- $(FUSE_FLAGS)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) server $(SERVER_FLAGS) test_src -- $(FUSE_FLAGS) $(END_CMD)
 	$(POST_CMD)
 
 client: build dirs
 	rm -rf test_dst || true
-	cp -rax .fsyncer-test_src test_dst
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) client `realpath ./test_dst` $(CLIENT_FLAGS)
+	$(CLIENT_CP)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) client test_dst $(CLIENT_FLAGS) $(END_CMD)
 	$(POST_CMD)
+
+test: build fs client
 
 cmd: build dirs
 	ifeq ($(command),)
@@ -105,3 +125,9 @@ journal: build
 compile_tests:
 	gcc test/sync_test.c -o test/sync_test
 	gcc test/direct_test.c -o test/direct_test
+
+mirror_windows:
+	cmd.exe /C 'call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\Tools\VsDevCmd.bat" -arch=amd64 && cl.exe /I "C:\Program Files\Dokan\Dokan Library-1.2.1\include" /D _UNICODE /D UNICODE doc/mirror.c /link "C:\Program Files\Dokan\Dokan Library-1.2.1\lib\dokan1.lib" user32.lib advapi32.lib'
+
+test_mirror:
+	runas /user:Administrator "mirror.exe /o /s /r C:\Users\denis\Documents\Developing\fsyncer\.fsyncer-test_src /l  C:\Users\denis\Documents\Developing\fsyncer\test_src"

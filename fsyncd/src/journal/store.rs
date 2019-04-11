@@ -6,18 +6,18 @@ use self::test::Bencher;
 #[cfg(test)]
 use std::{fs::OpenOptions, io::Read};
 
-use common::ffi::*;
-
 use bincode::{deserialize, deserialize_from, serialize_into, serialized_size};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
+use error::Error;
 use journal::crc32;
 use journal::filestore::FileStore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
+use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 const BLOCK_SIZE: u64 = 1024 * 128;
@@ -106,22 +106,24 @@ impl<'a, T: Debug> Iterator for JournalIterator<'a, Forward, T>
 where
     for<'de> T: Deserialize<'de>,
 {
-    type Item = Result<StoreEntry<T>, Error>;
+    type Item = Result<StoreEntry<T>, Error<io::Error>>;
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf: [u8; 4] = [0; 4];
         if self.header.head == self.header.tail {
             return None;
         }
 
-        if align_up_always(self.header.head, BLOCK_SIZE) - self.header.head < 4 {
+        if align_up_always(self.header.head, BLOCK_SIZE) - self.header.head < 4
+        {
             self.header.head = align_up_always(self.header.head, BLOCK_SIZE);
         } else {
-            iter_try!(self
-                .journal
-                .file
-                .read_exact_at(&mut buf[..], self.journal.file_off(self.header.head)));
+            iter_try!(self.journal.file.read_exact_at(
+                &mut buf[..],
+                self.journal.file_off(self.header.head)
+            ));
             if buf == [0; 4] {
-                self.header.head = align_up_always(self.header.head, BLOCK_SIZE);
+                self.header.head =
+                    align_up_always(self.header.head, BLOCK_SIZE);
             }
         }
 
@@ -129,7 +131,7 @@ where
 
         let entry: StoreEntry<T> =
             iter_try!(deserialize_from(&mut self.journal.file)
-                .map_err(|e| Error::new(ErrorKind::Other, e)));
+                .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
         // println!(
         //     "head {}, tail {}, entry {:?}",
@@ -146,7 +148,7 @@ impl<'a, T: Debug + Sized> Iterator for JournalIterator<'a, Reverse, T>
 where
     for<'de> T: Deserialize<'de>,
 {
-    type Item = Result<StoreEntry<T>, Error>;
+    type Item = Result<StoreEntry<T>, Error<io::Error>>;
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf: [u8; 4] = [0; 4];
         if self.block_buffer.len() == 0 {
@@ -168,39 +170,53 @@ where
                 if self.header.tail - decode_tail < 4 {
                     break;
                 }
-                iter_try!(self
-                    .journal
-                    .file
-                    .read_exact_at(&mut buf[..], self.journal.file_off(decode_tail)));
+                iter_try!(self.journal.file.read_exact_at(
+                    &mut buf[..],
+                    self.journal.file_off(decode_tail)
+                ));
                 if buf == [0; 4] {
                     break;
                 }
                 let fsize = LittleEndian::read_u32(&buf[..]) as u64;
-                //debug!(fsize, decode_tail, align_up_always(decode_tail, BLOCK_SIZE));
-                if fsize > align_up_always(decode_tail, BLOCK_SIZE) - decode_tail {
-                    debug!(fsize, decode_tail, align_up_always(decode_tail, BLOCK_SIZE));
-                    return Some(Err(Error::new(ErrorKind::Other, "Entry too large")));
+                //debug!(fsize, decode_tail, align_up_always(decode_tail,
+                // BLOCK_SIZE));
+                if fsize
+                    > align_up_always(decode_tail, BLOCK_SIZE) - decode_tail
+                {
+                    debug!(
+                        fsize,
+                        decode_tail,
+                        align_up_always(decode_tail, BLOCK_SIZE)
+                    );
+                    return Some(Err(trace_err!(io::Error::new(
+                        ErrorKind::Other,
+                        "Entry too large",
+                    ))));
                 }
                 iter_try!(self.journal.seek(decode_tail));
                 let mut buf = Vec::with_capacity(fsize as usize);
                 unsafe {
                     buf.set_len(fsize as usize);
                 }
-                iter_try!(self
-                    .journal
-                    .file
-                    .read_exact_at(&mut buf[..], self.journal.file_off(decode_tail)));
+                iter_try!(self.journal.file.read_exact_at(
+                    &mut buf[..],
+                    self.journal.file_off(decode_tail)
+                ));
 
-                let crc_recorded = LittleEndian::read_u32(&buf[buf.len() - 4..]);
+                let crc_recorded =
+                    LittleEndian::read_u32(&buf[buf.len() - 4..]);
                 let crc_computed = crc32::checksum_ieee(&buf[..buf.len() - 4]);
 
                 if crc_recorded != crc_computed {
                     debug!(crc_recorded, crc_computed);
-                    return Some(Err(Error::new(ErrorKind::Other, "Entry checksum mismatch")));
+                    return Some(Err(trace_err!(io::Error::new(
+                        ErrorKind::Other,
+                        "Entry checksum mismatch",
+                    ))));
                 }
 
-                let entry: StoreEntry<T> =
-                    iter_try!(deserialize(&buf).map_err(|e| Error::new(ErrorKind::Other, e)));
+                let entry: StoreEntry<T> = iter_try!(deserialize(&buf)
+                    .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
                 decode_tail += fsize as u64;
                 self.block_buffer.push(entry);
@@ -210,7 +226,8 @@ where
                 // Partial block read
                 self.header.tail = align_down(self.header.tail, BLOCK_SIZE);
             } else {
-                if self.header.tail != 0 && self.header.tail != self.header.head {
+                if self.header.tail != 0 && self.header.tail != self.header.head
+                {
                     self.header.tail -= BLOCK_SIZE;
                 }
             }
@@ -221,7 +238,7 @@ where
 }
 
 impl Journal {
-    pub fn new(file: File, c: JournalConfig) -> Result<Self, Error> {
+    pub fn new(file: File, c: JournalConfig) -> Result<Self, Error<io::Error>> {
         let JournalConfig {
             sync,
             filestore_size,
@@ -234,15 +251,21 @@ impl Journal {
                 tail: 0,
                 trans_ctr: 0,
             },
-            size: align_down(file.metadata()?.len() - *HEADER_SIZE, BLOCK_SIZE),
+            size: align_down(
+                trace!(file.metadata()).len() - *HEADER_SIZE,
+                BLOCK_SIZE,
+            ),
             file: file,
             sbuf: Vec::new(),
             sync,
             last_time: SystemTime::now(),
-            fstore: FileStore::new(&vfsroot, filestore_size)?,
+            fstore: trace!(FileStore::new(&vfsroot, filestore_size)),
         })
     }
-    pub fn open(mut file: File, c: JournalConfig) -> Result<Self, Error> {
+    pub fn open(
+        mut file: File,
+        c: JournalConfig,
+    ) -> Result<Self, Error<io::Error>> {
         let JournalConfig {
             sync,
             filestore_size,
@@ -250,17 +273,21 @@ impl Journal {
             ..
         } = c;
 
-        file.seek(SeekFrom::Start(0))?;
-        let header = deserialize_from(&mut file).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        trace!(file.seek(SeekFrom::Start(0)));
+        let header = trace!(deserialize_from(&mut file)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
         let mut j = Journal {
             header: header,
-            size: align_down(file.metadata()?.len() - *HEADER_SIZE, BLOCK_SIZE),
+            size: align_down(
+                trace!(file.metadata()).len() - *HEADER_SIZE,
+                BLOCK_SIZE,
+            ),
             file: file,
             sbuf: Vec::new(),
             sync,
             last_time: SystemTime::now(),
-            fstore: FileStore::new(&vfsroot, filestore_size)?,
+            fstore: trace!(FileStore::new(&vfsroot, filestore_size)),
         };
 
         println!("Traversing the journal {:?}", j.header);
@@ -275,15 +302,16 @@ impl Journal {
             if align_up_always(new_tail, BLOCK_SIZE) - new_tail < 4 {
                 break;
             }
-            j.seek(new_tail)?;
-            let fsize = j.file.read_u32::<LittleEndian>()?;
+            trace!(j.seek(new_tail));
+            let fsize = trace!(j.file.read_u32::<LittleEndian>());
             //debug!(fsize);
             if fsize == 0 {
                 break; // last entry in the block
             }
             new_tail += fsize as u64;
-            // FIXME next_tx is not neccessarily correct, it may be leftover data from the previous block, I need to validate this entry.
-            let next_tx = j.file.read_u32::<LittleEndian>()?;
+            // FIXME next_tx is not neccessarily correct, it may be leftover
+            // data from the previous block, I need to validate this entry.
+            let next_tx = trace!(j.file.read_u32::<LittleEndian>());
             //println!("Next tx {} old tx {}", next_tx, tx_max);
             // Allows for overflow to happen
             if next_tx != (tx_max + 1) as u32 {
@@ -301,9 +329,13 @@ impl Journal {
         Ok(j)
     }
 
-    fn write_inner<T: Serialize>(&mut self, mut e: StoreEntry<T>) -> Result<(), Error> {
+    fn write_inner<T: Serialize>(
+        &mut self,
+        mut e: StoreEntry<T>,
+    ) -> Result<(), Error<io::Error>> {
         const ZERO_SIZE: [u8; 4] = [0; 4];
-        let esize = serialized_size(&e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let esize = trace!(serialized_size(&e)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
         //println!("Writing to journal {}", esize);
 
@@ -320,20 +352,24 @@ impl Journal {
 
         //debug!(self.header.tail, align_up(self.header.tail, BLOCK_SIZE));
 
-        let space_in_block = align_up_always(self.header.tail, BLOCK_SIZE) - self.header.tail;
+        let space_in_block =
+            align_up_always(self.header.tail, BLOCK_SIZE) - self.header.tail;
 
         if space_in_block < esize {
             if space_in_block >= 4 {
                 //println!("Writing zero {}", self.header.tail);
-                self.file
-                    .write_all_at(&ZERO_SIZE[..], self.file_off(self.header.tail))?;
+                trace!(self.file.write_all_at(
+                    &ZERO_SIZE[..],
+                    self.file_off(self.header.tail),
+                ));
             }
-            self.header.tail = align_up_always(self.header.tail, BLOCK_SIZE as u64);
+            self.header.tail =
+                align_up_always(self.header.tail, BLOCK_SIZE as u64);
             // Journal is full, will move head
             if self.header.head + self.size == self.header.tail {
                 self.header.head += BLOCK_SIZE as u64;
             }
-            self.write_header()?;
+            trace!(self.write_header());
         }
 
         if self.sbuf.capacity() < esize as usize {
@@ -342,27 +378,32 @@ impl Journal {
 
         unsafe { self.sbuf.set_len(0) };
 
-        serialize_into(&mut self.sbuf, &e).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        trace!(serialize_into(&mut self.sbuf, &e)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
         let nlen = self.sbuf.len() - 4;
         unsafe { self.sbuf.set_len(nlen) };
 
         let crc32 = crc32::checksum_ieee(&self.sbuf[..]);
-        self.sbuf.write_u32::<LittleEndian>(crc32)?;
+        trace!(self.sbuf.write_u32::<LittleEndian>(crc32));
 
-        self.file
-            .write_all_at(&self.sbuf, self.file_off(self.header.tail))?;
+        trace!(self
+            .file
+            .write_all_at(&self.sbuf, self.file_off(self.header.tail)));
         self.header.tail += esize;
         self.header.trans_ctr += 1;
 
         if self.sync {
-            self.flush()?;
+            trace!(self.flush());
         }
 
         Ok(())
     }
 
-    pub fn write_entry<T: Serialize>(&mut self, entry: T) -> Result<(), Error> {
+    pub fn write_entry<T: Serialize>(
+        &mut self,
+        entry: T,
+    ) -> Result<(), Error<io::Error>> {
         let now = SystemTime::now();
         if now
             .duration_since(self.last_time)
@@ -370,12 +411,12 @@ impl Journal {
             > Duration::from_secs(1)
         {
             let ctr = self.header.trans_ctr as u32;
-            self.write_inner::<T>(StoreEntry {
+            trace!(self.write_inner::<T>(StoreEntry {
                 fsize: 0,
                 trans_id: ctr,
                 inner: EntryContent::Time(now),
                 crc32: 0,
-            })?;
+            }));
             self.last_time = now;
         }
         let e = StoreEntry {
@@ -384,16 +425,16 @@ impl Journal {
             inner: EntryContent::Payload(entry),
             crc32: 0,
         };
-        self.write_inner(e)
+        Ok(trace!(self.write_inner(e)))
     }
 
     pub fn fstore(&mut self) -> &mut FileStore {
         &mut self.fstore
     }
 
-    fn seek(&mut self, off: u64) -> Result<(), Error> {
+    fn seek(&mut self, off: u64) -> Result<(), Error<io::Error>> {
         let o = self.file_off(off);
-        self.file.seek(SeekFrom::Start(o))?;
+        trace!(self.file.seek(SeekFrom::Start(o)));
         Ok(())
     }
 
@@ -402,14 +443,15 @@ impl Journal {
         *HEADER_SIZE + (off % self.size)
     }
 
-    pub fn flush(&mut self) -> Result<(), Error> {
-        self.file.flush()
+    pub fn flush(&mut self) -> Result<(), Error<io::Error>> {
+        Ok(trace!(self.file.flush()))
     }
 
-    fn write_header(&mut self) -> Result<(), Error> {
+    fn write_header(&mut self) -> Result<(), Error<io::Error>> {
         let mut buf = Vec::with_capacity(*HEADER_SIZE as usize);
-        serialize_into(&mut buf, &self.header).map_err(|e| Error::new(ErrorKind::Other, e))?;
-        self.file.write_all_at(&buf[..], 0)
+        trace!(serialize_into(&mut buf, &self.header)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e)));
+        Ok(trace!(self.file.write_all_at(&buf[..], 0)))
     }
 
     pub fn read_forward<T>(&mut self) -> JournalIterator<Forward, T> {

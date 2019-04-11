@@ -1,8 +1,8 @@
 use libc::*;
 use server::fuseops::fuse_operations;
 use server::fuseops::{fuse_config, fuse_conn_info};
-use server::read::*;
-use server::write::*;
+use server::read_unix::*;
+use server::write_unix::*;
 use std::mem::size_of;
 use std::ptr;
 
@@ -29,7 +29,10 @@ pub struct fuse_context {
     pub umask: mode_t,
 }
 
-pub unsafe extern "C" fn xmp_init(conn: *mut fuse_conn_info, cfg: *mut fuse_config) -> *mut c_void {
+pub unsafe extern "C" fn xmp_init(
+    conn: *mut fuse_conn_info,
+    cfg: *mut fuse_config,
+) -> *mut c_void {
     (*cfg).use_ino = 1;
     // NOTE this makes path NULL to parameters where fi->fh exists. This is evil
     // for the current case of replication. But in future when this is properly

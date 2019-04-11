@@ -10,13 +10,13 @@
 #define _XOPEN_SOURCE 700
 #endif
 
-#include <fuse.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <stdlib.h>
+#include <fuse.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -33,8 +33,8 @@ struct xmp_dirp {
 };
 
 int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-					   off_t offset, struct fuse_file_info *fi,
-					   enum fuse_readdir_flags flags) {
+				off_t offset, struct fuse_file_info *fi,
+				enum fuse_readdir_flags flags) {
 	struct xmp_dirp *d = (struct xmp_dirp *)fi->fh;
 
 	(void)path;
@@ -92,8 +92,8 @@ int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	return 0;
 }
 
-int xmp_read_buf(const char *path, struct fuse_bufvec **bufp,
-						size_t size, off_t offset, struct fuse_file_info *fi) {
+int xmp_read_buf(const char *path, struct fuse_bufvec **bufp, size_t size,
+				 off_t offset, struct fuse_file_info *fi) {
 	struct fuse_bufvec *src;
 
 	(void)path;

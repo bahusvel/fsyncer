@@ -1,13 +1,14 @@
 extern crate chrono;
-extern crate regex;
-
 use self::chrono::{DateTime, Local};
-use self::regex::Regex;
 use clap::ArgMatches;
 use client::dispatch;
-use journal::{BilogEntry, EntryContent, Journal, JournalConfig, JournalEntry, StoreEntry};
+use error::Error;
+use journal::{
+    BilogEntry, EntryContent, Journal, JournalConfig, JournalEntry, StoreEntry,
+};
+use regex::Regex;
 use std::fs::File;
-use std::io::Error;
+use std::io;
 use std::path::Path;
 
 pub fn viewer_main(matches: ArgMatches) {
@@ -32,9 +33,19 @@ pub fn viewer_main(matches: ArgMatches) {
     let mut j = Journal::open(f, c).expect("Failed to recover journal");
 
     let iter = if journal_matches.is_present("reverse") {
-        Box::new(j.read_reverse()) as Box<Iterator<Item = Result<StoreEntry<BilogEntry>, Error>>>
+        Box::new(j.read_reverse())
+            as Box<
+                Iterator<
+                    Item = Result<StoreEntry<BilogEntry>, Error<io::Error>>,
+                >,
+            >
     } else {
-        Box::new(j.read_forward()) as Box<Iterator<Item = Result<StoreEntry<BilogEntry>, Error>>>
+        Box::new(j.read_forward())
+            as Box<
+                Iterator<
+                    Item = Result<StoreEntry<BilogEntry>, Error<io::Error>>,
+                >,
+            >
     };
 
     let filter = journal_matches
@@ -53,7 +64,9 @@ pub fn viewer_main(matches: ArgMatches) {
                 EntryContent::Payload(e) => e
                     .affected_paths()
                     .iter()
-                    .filter(|p| filter.as_ref().unwrap().is_match(p.to_str().unwrap()))
+                    .filter(|p| {
+                        filter.as_ref().unwrap().is_match(p.to_str().unwrap())
+                    })
                     .next()
                     .is_some(),
                 EntryContent::Time(_) => return true,
@@ -63,19 +76,25 @@ pub fn viewer_main(matches: ArgMatches) {
 
     match journal_matches.subcommand_name() {
         Some("view") => {
-            let view_matches = journal_matches.subcommand_matches("view").unwrap();
+            let view_matches =
+                journal_matches.subcommand_matches("view").unwrap();
             let verbose = view_matches.is_present("verbose");
             for entry in filtered {
                 match entry.contents() {
-                    EntryContent::Payload(e) => {
-                        println!("{}\t{}", entry.trans_id(), e.describe(verbose))
+                    EntryContent::Payload(e) => println!(
+                        "{}\t{}",
+                        entry.trans_id(),
+                        e.describe(verbose)
+                    ),
+                    EntryContent::Time(t) => {
+                        println!("{}", DateTime::<Local>::from(*t))
                     }
-                    EntryContent::Time(t) => println!("{}", DateTime::<Local>::from(*t)),
                 }
             }
         }
         Some("replay") => {
-            let replay_matches = journal_matches.subcommand_matches("replay").unwrap();
+            let replay_matches =
+                journal_matches.subcommand_matches("replay").unwrap();
             let path = Path::new(
                 replay_matches
                     .value_of("backing-store")
@@ -85,7 +104,9 @@ pub fn viewer_main(matches: ArgMatches) {
             for entry in filtered {
                 match entry.contents() {
                     EntryContent::Payload(e) => {
-                        let vfscall = e.apply(&path).expect("Failed to generate bilog vfscall");
+                        let vfscall = e
+                            .apply(&path)
+                            .expect("Failed to generate bilog vfscall");
                         e.describe(false);
                         //debug!(vfscall);
                         let res = unsafe { dispatch(&vfscall, path) };
@@ -93,14 +114,15 @@ pub fn viewer_main(matches: ArgMatches) {
                             panic!(
                                 "Failed to apply bilog entry {:?} error {}({})",
                                 e,
-                                Error::from_raw_os_error(-res),
+                                io::Error::from_raw_os_error(-res),
                                 res,
                             );
                         }
                     }
-                    EntryContent::Time(t) => {
-                        println!("Replaying events from {}", DateTime::<Local>::from(*t))
-                    }
+                    EntryContent::Time(t) => println!(
+                        "Replaying events from {}",
+                        DateTime::<Local>::from(*t)
+                    ),
                 }
             }
         }
