@@ -16,7 +16,7 @@ pub use self::viewer::viewer_main;
 
 use common::*;
 use errno::errno;
-use error::Error;
+use error::{Error, FromError};
 use libc::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

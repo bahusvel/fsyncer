@@ -1,5 +1,5 @@
 use common::*;
-use error::Error;
+use error::{Error, FromError};
 use libc::uint32_t;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;

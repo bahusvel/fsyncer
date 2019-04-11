@@ -39,7 +39,7 @@ mod client;
 use self::client::{Client, ClientStatus};
 use clap::ArgMatches;
 use common::*;
-use error::Error;
+use error::{Error, FromError};
 use libc::c_int;
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -159,9 +159,9 @@ fn send_call<'a>(
 }
 
 pub fn pre_op(_call: &VFSCall) -> Option<c_int> {
-    // This is safe, journal is only initialized once.
     #[cfg(target_family = "unix")]
     {
+        // This is safe, journal is only initialized once.
         if unsafe { JOURNAL.is_none() } {
             return None;
         }

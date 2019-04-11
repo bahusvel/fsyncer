@@ -54,10 +54,12 @@ macro_rules! debug {
     ($($e:expr),+) => {
         #[cfg(debug_assertions)]
         {
-            $(
-                print!(concat!(stringify!($e), "={:?} "), $e);
-            )*
-            println!();
+            if unsafe {::DEBUG } {
+                $(
+                    print!(concat!(stringify!($e), "={:?} "), $e);
+                )*
+                println!();
+            }
         }
     }
 }
@@ -148,6 +150,8 @@ fn start_profiler() {
             .expect("Failed to declare signal handler for profiling")
     };
 }
+
+pub static mut DEBUG: bool = false;
 
 const VERSION: &str = env!("VERSION");
 
@@ -357,6 +361,10 @@ fn main() {
             }
             _ => e.exit(),
         });
+
+    if matches.is_present("debug") {
+        unsafe { DEBUG = true };
+    }
 
     #[cfg(feature = "profile")]
     start_profiler();

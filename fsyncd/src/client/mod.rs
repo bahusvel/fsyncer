@@ -1,7 +1,6 @@
 metablock!(cfg(target_family = "unix") {
     mod dispatch_unix;
     pub use self::dispatch_unix::dispatch;
-    const STATUS_SUCCESS: i32 = 0;
 });
 
 metablock!(cfg(target_os = "windows") {
@@ -10,7 +9,6 @@ metablock!(cfg(target_os = "windows") {
     extern crate dokan;
     use self::dokan::AddPrivileges;
     use common::ERROR_SUCCESS;
-    const STATUS_SUCCESS: i32 = ERROR_SUCCESS;
 });
 
 extern crate threadpool;
@@ -289,7 +287,11 @@ pub fn client_main(matches: ArgMatches) {
             .unwrap(),
         move |call| unsafe {
             let e = dispatch(call, &client_path);
-            if e != STATUS_SUCCESS {
+            #[cfg(target_family = "unix")]
+            let failed = e < 0;
+            #[cfg(target_os = "windows")]
+            let failed = e != ERROR_SUCCESS;
+            if failed {
                 println!(
                     "Dispatch {:?} failed {:?}({})",
                     call,

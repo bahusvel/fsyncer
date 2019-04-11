@@ -4,7 +4,7 @@ use journal::*;
 extern crate either;
 
 use self::either::Either;
-use error::Error;
+use error::{Error, FromError};
 use journal::crc32;
 use journal::FileStore;
 use std::cmp::min;

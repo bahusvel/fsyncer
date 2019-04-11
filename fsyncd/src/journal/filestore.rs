@@ -1,5 +1,5 @@
 use common::{link, FileSecurity, VFSCall};
-use error::Error;
+use error::{Error, FromError};
 use journal::Journal;
 use std::borrow::Cow;
 use std::fs;

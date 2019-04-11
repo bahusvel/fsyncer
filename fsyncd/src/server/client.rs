@@ -5,7 +5,7 @@ use bincode::{deserialize_from, serialize, serialized_size};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
-use error::Error;
+use error::{Error, FromError};
 use net2::TcpStreamExt;
 use server::{cork_server, uncork_server};
 use std::collections::HashMap;

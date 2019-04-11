@@ -6,8 +6,18 @@ pub struct Error<E: Display + Debug> {
     pub trace: Vec<(&'static str, u32)>,
 }
 
-impl<E: Debug + Display> From<E> for Error<E> {
-    fn from(e: E) -> Self {
+pub trait FromError<E> {
+    fn from_error(e: E) -> Self;
+}
+
+impl<E: Debug + Display> FromError<Error<E>> for Error<E> {
+    fn from_error(e: Error<E>) -> Self {
+        e
+    }
+}
+
+impl<E: Debug + Display> FromError<E> for Error<E> {
+    fn from_error(e: E) -> Self {
         Error {
             error: e,
             trace: Vec::new(),
@@ -44,7 +54,7 @@ impl<E: Display + Debug> Debug for Error<E> {
 
 macro_rules! trace_err {
     ($e:expr) => {{
-        let mut e = Error::from($e);
+        let mut e = Error::from_error($e);
         e.trace.push((file!(), line!()));
         e
     }};
@@ -56,7 +66,7 @@ macro_rules! trace {
         match $res {
             Ok(o) => o,
             Err(e) => {
-                let mut err = Error::from(e);
+                let mut err = Error::from_error(e);
                 err.trace.push((file!(), line!()));
                 return Err(err);
             }

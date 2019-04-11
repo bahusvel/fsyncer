@@ -8,7 +8,7 @@ use std::{fs::OpenOptions, io::Read};
 
 use bincode::{deserialize, deserialize_from, serialize_into, serialized_size};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use error::Error;
+use error::{Error, FromError};
 use journal::crc32;
 use journal::filestore::FileStore;
 use serde::{Deserialize, Serialize};
