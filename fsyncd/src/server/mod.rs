@@ -36,7 +36,7 @@ metablock!(cfg(target_os = "windows") {
 });
 
 mod client;
-use self::client::{Client, ClientStatus};
+use self::client::{Client, ClientResponse, ClientStatus};
 use clap::ArgMatches;
 use common::*;
 use error::{Error, FromError};
@@ -45,7 +45,7 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::{
     borrow::Cow, mem::transmute, ops::Deref, process::Command, thread,
     time::Duration,
@@ -120,53 +120,57 @@ pub fn uncork_server() {
     println!("Uncork done");
 }
 
-fn send_call<'a>(
-    call: Cow<'a, VFSCall<'a>>,
-    client: &Client,
-    ret: i32,
-) -> Result<(), Error<io::Error>> {
-    match client.mode {
-        ClientMode::MODE_SYNC
-        | ClientMode::MODE_SEMISYNC
-        | ClientMode::MODE_FLUSHSYNC => {
-            // In flushsync mode all ops except for fsync are sent async
-            if client.mode == ClientMode::MODE_FLUSHSYNC
-                && !is_variant!(&*call, VFSCall::fsync)
-            {
-                return client.send_msg(FsyncerMsg::AsyncOp(call), false);
-            }
-
-            let tid = unsafe {
-                transmute::<thread::ThreadId, u64>(thread::current().id())
-            };
-            let client_ret = client
-                .send_msg(FsyncerMsg::SyncOp(call, tid), true)
-                .map(|_| client.wait_thread_response())?;
-
-            if client.mode == ClientMode::MODE_SYNC && client_ret != ret {
-                println!(
-                    "Response from client {} does not match server {}",
-                    client_ret, ret
-                );
-            }
-            Ok(())
-        }
-        ClientMode::MODE_ASYNC => {
-            client.send_msg(FsyncerMsg::AsyncOp(call), false)
-        }
-        ClientMode::MODE_CONTROL => Ok(()), // Don't send control anything
-    }
+pub struct OpRef {
+    ret: Option<c_int>,
+    waits: Vec<Arc<ClientResponse<ClientAck>>>,
 }
 
-pub fn pre_op(_call: &VFSCall) -> Option<c_int> {
+pub fn pre_op(call: &VFSCall) -> OpRef {
+    let mut corked = CORK.lock().unwrap();
+    while *corked {
+        corked = CORK_VAR.wait(corked).unwrap();
+    }
+    let mut opref = OpRef {
+        ret: None,
+        waits: Vec::new(),
+    };
+
+    let tid =
+        unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
+    let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
+    for client in list.deref() {
+        if client.mode == ClientMode::MODE_CONTROL {
+            continue; // Don't send control anything
+        }
+        let (msg, sync) = if client.mode == ClientMode::MODE_SYNC
+            || client.mode == ClientMode::MODE_SEMISYNC
+            || (client.mode == ClientMode::MODE_FLUSHSYNC
+                && is_variant!(&*call, VFSCall::fsync))
+        {
+            (FsyncerMsg::SyncOp(Cow::Borrowed(call), tid), true)
+        } else {
+            (FsyncerMsg::AsyncOp(Cow::Borrowed(call)), false)
+        };
+        match client.response_msg(msg, sync, sync) {
+            Ok(None) => {}
+            Ok(Some(response)) => opref.waits.push(response),
+            Err(e) => println!("Failed sending message to client {}", e),
+        }
+    }
+
+    /* Cork lock is held until here, it is used to make sure that any pending
+     * operations get sent over the network, the flush operation will force
+     * them to the other side */
+    drop(corked);
+
     #[cfg(target_family = "unix")]
     {
         // This is safe, journal is only initialized once.
         if unsafe { JOURNAL.is_none() } {
-            return None;
+            return opref;
         }
         //println!("writing journal event {:?}", call);
-        let bilog = BilogEntry::from_vfscall(_call, unsafe {
+        let bilog = BilogEntry::from_vfscall(call, unsafe {
             &SERVER_PATH.as_ref().unwrap()
         })
         .expect("Failed to generate journal entry from vfscall");
@@ -179,30 +183,32 @@ pub fn pre_op(_call: &VFSCall) -> Option<c_int> {
 
         if is_variant!(bilog, BilogEntry::filestore, struct) {
             // Bypass real unlink when using filestore
-            return Some(0);
+            opref.ret = Some(0);
         }
     }
-
-    None
+    opref
 }
 
-pub fn post_op(call: &VFSCall, ret: i32) -> i32 {
-    let mut corked = CORK.lock().unwrap();
-    while *corked {
-        corked = CORK_VAR.wait(corked).unwrap();
-    }
-
-    let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
-    for client in list.deref() {
-        let res = send_call(Cow::Borrowed(call), client, ret);
-        if res.is_err() {
-            println!("Failed sending message to client {}", res.unwrap_err());
+pub fn post_op(opref: OpRef, ret: i32) -> i32 {
+    for wait in opref.waits {
+        let client_ret = wait.wait();
+        if client_ret.is_none() {
+            println!("Client did not respond");
+            continue;
+        }
+        let client_ret = client_ret.unwrap();
+        match client_ret {
+            ClientAck::Dead => {
+                println!("Client died before acknowledging write")
+            }
+            ClientAck::RetCode(code) if code != ret => println!(
+                "Response from client {} does not match server {}",
+                code, ret
+            ),
+            _ => {}
         }
     }
     ret
-    /* Cork lock is held until here, it is used to make sure that any pending
-     * operations get sent over the network, the flush operation will force
-     * them to the other side */
 }
 
 #[cfg(target_family = "unix")]

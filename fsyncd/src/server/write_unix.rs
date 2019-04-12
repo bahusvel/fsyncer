@@ -25,7 +25,8 @@ pub unsafe extern "C" fn do_mknod(
         },
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = xmp_mknod(
@@ -35,7 +36,7 @@ pub unsafe extern "C" fn do_mknod(
         (*context).uid,
         (*context).gid,
     );
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
@@ -50,12 +51,13 @@ pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
         },
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res =
         xmp_mkdir(real_path.as_ptr(), mode, (*context).uid, (*context).gid);
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
@@ -64,11 +66,12 @@ pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = xmp_unlink(real_path.as_ptr());
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
@@ -77,11 +80,12 @@ pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = xmp_rmdir(real_path.as_ptr());
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_symlink(
@@ -99,12 +103,13 @@ pub unsafe extern "C" fn do_symlink(
         },
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res =
         xmp_symlink(from, real_to.as_ptr(), (*context).uid, (*context).gid);
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_rename(
@@ -123,11 +128,12 @@ pub unsafe extern "C" fn do_rename(
         flags,
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = xmp_rename(real_from.as_ptr(), real_to.as_ptr(), flags);
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_link(
@@ -146,7 +152,8 @@ pub unsafe extern "C" fn do_link(
         },
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = xmp_link(
@@ -155,7 +162,7 @@ pub unsafe extern "C" fn do_link(
         (*context).uid,
         (*context).gid,
     );
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_chmod(
@@ -168,7 +175,8 @@ pub unsafe extern "C" fn do_chmod(
         mode,
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = if fi.is_null() {
@@ -177,7 +185,7 @@ pub unsafe extern "C" fn do_chmod(
     } else {
         xmp_chmod(Either::Right((*fi).fh as c_int), mode)
     };
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_chown(
@@ -191,7 +199,8 @@ pub unsafe extern "C" fn do_chown(
         security: FileSecurity::Unix { uid: uid, gid: gid },
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = if fi.is_null() {
@@ -200,7 +209,7 @@ pub unsafe extern "C" fn do_chown(
     } else {
         xmp_chown(Either::Right((*fi).fh as c_int), uid, gid)
     };
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_truncate(
@@ -213,7 +222,8 @@ pub unsafe extern "C" fn do_truncate(
         size,
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = if fi.is_null() {
@@ -222,7 +232,7 @@ pub unsafe extern "C" fn do_truncate(
     } else {
         xmp_truncate(Either::Right((*fi).fh as c_int), size)
     };
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_write(
@@ -237,11 +247,12 @@ pub unsafe extern "C" fn do_write(
         buf: Cow::Borrowed(slice::from_raw_parts(buf, size)),
         offset,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     assert!(!fi.is_null());
-    post_op(&call, xmp_write(buf, size, offset, (*fi).fh as c_int))
+    post_op(opref, xmp_write(buf, size, offset, (*fi).fh as c_int))
 }
 
 pub unsafe extern "C" fn do_fallocate(
@@ -257,12 +268,13 @@ pub unsafe extern "C" fn do_fallocate(
         offset,
         length,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     assert!(!fi.is_null());
     post_op(
-        &call,
+        opref,
         xmp_fallocate(mode, offset, length, (*fi).fh as c_int),
     )
 }
@@ -284,11 +296,12 @@ pub unsafe extern "C" fn do_setxattr(
 
     //println!("setxattr {:?}", call);
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     post_op(
-        &call,
+        opref,
         xmp_setxattr(
             Either::Left(real_path.as_ptr()),
             name,
@@ -309,11 +322,12 @@ pub unsafe extern "C" fn do_removexattr(
         name: Cow::Borrowed(CStr::from_ptr(name)),
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     post_op(
-        &call,
+        opref,
         xmp_removexattr(Either::Left(real_path.as_ptr()), name),
     )
 }
@@ -337,7 +351,8 @@ pub unsafe extern "C" fn do_create(
         },
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let mut fd = 0;
@@ -351,7 +366,7 @@ pub unsafe extern "C" fn do_create(
     );
     (*fi).fh = fd as u64;
     //println!("Created {:?} {}", real_path, fd);
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_utimens(
@@ -368,7 +383,8 @@ pub unsafe extern "C" fn do_utimens(
         ],
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     let res = if fi.is_null() {
@@ -377,7 +393,7 @@ pub unsafe extern "C" fn do_utimens(
     } else {
         xmp_utimens(Either::Right((*fi).fh as c_int), ts)
     };
-    post_op(&call, res)
+    post_op(opref, res)
 }
 
 pub unsafe extern "C" fn do_fsync(
@@ -390,9 +406,10 @@ pub unsafe extern "C" fn do_fsync(
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         isdatasync: isdatasync,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return r;
     }
     assert!(!fi.is_null());
-    post_op(&call, xmp_fsync(isdatasync, (*fi).fh as c_int))
+    post_op(opref, xmp_fsync(isdatasync, (*fi).fh as c_int))
 }

@@ -1,0 +1,62 @@
+===================Serial===================
+
+Sync:
+> $ ../tools/net_time.sh lo tar -xf linux-5.0.7.tar.xz
+Sent 974605886 bytes (929MB) in 28.364 seconds
+Sent 974606614 bytes (929MB) in 28.417 seconds
+Sent 974586854 bytes (929MB) in 28.432 seconds
+
+> $ ../tools/net_time.sh lo rm -rf linux-5.0.7
+Sent 37900743 bytes (36MB) in 6.412 seconds
+Sent 37893307 bytes (36MB) in 6.556 seconds
+Sent 37899963 bytes (36MB) in 6.273 seconds
+
+
+Async:
+./tools/net_time.sh lo tar -xf linux-5.0.7.tar.xz
+Sent 270244496 bytes (257MB) in 15.559 seconds
+Sent 270267526 bytes (257MB) in 16.076 seconds
+Sent 270266977 bytes (257MB) in 15.576 seconds
+
+> $ ../tools/net_time.sh lo rm -rf linux-5.0.7
+Sent 813399 bytes (0MB) in 2.641 seconds
+Sent 807628 bytes (0MB) in 2.612 seconds
+Sent 813133 bytes (0MB) in 2.478 seconds
+
+===================Parallel===================
+
+Sync:
+> $ ../tools/net_time.sh lo tar -xf linux-5.0.7.tar.xz
+Sent 974665946 bytes (929MB) in 25.475 seconds
+Sent 974597098 bytes (929MB) in 25.925 seconds
+Sent 974641130 bytes (929MB) in 25.628 seconds
+
+> $ ../tools/net_time.sh lo rm -rf linux-5.0.7
+Sent 37905059 bytes (36MB) in 5.308 seconds
+Sent 37912703 bytes (36MB) in 5.132 seconds
+
+Semi:
+> $ ../tools/net_time.sh lo tar -xf linux-5.0.7.tar.xz
+Sent 974713838 bytes (929MB) in 22.821 seconds
+Sent 974767658 bytes (929MB) in 22.493 seconds
+Sent 974762309 bytes (929MB) in 22.540 seconds
+
+> $ ../tools/net_time.sh lo rm -rf linux-5.0.7
+Sent 37910192 bytes (36MB) in 3.925 seconds
+Sent 37909011 bytes (36MB) in 4.100 seconds
+Sent 37827082 bytes (36MB) in 4.453 seconds
+
+
+Async:
+
+===================Optimised===================
+
+Semi:
+> $ ../tools/net_time.sh lo rm -rf linux-5.0.7                                  
+Sent 20145647 bytes (19MB) in 3.444 seconds
+> $ ../tools/net_time.sh lo tar -xf linux-5.0.7.tar.xz                          
+Sent 902068490 bytes (860MB) in 20.403 seconds
+> $ ../tools/net_time.sh lo rm -rf linux-5.0.7                                  
+Sent 20145595 bytes (19MB) in 3.567 seconds
+> $ ../tools/net_time.sh lo tar -xf linux-5.0.7.tar.xz                          
+Sent 902068594 bytes (860MB) in 20.412 seconds

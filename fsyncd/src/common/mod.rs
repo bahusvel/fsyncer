@@ -57,8 +57,15 @@ pub struct InitMsg {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum ClientAck {
+    Ack,
+    Dead,
+    RetCode(i32),
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct AckMsg {
-    pub retcode: i32,
+    pub retcode: ClientAck,
     pub tid: u64,
 }
 

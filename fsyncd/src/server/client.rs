@@ -1,8 +1,8 @@
 extern crate iolimit;
 
 use self::iolimit::LimitWriter;
-use bincode::{deserialize_from, serialize, serialized_size};
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use bincode::{deserialize_from, serialize, serialize_into, serialized_size};
+use byteorder::{BigEndian, WriteBytesExt};
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use error::{Error, FromError};
@@ -11,8 +11,13 @@ use server::{cork_server, uncork_server};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Condvar, Mutex};
-use std::{mem::transmute, net::TcpStream, ops::Deref, path::PathBuf, thread};
+use std::{
+    mem::transmute, net::TcpStream, ops::Deref, path::PathBuf, thread,
+    time::Duration,
+};
 use {lz4, zstd};
+
+const CLIENT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 static NOP_MSG: FsyncerMsg = FsyncerMsg::NOP;
 
@@ -31,7 +36,7 @@ struct ClientNetwork {
     write: Box<Write + Send>,
     rt_comp: Option<Box<Compressor>>,
     // TODO remvoe this hashmap and use an array
-    parked: HashMap<u64, Arc<ClientResponse<i32>>>,
+    parked: HashMap<u64, Arc<ClientResponse<ClientAck>>>,
     status: ClientStatus,
 }
 
@@ -41,16 +46,53 @@ pub struct Client {
     net: Arc<Mutex<ClientNetwork>>,
 }
 
-struct ClientResponse<T> {
+pub struct ClientResponse<T> {
     data: Mutex<Option<T>>,
     cvar: Condvar,
 }
 
 struct NagleFlush(TcpStream);
 
+#[cfg(target_os = "linux")]
 impl Write for NagleFlush {
     fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        self.0.write(buf)
+        use libc::*;
+        use std::os::unix::io::AsRawFd;
+        let res = unsafe {
+            send(
+                self.0.as_raw_fd(),
+                buf.as_ptr() as *const _,
+                buf.len(),
+                MSG_MORE,
+            )
+        };
+        if res == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(res as usize)
+    }
+    fn flush(&mut self) -> Result<(), io::Error> {
+        use libc::*;
+        use std::mem;
+        use std::os::unix::io::AsRawFd;
+        let optval = 0;
+        unsafe {
+            setsockopt(
+                self.0.as_raw_fd(),
+                SOL_TCP,
+                TCP_CORK,
+                &optval as *const _ as *const _,
+                mem::size_of::<i32>() as u32,
+            )
+        };
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl Write for NagleFlush {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
+        self.0.write()
     }
     fn flush(&mut self) -> Result<(), io::Error> {
         self.0.set_nodelay(true)?;
@@ -65,14 +107,20 @@ impl<T> ClientResponse<T> {
             cvar: Condvar::new(),
         }
     }
-    pub fn wait(&self) -> T {
+    pub fn wait(&self) -> Option<T> {
         let mut lock = self.data.lock().unwrap();
 
         while lock.is_none() {
-            lock = self.cvar.wait(lock).unwrap();
+            let (ll, timeout) = self
+                .cvar
+                .wait_timeout(lock, CLIENT_RESPONSE_TIMEOUT)
+                .unwrap();
+            lock = ll;
+            if timeout.timed_out() {
+                return None;
+            }
         }
-
-        lock.take().unwrap()
+        Some(lock.take().unwrap())
     }
 
     pub fn notify(&self, data: T) {
@@ -167,10 +215,14 @@ impl Client {
         let current_thread = thread::current();
         let tid =
             unsafe { transmute::<thread::ThreadId, u64>(current_thread.id()) };
-        trace!(self.send_msg(FsyncerMsg::Cork(tid), true));
+        let wait = trace!(self.response_msg(
+            FsyncerMsg::Cork(tid),
+            true,
+            self.mode != ClientMode::MODE_CONTROL
+        ));
         // Cannot park on control as it will block its reader thread
         if self.mode != ClientMode::MODE_CONTROL {
-            self.wait_thread_response();
+            wait.unwrap().wait().expect("Client did not respond");
         }
         Ok(())
     }
@@ -184,10 +236,8 @@ impl Client {
     }
 
     fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, Error<io::Error>> {
-        let _size = trace!(read.read_u32::<BigEndian>());
-        // TODO use size to restrict reading
-        Ok(trace!(deserialize_from(read)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))))
+        deserialize_from(read) // Is this potentially slow?
+            .map_err(|e| trace_err!(io::Error::new(io::ErrorKind::Other, e)))
     }
 
     fn reader<R: Read>(mut read: R, net: Arc<Mutex<ClientNetwork>>) {
@@ -198,15 +248,19 @@ impl Client {
                     let mut netlock = net.lock().unwrap();
                     netlock.parked.get(&tid).map(|t| {
                         assert!(Arc::strong_count(t) <= 2);
-                        t.notify(0)
+                        t.notify(ClientAck::Ack)
                     });
                 }
                 Ok(FsyncerMsg::Ack(AckMsg { retcode: code, tid })) => {
                     let mut netlock = net.lock().unwrap();
-                    netlock.parked.get(&tid).map(|t| {
-                        assert!(Arc::strong_count(t) <= 2);
-                        t.notify(code)
-                    });
+                    // I shouldn't randomly insert whatever the client sends,
+                    // but oh well...
+                    let cond = netlock
+                        .parked
+                        .entry(tid)
+                        .or_insert(Arc::new(ClientResponse::new()));
+                    assert!(Arc::strong_count(cond) <= 2);
+                    cond.notify(code);
                 }
                 Ok(FsyncerMsg::Cork(_)) => cork_server(),
                 Ok(FsyncerMsg::Uncork) => uncork_server(),
@@ -233,11 +287,12 @@ impl Client {
         Ok(())
     }
 
-    pub fn send_msg(
+    pub fn response_msg(
         &self,
         msg_data: FsyncerMsg,
         flush: bool,
-    ) -> Result<(), Error<io::Error>> {
+        want_response: bool,
+    ) -> Result<Option<Arc<ClientResponse<ClientAck>>>, Error<io::Error>> {
         fn inner(
             serbuf: &[u8],
             mut size: usize,
@@ -255,11 +310,9 @@ impl Client {
                 &serbuf[..]
             };
 
-            // Uggly way to shortcut error checking
             trace!(net.write.write_u32::<BigEndian>(size as u32));
             trace!(net.write.write_all(&buf));
             if flush {
-                //println!("Doing funky flush");
                 trace!(net.write.flush());
                 // Without the nop message compression algorithms dont flush
                 // immediately.
@@ -273,7 +326,6 @@ impl Client {
                     ));
                     trace!(net.write.flush());
                 }
-                //println!("Finished funky flush");
             }
             Ok(())
         }
@@ -282,7 +334,9 @@ impl Client {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e)))
             as usize;
 
-        let serbuf = trace!(serialize(&msg_data)
+        let mut serbuf = Vec::with_capacity(size);
+
+        trace!(serialize_into(&mut serbuf, &msg_data)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
 
         //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
@@ -290,8 +344,25 @@ impl Client {
 
         if net.status == ClientStatus::DEAD {
             // Ignore writes to dead clients, they will be harvested later
-            return Ok(());
+            return Err(trace_err!(io::Error::new(
+                io::ErrorKind::Other,
+                "Client is dead"
+            )));
         }
+
+        let resp = if want_response {
+            let tid = unsafe {
+                transmute::<thread::ThreadId, u64>(thread::current().id())
+            };
+            Some(
+                net.parked
+                    .entry(tid)
+                    .or_insert(Arc::new(ClientResponse::new()))
+                    .clone(),
+            )
+        } else {
+            None
+        };
 
         let res = inner(
             &serbuf[..],
@@ -300,26 +371,19 @@ impl Client {
             flush,
             self.comp.intersects(CompMode::STREAM_MASK),
         );
-
         if res.is_err() {
             net.status = ClientStatus::DEAD;
         }
-
-        res
+        res.map(|_| resp)
     }
 
-    pub fn wait_thread_response(&self) -> i32 {
-        {
-            let tid = unsafe {
-                transmute::<thread::ThreadId, u64>(thread::current().id())
-            };
-            let mut net = self.net.lock().unwrap();
-            net.parked
-                .entry(tid)
-                .or_insert(Arc::new(ClientResponse::new()))
-                .clone()
-        }
-        .wait()
+    pub fn send_msg(
+        &self,
+        msg_data: FsyncerMsg,
+        flush: bool,
+    ) -> Result<(), Error<io::Error>> {
+        self.response_msg(msg_data, flush, false)?;
+        Ok(())
     }
 }
 
@@ -328,7 +392,7 @@ impl Drop for Client {
         // Unblock all threads that could be waiting on this client
         for (_, thread) in self.net.lock().unwrap().parked.iter() {
             assert!(Arc::strong_count(thread) <= 2);
-            thread.notify(-1);
+            thread.notify(ClientAck::Dead);
         }
     }
 }

@@ -76,7 +76,7 @@ macro_rules! debugif {
 #[macro_export]
 macro_rules! is_variant {
     ($val:expr, $variant:path) => {
-        if let $variant(_) = $val {
+        if let $variant(..) = $val {
             true
         } else {
             false
@@ -228,7 +228,6 @@ fn main() {
                 .long("rt-compressor")
                 .possible_values(&["default", "chunked", "zstd", "none"])
                 .default_value("none")
-                .default_value_if("stream-compressor", Some("none"), "default")
                 .help("Discrete compression method to use")
                 .takes_value(true),
         )
@@ -237,7 +236,7 @@ fn main() {
                 .long("stream-compressor")
                 .possible_values(&["default", "zstd", "lz4", "none"])
                 .default_value_if("sync", Some("sync"), "none")
-                .default_value_if("sync", Some("semisync"), "none")
+                .default_value_if("sync", Some("semi"), "none")
                 .default_value("default")
                 .help("Stream compression method to use")
                 .takes_value(true),

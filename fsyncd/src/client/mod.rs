@@ -13,8 +13,8 @@ metablock!(cfg(target_os = "windows") {
 
 extern crate threadpool;
 use self::threadpool::ThreadPool;
-use bincode::{deserialize, serialize_into, serialized_size};
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use bincode::{deserialize, serialize};
+use byteorder::{BigEndian, ReadBytesExt};
 use clap::ArgMatches;
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
@@ -36,14 +36,10 @@ pub struct Client<F: Send + Fn(&VFSCall) -> i32> {
 }
 
 fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
-    let size = serialized_size(&msg)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
-        as usize;
-
     //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
-    write.write_u32::<BigEndian>(size as u32)?;
-    serialize_into(&mut write, &msg) // Could this cause performance concerns? On server side it does.
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let buf =
+        serialize(&msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    write.write_all(&buf[..])?;
     write.flush()
 }
 
@@ -157,7 +153,7 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
                 Ok(FsyncerMsg::SyncOp(call, tid)) => {
                     if self.mode == ClientMode::MODE_SEMISYNC {
                         self.send_msg(FsyncerMsg::Ack(AckMsg {
-                            retcode: 0,
+                            retcode: ClientAck::Ack,
                             tid,
                         }))?;
                     }
@@ -172,7 +168,10 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
                         if need_ack {
                             send_msg(
                                 &mut *write.lock().unwrap(),
-                                FsyncerMsg::Ack(AckMsg { retcode: res, tid }),
+                                FsyncerMsg::Ack(AckMsg {
+                                    retcode: ClientAck::RetCode(res),
+                                    tid,
+                                }),
                             )
                             .expect("Failed to send ack");
                         }

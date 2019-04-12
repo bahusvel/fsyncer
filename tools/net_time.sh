@@ -4,6 +4,8 @@ CMD=$2
 shift
 shift
 
+cd .
+
 START_BYTES=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
 START_TIME=$(($(date +%s%N)/1000000))
 
