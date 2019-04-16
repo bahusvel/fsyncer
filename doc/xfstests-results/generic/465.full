@@ -1,0 +1,3 @@
+src/aio-dio-regress/aio-dio-append-write-read-race -a 4096 -d /home/denislavrov/Documents/Developing/fsyncer/test_src/465.2913.4096
+write file failed: Invalid argumentsrc/aio-dio-regress/aio-dio-append-write-read-race -a 4096 /home/denislavrov/Documents/Developing/fsyncer/test_src/465.2913.4096
+error Invalid argument during write

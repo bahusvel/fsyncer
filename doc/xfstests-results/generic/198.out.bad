@@ -1,0 +1,21 @@
+QA output created by 198
+Silence is golden.
+AIO write offset 0 expected 65536 got -22
+AIO write offset 5242880 expected 65536 got -22
+AIO write offset 10485760 expected 65536 got -22
+AIO write offset 15728640 expected 65536 got -22
+AIO write offset 20971520 expected 65536 got -22
+AIO write offset 26214400 expected 65536 got -22
+AIO write offset 31457280 expected 65536 got -22
+AIO write offset 36700160 expected 65536 got -22
+AIO write offset 41943040 expected 65536 got -22
+AIO write offset 47185920 expected 65536 got -22
+AIO write offset 52428800 expected 65536 got -22
+AIO write offset 57671680 expected 65536 got -22
+AIO write offset 62914560 expected 65536 got -22
+AIO write offset 68157440 expected 65536 got -22
+AIO write offset 73400320 expected 65536 got -22
+AIO write offset 78643200 expected 65536 got -22
+non one buffer at buf[0] => 0x00,00,00,00
+non-one read at offset 0
+*** WARNING *** /home/denislavrov/Documents/Developing/fsyncer/test_src/aiodio_sparse has not been unlinked; if you don't rm it manually first, it may influence the next run

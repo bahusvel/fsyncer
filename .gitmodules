@@ -1,3 +1,6 @@
 [submodule "dssc"]
 	path = dssc
 	url = https://github.com/bahusvel/dssc
+[submodule "xfstests"]
+	path = xfstests
+	url = https://github.com/bahusvel/fsyncer-xfstests

@@ -281,7 +281,7 @@ fn main() {
         .arg(
             Arg::with_name("buffer")
                 .long("buffer")
-                .default_value("32M")
+                .default_value("1M")
                 .help("TX/RX buffer size")
                 .takes_value(true),
         )

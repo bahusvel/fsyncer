@@ -1,0 +1,58 @@
+-z -s 0 -m 31 -n 10000 -p 1 \
+-f aread=1 \
+-f attr_remove=100 \
+-f attr_set=100 \
+-f awrite=1 \
+-f chown=3 \
+-f clonerange=4 \
+-f copyrange=4 \
+-f creat=4 \
+-f deduperange=4 \
+-f dread=4 \
+-f dwrite=4 \
+-f fallocate=1 \
+-f fdatasync=1 \
+-f fiemap=1 \
+-f fsync=1 \
+-f getattr=1 \
+-f getdents=1 \
+-f link=1 \
+-f mkdir=2 \
+-f mknod=2 \
+-f mread=2 \
+-f mwrite=2 \
+-f punch=1 \
+-f zero=1 \
+-f collapse=1 \
+-f insert=1 \
+-f read=1 \
+-f readlink=1 \
+-f readv=1 \
+-f rename=2 \
+-f rmdir=1 \
+-f setxattr=1 \
+-f splice=1 \
+-f stat=1 \
+-f symlink=2 \
+-f sync=1 \
+-f truncate=2 \
+-f unlink=1 \
+-f write=4 \
+-f writev=4 \
+
+seed = 1555414655
+0/317: getattr d3/d3d/f6e 3489669216 -1
+0/794: getattr d3/d3d/d55/f11b 3892639872 -1
+0/1843: getattr d3/d3d/d181/d19c/d208/d27c/f2b9 3892464848 -1
+0/2235: getattr d3/d3d/fe2 3489666064 -1
+0/2499: getattr d3/d3d/d181/d19c/d208/d20c/d229/d302/f398 3892406832 -1
+0/3347: getattr d3/d3d/d181/d19c/d208/d20c/d229/d302/f509 3892406832 -1
+0/3584: getattr d3/d3d/d181/d19c/d208/d20c/d301/d36c/f532 3892464848 -1
+0/4148: getattr d3/d3d/f224 3892639872 -1
+0/4176: getattr d3/d3d/d181/d19c/d492/f50a 3892406832 -1
+0/5094: getattr d3/f2a 3892639872 -1
+0/5316: getattr d3/f2a 3489666064 -1
+0/6259: getattr d3/d3d/d55/d1d2/d307/d361/d6e8/f5b2 3892639872 -1
+0/7076: getattr d3/d3d/d181/d19c/d492/f50a 3489666064 -1
+0/8634: getattr d3/d3d/d181/d19c/d208/fb83 3892464848 -1
+0/9388: getattr d3/d3d/d163/d36f/d6f6/f611 3489666064 -1

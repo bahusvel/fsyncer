@@ -23,6 +23,7 @@ extern "C" {
         off: off_t,
         arg2: *mut fuse_file_info,
     ) -> c_int;
+    pub static CONST_RENAMEAT2: c_long;
 }
 
 #[repr(C)]

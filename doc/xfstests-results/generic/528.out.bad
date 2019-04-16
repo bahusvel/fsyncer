@@ -1,0 +1,5 @@
+QA output created by 528
+./tests/generic/528: line 35: _require_btime: command not found
+statx: option requires an argument -- 'm'
+btime has value of 1555416000
+btime is NOT in range 1555430285 .. 1555430290

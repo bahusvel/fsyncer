@@ -23,8 +23,13 @@
 #include <sys/types.h>
 #include <sys/xattr.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 
 #include <sys/xattr.h>
+
+#ifdef linux
+	long CONST_RENAMEAT2 = SYS_renameat2;
+#endif
 
 struct xmp_dirp {
 	DIR *dp;

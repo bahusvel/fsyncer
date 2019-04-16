@@ -117,9 +117,6 @@ pub unsafe extern "C" fn do_rename(
     to: *const c_char,
     flags: c_uint,
 ) -> c_int {
-    if flags != 0 {
-        return -EINVAL;
-    }
     let real_from = trans_ppath!(from);
     let real_to = trans_ppath!(to);
     let call = VFSCall::rename(rename {

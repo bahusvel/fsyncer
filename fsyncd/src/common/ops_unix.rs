@@ -62,6 +62,7 @@ pub unsafe fn xmp_symlink(
     }
     0
 }
+#[cfg(not(target_os = "linux"))]
 pub unsafe fn xmp_rename(
     from: *const c_char,
     to: *const c_char,
@@ -74,6 +75,16 @@ pub unsafe fn xmp_rename(
         return neg_errno();
     }
     0
+}
+#[cfg(target_os = "linux")]
+pub unsafe fn xmp_rename(
+    from: *const c_char,
+    to: *const c_char,
+    flags: c_uint,
+) -> c_int {
+    use server::CONST_RENAMEAT2;
+    //println!("Linux rename");
+    return -syscall(CONST_RENAMEAT2, -1, from, -1, to, flags) as i32;
 }
 pub unsafe fn xmp_link(
     from: *const c_char,
@@ -152,6 +163,7 @@ pub unsafe fn xmp_write(
         res as c_int
     }
 }
+#[cfg(not(target_os = "linux"))]
 pub unsafe fn xmp_fallocate(
     mode: c_int,
     offset: off_t,
@@ -162,6 +174,18 @@ pub unsafe fn xmp_fallocate(
         return -EOPNOTSUPP;
     }
     -posix_fallocate(fd, offset, length)
+}
+#[cfg(target_os = "linux")]
+pub unsafe fn xmp_fallocate(
+    mode: c_int,
+    offset: off_t,
+    length: off_t,
+    fd: c_int,
+) -> c_int {
+    if fallocate(fd, mode, offset, length) == -1 {
+        return neg_errno();
+    }
+    0
 }
 pub unsafe fn xmp_setxattr(
     path_or_fd: Either<*const c_char, c_int>,

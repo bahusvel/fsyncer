@@ -1,0 +1,4 @@
+QA output created by 285
+"/home/denislavrov/Documents/Developing/fsyncer/test_src", "/home/denislavrov/Documents/Developing/fsyncer/.fsyncer-test_src"
+seek sanity check failed!
+(see /home/denislavrov/Documents/Developing/fsyncer/xfstests/results//generic/285.full for details)

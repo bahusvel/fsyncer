@@ -1,0 +1,154 @@
+QA output created by 002
+Silence is goodness ...
+Arrgh, about to remove link #19 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #18 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #17 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #16 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #15 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #14 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #13 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #12 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #11 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #10 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #9 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #8 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #7 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #6 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #5 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #4 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #3 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #2 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Arrgh, about to remove link #1 and lstat64 looks like ...
+  File: "/home/denislavrov/Documents/Developing/fsyncer/test_src//tmp/11110.1"
+  Size: 0            Filetype: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (0)  Gid: (0)
+Device:  0,48  Inode: 7876932   Links: 20   
+Access: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Modify: Wed Apr 17 03:55:58 2019(00000.00:00:00)
+Change: Wed Apr 17 03:55:58 2019(00000.00:00:00)

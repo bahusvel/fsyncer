@@ -1,0 +1,52 @@
+QA output created by 477
+Attempting to unmount
+test_file_handles after cycle mount
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000000) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000001) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000002) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000003) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000004) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000005) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000006) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000007) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000008) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000009) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src) returned 116 incorrectly on a linked dir!
+Attempting to unmount
+test_file_handles after rename parent
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000000) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000001) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000002) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000003) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000004) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000005) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000006) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000007) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000008) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000009) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src) returned 116 incorrectly on a linked dir!
+Attempting to unmount
+test_file_handles after rename grandparent
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000000) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000001) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000002) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000003) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000004) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000005) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000006) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000007) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000008) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000009) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src) returned 116 incorrectly on a linked dir!
+Attempting to unmount
+test_file_handles after move to new parent
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000000) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000001) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000002) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000003) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000004) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000005) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000006) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000007) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000008) returned 116 incorrectly on a linked file!
+open_by_handle(/home/denislavrov/Documents/Developing/fsyncer/test_src/file000009) returned 116 incorrectly on a linked file!

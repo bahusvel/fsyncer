@@ -1,0 +1,11 @@
+QA output created by 133
+Buffered writer, buffered reader
+pwrite: Invalid argument
+Direct writer, buffered reader
+pwrite: Invalid argument
+pwrite: Invalid argument
+Buffered writer, direct reader
+pwrite: Invalid argument
+Direct writer, direct reader
+pwrite: Invalid argument
+pwrite: Invalid argument

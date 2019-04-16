@@ -94,10 +94,12 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
             rcv_buf: Vec::with_capacity(32 * 1024),
             mode: init_msg.mode,
             rt_comp: rt_comp,
-            pool: if dispatch_threads == 1 {
-                None
-            } else {
+            pool: if dispatch_threads > 1
+            //|| init_msg.mode == ClientMode::MODE_SEMISYNC will cause semisync jobs to queue up and execute in another thread leaving the network thread free to empty the buffer and ack early.
+            {
                 Some(ThreadPool::new(dispatch_threads))
+            } else {
+                None
             },
             op_callback,
         })

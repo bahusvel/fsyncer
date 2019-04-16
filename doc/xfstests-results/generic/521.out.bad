@@ -1,0 +1,19 @@
+QA output created by 521
+domapwrite: msync: Invalid argument
+LOG DUMP (12 total operations):
+1(  1 mod 256): SKIPPED (no operation)
+2(  2 mod 256): SKIPPED (no operation)
+3(  3 mod 256): SKIPPED (no operation)
+4(  4 mod 256): TRUNCATE UP	from 0x0 to 0x7a000
+5(  5 mod 256): SKIPPED (no operation)
+6(  6 mod 256): READ     0x6e000 thru 0x78fff	(0xb000 bytes)
+7(  7 mod 256): SKIPPED (no operation)
+8(  8 mod 256): MAPREAD  0x3a000 thru 0x4dc3d	(0x13c3e bytes)
+9(  9 mod 256): SKIPPED (no operation)
+10( 10 mod 256): MAPREAD  0x18000 thru 0x2f822	(0x17823 bytes)
+11( 11 mod 256): FALLOC   0x2a8d1 thru 0x36c3f	(0xc36e bytes) INTERIOR
+12( 12 mod 256): MAPWRITE 0x17000 thru 0x2c248	(0x15249 bytes)
+Log of operations saved to "/home/denislavrov/Documents/Developing/fsyncer/test_src/junk.fsxops"; replay with --replay-ops
+Correct content saved for comparison
+(maybe hexdump "/home/denislavrov/Documents/Developing/fsyncer/test_src/junk" vs "/home/denislavrov/Documents/Developing/fsyncer/test_src/junk.fsxgood")
+Silence is golden

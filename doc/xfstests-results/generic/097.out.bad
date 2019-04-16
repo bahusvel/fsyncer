@@ -1,0 +1,73 @@
+QA output created by 097
+
+create file foo
+
+*** Test out the trusted namespace ***
+
+set EA <trusted:colour,marone>:
+
+set EA <user:colour,beige>:
+
+set EA <user:vomit,pizza>:
+
+set EA <trusted:noise,whack>:
+
+list trusted EAs: <trusted:colour,noise>:
+# file: TEST_DIR/foo
+trusted.colour="marone"
+trusted.noise="whack"
+
+
+list user EAs: <user:colour,vomit>:
+# file: TEST_DIR/foo
+user.colour="beige"
+user.vomit="pizza"
+
+
+get trusted EA colour: marone
+# file: TEST_DIR/foo
+trusted.colour="marone"
+
+
+get trusted EA noise: whack
+# file: TEST_DIR/foo
+trusted.noise="whack"
+
+
+get trusted EA vomit which is a user EA => find nothing
+TEST_DIR/foo: trusted.vomit: No such attribute
+
+unmount the FS and see if EAs are persistent
+Attempting to unmount
+
+get trusted EA colour: marone
+# file: TEST_DIR/foo
+trusted.colour="marone"
+
+
+get trusted EA noise: whack
+# file: TEST_DIR/foo
+trusted.noise="whack"
+
+
+get user EA vomit: pizza
+# file: TEST_DIR/foo
+user.vomit="pizza"
+
+
+remove the trusted colour EA
+
+list trusted EAs: <trusted:noise>:
+# file: TEST_DIR/foo
+trusted.noise="whack"
+
+
+list user EAs: <user:colour,vomit>:
+# file: TEST_DIR/foo
+user.colour="beige"
+user.vomit="pizza"
+
+
+remove the final trusted EA noise
+
+list trusted EAs: none

@@ -1,0 +1,73 @@
+QA output created by 193
+
+testing ATTR_UID
+
+user: chown root owned file to qa_user (should fail)
+chown: cannot access 'test.root': Permission denied
+user: chown root owned file to root (should fail)
+chown: cannot access 'test.root': Permission denied
+user: chown qa_user owned file to qa_user (should succeed)
+chown: cannot access '/home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user': Permission denied
+user: chown qa_user owned file to root (should fail)
+chown: cannot access 'test.user': Permission denied
+
+testing ATTR_GID
+
+user: chgrp root owned file to root (should fail)
+chgrp: cannot access 'test.root': Permission denied
+user: chgrp qa_user owned file to root (should fail)
+chgrp: cannot access 'test.user': Permission denied
+user: chgrp root owned file to qa_user (should fail)
+chgrp: cannot access 'test.root': Permission denied
+user: chgrp qa_user owned file to qa_user (should succeed)
+chgrp: cannot access '/home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user': Permission denied
+
+testing ATTR_MODE
+
+user: chmod a+r on qa_user owned file (should succeed)
+chmod: cannot access '/home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user': Permission denied
+user: chmod a+r on root owned file (should fail)
+chmod: cannot access 'test.root': Permission denied
+check that the sgid bit is cleared
+chmod: cannot access '/home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user': Permission denied
+-rw-r-Sr--
+check that suid bit is not cleared
+-rwSrwSrw-
+check that suid/sgid bits are cleared after successful chown...
+with no exec perm
+before: -rwSr-Sr--
+after:  -rw-r-Sr--
+with user exec perm
+before: -rwsr-Sr--
+after:  -rwxr-Sr--
+with group exec perm
+before: -rwSr-sr--
+after:  -rw-r-xr--
+with user+group exec perm
+before: -rwsr-sr--
+after:  -rwxr-xr--
+check that suid/sgid bits are cleared after successful truncate...
+with no exec perm
+before: -rwSr-Sr--
+bash: /home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user: Permission denied
+after:  -rwSr-Sr--
+with user exec perm
+before: -rwsr-Sr--
+bash: /home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user: Permission denied
+after:  -rwsr-Sr--
+with group exec perm
+before: -rwSr-sr--
+bash: /home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user: Permission denied
+after:  -rwSr-sr--
+with user+group exec perm
+before: -rwsr-sr--
+bash: /home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user: Permission denied
+after:  -rwsr-sr--
+
+testing ATTR_*TIMES_SET
+
+user: touch qa_user file (should succeed)
+touch: cannot touch '/home/denislavrov/Documents/Developing/fsyncer/test_src/193.19952.user': Permission denied
+user: touch root file (should fail)
+touch: cannot touch 'test.root': Permission denied
+*** done

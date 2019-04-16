@@ -1,0 +1,9 @@
+---------- 1 500 100 0 Apr 17 03:56 /home/denislavrov/Documents/Developing/fsyncer/test_src/t_access
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, 0) returns 0
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, R_OK) returns 0
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, W_OK) returns 0
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, X_OK) returns -1
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, R_OK | W_OK) returns 0
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, R_OK | X_OK) returns -1
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, W_OK | X_OK) returns -1
+access(/home/denislavrov/Documents/Developing/fsyncer/test_src/t_access, R_OK | W_OK | X_OK) returns -1

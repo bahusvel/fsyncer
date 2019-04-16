@@ -1,0 +1,6 @@
+QA output created by 258
+Creating file with timestamp of Jan 1, 1960
+Testing for negative seconds since epoch
+Remounting to flush cache
+Attempting to unmount
+Testing for negative seconds since epoch

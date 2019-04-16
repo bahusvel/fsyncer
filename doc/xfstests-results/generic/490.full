@@ -1,0 +1,2 @@
+./tests/generic/490: line 42: _run_seek_sanity_test: command not found
+seek sanity check failed!

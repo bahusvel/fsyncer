@@ -1,0 +1,3 @@
+QA output created by 484
+record lock is not preserved across execve(2)
+Silence is golden

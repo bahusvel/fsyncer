@@ -1,0 +1,18 @@
+QA output created by 355
+Check that suid/sgid bits are cleared after direct write
+== with no exec perm
+before: -rwSr-Sr--
+/home/denislavrov/Documents/Developing/fsyncer/test_src/355.test: Permission denied
+after:  -rwSr-Sr--
+== with user exec perm
+before: -rwsr-Sr--
+/home/denislavrov/Documents/Developing/fsyncer/test_src/355.test: Permission denied
+after:  -rwsr-Sr--
+== with group exec perm
+before: -rwSr-sr--
+/home/denislavrov/Documents/Developing/fsyncer/test_src/355.test: Permission denied
+after:  -rwSr-sr--
+== with user+group exec perm
+before: -rwsr-sr--
+/home/denislavrov/Documents/Developing/fsyncer/test_src/355.test: Permission denied
+after:  -rwsr-sr--

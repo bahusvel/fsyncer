@@ -13,6 +13,7 @@ metablock!(cfg(target_family = "unix") {
     use std::{env, ffi::CString};
     use std::fs::OpenOptions;
     use libc::c_char;
+    pub use self::read_unix::CONST_RENAMEAT2;
     use common::file_security::copy_security;
     static mut JOURNAL: Option<Mutex<Journal>> = None;
 });
@@ -404,7 +405,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         }
     }
     let (mount_path, backing_store) = trace!(figure_out_paths(&server_matches));
-    println!("{:?}, {:?}", mount_path, backing_store);
+    debug!(mount_path, backing_store);
     unsafe {
         SERVER_PATH = Some(backing_store.clone());
     }

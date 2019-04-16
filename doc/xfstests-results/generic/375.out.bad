@@ -1,0 +1,15 @@
+QA output created by 375
+*** SGID should remain set (twice)
+-rwxrwsrwx
+-rwxrwsrwx
+*** SGID should be cleared (twice)
+-rwxrwsrwx
+-rwxrwsrwx
+*** Expected failure
+*** SGID should remain set (twice)
+drwxrwsrwx
+drwxrwsrwx
+*** SGID should be cleared (twice)
+drwxrwsrwx
+drwxrwsrwx
+*** Expected failure

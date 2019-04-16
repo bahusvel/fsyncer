@@ -1,0 +1,28 @@
+# Without fsyncer
+tar -xf
+Sent 1392 bytes (0MB) in 6.183 seconds
+rm -rf
+Sent 232 bytes (0MB) in 1.761 seconds
+
+# With fsyncer
+
+## Async
+tar -xf
+Sent 270151398 bytes (257MB) in 12.658 seconds
+rm -rf
+Sent 801315 bytes (0MB) in 3.145 seconds
+
+## Sync
+tar -xf
+Sent 874502246 bytes (833MB) in 19.806 seconds
+rm -rf
+Sent 13410199 bytes (12MB) in 4.487 seconds
+
+## Semi
+tar -xf
+Sent 873399382 bytes (832MB) in 16.077 seconds
+rm -rf
+Sent 13141091 bytes (12MB) in 4.404 seconds
+
+
+## Semi-parallel
