@@ -107,12 +107,6 @@ macro_rules! hash_crc32 {
     }
 }
 
-fn xor_buf(new: &mut Vec<u8>, old: &Vec<u8>) {
-    assert!(new.len() >= old.len());
-    for i in 0..old.len() {
-        new[i] ^= old[i];
-    }
-}
 
 impl<'a> JournalEntry<'a> for BilogEntry {
     fn journal(mut self, j: &mut Journal) -> Result<(), Error<io::Error>> {

@@ -72,12 +72,13 @@ pub struct AckMsg {
 bitflags! {
     #[derive(Serialize, Deserialize)]
     pub struct CompMode: u32 {
-        const RT_DSSC_ZLIB      = 0b00001;
-        const RT_DSSC_CHUNKED   = 0b00010;
-        const RT_DSSC_ZSTD      = 0b00100;
-        const STREAM_ZSTD       = 0b01000;
-        const STREAM_LZ4        = 0b10000;
-        const STREAM_MASK       = 0b11000;
+        const RT_DSSC_ZLIB      = 0b000001;
+        const RT_DSSC_CHUNKED   = 0b000010;
+        const RT_DSSC_ZSTD      = 0b000100;
+        const RT_MASK           = 0b000111;
+        const STREAM_ZSTD       = 0b001000;
+        const STREAM_LZ4        = 0b010000;
+        const STREAM_MASK       = 0b011000;
     }
 }
 
@@ -160,6 +161,7 @@ pub enum VFSCall<'a> {
     chmod(chmod<'a>), // On windows this represents attributes
     truncate(truncate<'a>),
     write(write<'a>),
+    diff_write(write<'a>),
     fallocate(fallocate<'a>),
     setxattr(setxattr<'a>),
     removexattr(removexattr<'a>),
@@ -330,5 +332,12 @@ impl<T> ErrorOrOk<T> for Result<T, T> {
         match self {
             Err(t) | Ok(t) => t,
         }
+    }
+}
+
+pub fn xor_buf(new: &mut [u8], old: &[u8]) {
+    assert!(new.len() >= old.len());
+    for i in 0..old.len() {
+        new[i] ^= old[i];
     }
 }

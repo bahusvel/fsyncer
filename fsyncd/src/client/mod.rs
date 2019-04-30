@@ -291,7 +291,7 @@ pub fn client_main(matches: ArgMatches) {
             #[cfg(target_family = "unix")]
             let failed = e < 0;
             #[cfg(target_os = "windows")]
-            let failed = e != ERROR_SUCCESS;
+            let failed = e as u32 != ERROR_SUCCESS;
             if failed {
                 println!(
                     "Dispatch {:?} failed {:?}({})",

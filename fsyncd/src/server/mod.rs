@@ -14,7 +14,6 @@ metablock!(cfg(target_family = "unix") {
     use std::fs::OpenOptions;
     use libc::c_char;
     pub use self::read_unix::CONST_RENAMEAT2;
-    use common::file_security::copy_security;
     static mut JOURNAL: Option<Mutex<Journal>> = None;
 });
 
@@ -34,11 +33,13 @@ metablock!(cfg(target_os = "windows") {
         slice::from_raw_parts_mut(buf, path_len as usize)[..real_path.len()].copy_from_slice(&real_path)
     }
     use self::dokan::AddPrivileges;
+    pub static mut TRANSLATE_SIDS: bool = true;
 });
 
 mod client;
 use self::client::{Client, ClientResponse, ClientStatus};
 use clap::ArgMatches;
+use common::file_security::copy_security;
 use common::*;
 use error::{Error, FromError};
 use libc::c_int;
@@ -53,6 +54,7 @@ use std::{
 };
 
 pub static mut SERVER_PATH: Option<PathBuf> = None;
+pub static mut DIFF_WRITES: bool = false;
 
 lazy_static! {
     static ref SYNC_LIST: RwLock<Vec<Client>> = RwLock::new(Vec::new());
@@ -127,6 +129,7 @@ pub struct OpRef {
 }
 
 pub fn pre_op(call: &VFSCall) -> OpRef {
+    // THIS MAY NO LONGER BE CORRECT
     let mut corked = CORK.lock().unwrap();
     while *corked {
         corked = CORK_VAR.wait(corked).unwrap();
@@ -346,9 +349,9 @@ fn figure_out_paths(
             {
                 if !recreated {
                     println!("Mount path is busy, attempting to recreate it");
-                    fs::remove_dir(&mount_path).map_err(|e| make_err!(e))?;
-                    fs::create_dir(&mount_path).map_err(|e| make_err!(e))?;
-                    copy_security(&backing_store, &mount_path)?;
+                    trace!(fs::remove_dir(&mount_path));
+                    trace!(fs::create_dir(&mount_path));
+                    trace!(copy_security(&backing_store, &mount_path));
                     recreated = true
                 } else {
                     trace!(Err(io::Error::new(
@@ -445,6 +448,12 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         thread::spawn(move || flush_thread(interval));
     }
 
+    if server_matches.is_present("diff-writes") {
+        unsafe {
+            DIFF_WRITES = true;
+        }
+    }
+
     thread::spawn(harvester_thread);
 
     #[cfg(target_family = "unix")]
@@ -504,6 +513,10 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         use self::dokan::*;
         let mut options = DOKAN_OPTIONS::zero();
         let wstr_mount_path = path_to_wstr(&mount_path);
+
+        if server_matches.is_present("send-sids") {
+            unsafe { TRANSLATE_SIDS = false };
+        }
 
         options.MountPoint = wstr_mount_path.as_ptr();
         //debug!(wstr_mount_path)

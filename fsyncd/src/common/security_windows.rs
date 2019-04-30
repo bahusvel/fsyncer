@@ -1,5 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 /*
 ' is chosed as delimeter in SDDL to store names instead of SIDs,
 it can technically be contained within SDDL itself but that is unlikely.
@@ -27,7 +25,7 @@ use regex::{Regex, Captures};
 
 lazy_static! {
     static ref SID_REGEX: Regex = Regex::new("S-1-5(-[0-9]+)+").unwrap();
-    static ref NAME_REGEX: Regex = Regex::new(concat!(SDDL_DELIM!(), ".+?", SDDL_DELIM!())).unwrap();
+    static ref NAME_REGEX: Regex = Regex::new(concat!(SDDL_DELIM!(), "(.+?)", SDDL_DELIM!())).unwrap();
 }
 
 pub unsafe fn psid_to_string(sid: PSID) -> OsString {
@@ -75,16 +73,17 @@ unsafe fn lookup_account(
         &mut acc_type as *mut _,
     ) == 0
     {
-        return Err(make_err!(io::Error::last_os_error()));
+        return Err(trace_err!(io::Error::last_os_error()));
     }
+    debug!(domain_len, name_len);
     let domain = String::from(
-        CStr::from_bytes_with_nul(&domain_buf[..domain_len as usize])
+        CStr::from_bytes_with_nul(&domain_buf[..domain_len as usize+1])
             .expect("Domain is an invalid CString")
             .to_str()
             .expect("Domain cannot be represented in UTF-8"),
     );
     let name = String::from(
-        CStr::from_bytes_with_nul(&name_buf[..name_len as usize])
+        CStr::from_bytes_with_nul(&name_buf[..name_len as usize+1])
             .expect("Account name is an invalid CString")
             .to_str()
             .expect("Account name be represented in UTF-8"),
@@ -112,7 +111,7 @@ unsafe fn lookup_sid(name: &str) -> Result<String, Error<io::Error>> {
         &mut name_use as *mut _,
     ) == 0
     {
-        return Err(make_err!(io::Error::last_os_error()));
+        return Err(trace_err!(io::Error::last_os_error()));
     }
 
     Ok(psid_to_string(sid_buf.as_ptr() as *mut _)
@@ -174,7 +173,7 @@ impl FileSecurity {
             ptr::null_mut(),
         ) == 0
         {
-            return Err(make_err!(io::Error::last_os_error()));
+            return Err(trace_err!(io::Error::last_os_error()));
         }
         let mut str_desc = wstr_to_os(s)
             .into_string()
@@ -188,7 +187,7 @@ impl FileSecurity {
                     match lookup_account(psid.as_ptr() as *mut _) {
                         Ok((_domain, name)) => format!("'{}'", name),
                         Err(e) => {
-                            println!("Account lookup failed {:?}", e);
+                            println!("Account lookup failed {} {:?}", &caps[0], e);
                             String::from(&caps[0])
                         }
                     }
@@ -205,32 +204,22 @@ impl FileSecurity {
 
     pub unsafe fn to_descriptor(
         &self,
-        transate_sid: bool,
     ) -> Result<WinapiBox<SECURITY_DESCRIPTOR>, Error<io::Error>> {
         let mut desc: PSECURITY_DESCRIPTOR = ptr::null_mut();
-        use std::borrow::Cow;
         match self {
             FileSecurity::Windows { str_desc, .. } => {
-                let sddl = if transate_sid {
-                    Cow::Owned(
-                        NAME_REGEX
-                            .replace_all(&str_desc, |caps: &Captures| {
-                                match lookup_sid(&caps[0]) {
+                let sddl = NAME_REGEX.replace_all(&str_desc, |caps: &Captures| {
+                                match lookup_sid(&caps[1]) {
                                     Ok(sid) => sid,
                                     Err(e) => {
                                         println!(
-                                            "Account lookup failed {:?}",
-                                            e
+                                            "Account lookup failed {} {:?}",
+                                            &caps[1], e
                                         );
                                         String::from("S-1-0-0") // Nobody SID
                                     }
                                 }
-                            })
-                            .into_owned(),
-                    )
-                } else {
-                    Cow::Borrowed(str_desc)
-                };
+                            });
                 let owned_s = os_to_wstr(OsStr::new(&*sddl));
                 if ConvertStringSecurityDescriptorToSecurityDescriptorW(
                     owned_s.as_ptr() as *mut _,
@@ -239,7 +228,7 @@ impl FileSecurity {
                     ptr::null_mut(),
                 ) == 0
                 {
-                    return Err(make_err!(io::Error::last_os_error()));
+                    return Err(trace_err!(io::Error::last_os_error()));
                 }
                 Ok(WinapiBox::from_raw(desc as *mut _))
             }
@@ -268,7 +257,7 @@ pub fn copy_security(src: &Path, dst: &Path) -> Result<(), Error<io::Error>> {
         | SACL_SECURITY_INFORMATION;
     let mut desc: [u8; DESC_LENGTH] = [0; DESC_LENGTH];
     let mut needed: u32 = 0;
-    with_file(
+    trace!(trace!(with_file(
         src,
         OpenOptions::new()
             .access_mode(ACCESS_SYSTEM_SECURITY | GENERIC_READ | READ_CONTROL)
@@ -284,18 +273,16 @@ pub fn copy_security(src: &Path, dst: &Path) -> Result<(), Error<io::Error>> {
                 )
             } == 0
             {
-                Err(make_err!(io::Error::last_os_error()))
+                Err(trace_err!(io::Error::last_os_error()))
             } else {
                 Ok(())
             }
         },
-    )
-    .map_err(|e| make_err!(e))?
-    .map_err(|e| trace_err!(e))?;
+    )));
     if needed as usize > DESC_LENGTH {
         panic!("Failed to copy really large descriptor, Denis is lazy.");
     }
-    with_file(
+    trace!(trace!(with_file(
         dst,
         OpenOptions::new()
             .access_mode(ACCESS_SYSTEM_SECURITY | GENERIC_WRITE | WRITE_DAC)
@@ -309,14 +296,12 @@ pub fn copy_security(src: &Path, dst: &Path) -> Result<(), Error<io::Error>> {
                 )
             } == 0
             {
-                Err(make_err!(io::Error::last_os_error()))
+                Err(trace_err!(io::Error::last_os_error()))
             } else {
                 Ok(())
             }
         },
-    )
-    .map_err(|e| make_err!(e))?
-    .map_err(|e| trace_err!(e))?;
+    )));
 
     Ok(())
 }

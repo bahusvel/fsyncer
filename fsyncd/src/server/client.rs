@@ -92,7 +92,7 @@ impl Write for NagleFlush {
 #[cfg(not(target_os = "linux"))]
 impl Write for NagleFlush {
     fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        self.0.write()
+        self.0.write(buf)
     }
     fn flush(&mut self) -> Result<(), io::Error> {
         self.0.set_nodelay(true)?;

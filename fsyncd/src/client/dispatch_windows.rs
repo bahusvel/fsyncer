@@ -43,7 +43,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let real_path = path_to_wstr(&rpath);
             let mut descriptor = security
                 .clone()
-                .to_descriptor(false)
+                .to_descriptor()
                 .expect("Failed to create security descriptor");
 
             use winapi::um::winnt::{
@@ -74,6 +74,39 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             }
             res as i32
         }
+        VFSCall::diff_write(write {path, buf, offset}) => {
+            let mut bytes_written: u32 = 0;
+            use std::fs::File;
+            use std::mem;
+            use std::os::windows::fs::FileExt;
+            use std::os::windows::io::FromRawHandle;
+            with_file(
+                &translate_path(path, root),
+                OpenOptions::new().write(true).read(true),
+                |handle| {
+                    let file = File::from_raw_handle(handle as HANDLE);
+                    let mut old_buf = Vec::with_capacity(buf.len());
+                    old_buf.set_len(buf.len());
+                    let res = file.seek_read(&mut old_buf, *offset as u64);
+                    mem::forget(file);
+                    if res.is_err() {
+                        return res.unwrap_err().raw_os_error().unwrap();
+                    }
+                    let diff_len = res.unwrap();
+                    xor_buf(&mut old_buf[..diff_len], &buf[..diff_len]);
+                    old_buf[diff_len..].copy_from_slice(&buf[diff_len..]);
+                    OpWriteFile(
+                        old_buf.as_ptr() as *const _,
+                        old_buf.len() as u32,
+                        &mut bytes_written as *mut _,
+                        *offset,
+                        handle,
+                    ) as i32
+                },
+            )
+            .map_err(|e| e.raw_os_error().unwrap())
+            .err_or_ok()
+        },
         VFSCall::write(write { path, buf, offset }) => {
             let mut bytes_written: u32 = 0;
             with_file(
@@ -132,7 +165,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let real_path = path_to_wstr(&rpath);
             let mut descriptor = security
                 .clone()
-                .to_descriptor(false)
+                .to_descriptor()
                 .expect("Failed to create security descriptor");
 
             use winapi::um::winnt::{
@@ -176,7 +209,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
 
             let descriptor = security
                 .clone()
-                .to_descriptor(false)
+                .to_descriptor()
                 .expect("Failed to create security descriptor");
 
             with_file(

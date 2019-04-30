@@ -8,7 +8,8 @@ fn main() {
     git_version::set_env();
     #[cfg(target_os = "windows")]
     {
-        const DOKAN_PATH: &str = "C:\\Program Files\\Dokan\\Dokan Library-1.2.1\\";
+        const DOKAN_PATH: &str =
+            "C:\\Program Files\\Dokan\\Dokan Library-1.2.1\\";
         let mut lib = "cargo:rustc-link-search=".to_string();
         lib.push_str(DOKAN_PATH);
         lib.push_str("lib");
@@ -24,8 +25,8 @@ fn main() {
             .file("read_windows.c")
             .file("dokan_main.c")
             .compile("fsyncer");
-    } 
-    #[cfg(target_family = "unix")]  
+    }
+    #[cfg(target_family = "unix")]
     {
         let fuse_flags_out = Command::new("pkg-config")
             .arg("fuse3")

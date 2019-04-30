@@ -1,7 +1,7 @@
 use common::*;
 use error::{Error, FromError};
 use libc::uint32_t;
-use server::{dokan::*, post_op, pre_op, SERVER_PATH};
+use server::{dokan::*, post_op, pre_op, SERVER_PATH, TRANSLATE_SIDS};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
 use std::io::{self, ErrorKind};
@@ -33,7 +33,7 @@ unsafe fn defaulted_descriptor(
             &mut length as *mut _,
         ) == 0
         {
-            return Err(make_err!(io::Error::last_os_error()));
+            return Err(trace_err!(io::Error::last_os_error()));
         }
 
         let user = user_buff.as_ptr() as *const TOKEN_USER;
@@ -44,12 +44,11 @@ unsafe fn defaulted_descriptor(
         )) // TODO extract primary group
     }
 
-    let mut s = FileSecurity::parse_security(
+    let mut s = trace!(FileSecurity::parse_security(
         sec_desc as PSECURITY_DESCRIPTOR,
         None,
-        false,
-    )
-    .map_err(|e| trace_err!(e))?;
+        TRANSLATE_SIDS,
+    ));
 
     // Just prepend the relevant parameters
     if sec_desc.is_null()
@@ -156,6 +155,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
     }
 
     let mut call = None;
+    let mut opref = None;
     let status;
 
     // This is relatively expensive, and is not always needed, so it is made
@@ -175,9 +175,12 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
             security: security.take(),
             mode: user_attributes,
         }));
-        if let Some(r) = pre_op(call.as_ref().unwrap()) {
-            return r;
+
+        opref = Some(pre_op(call.as_ref().unwrap()));
+        if let Some(r) = opref.as_ref().unwrap().ret {
+            return DokanNtStatusFromWin32(r as u32);
         }
+
         status = as_user(user_handle, || {
             OpCreateDirectory(
                 real_path.as_ptr(),
@@ -235,7 +238,8 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         }
 
         if call.is_some() {
-            if let Some(r) = pre_op(call.as_ref().unwrap()) {
+            opref = Some(pre_op(call.as_ref().unwrap()));
+            if let Some(r) = opref.as_ref().unwrap().ret {
                 return DokanNtStatusFromWin32(r as u32);
             }
         }
@@ -253,9 +257,9 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         });
     }
 
-    if call.is_some() {
+    if opref.is_some() {
         let mut s = DokanNtStatusFromWin32(post_op(
-            call.as_ref().unwrap(),
+            opref.unwrap(),
             status as i32,
         ) as u32);
         if s == STATUS_SUCCESS
@@ -294,12 +298,14 @@ pub unsafe extern "stdcall" fn MirrorCleanup(
 
     let call;
     let status;
+    let opref;
 
     if (*info).IsDirectory != 0 {
         call = VFSCall::rmdir(rmdir {
             path: Cow::Owned(wstr_to_path(path)),
         });
-        if let Some(_) = pre_op(&call) {
+        opref = pre_op(&call);
+        if let Some(_) = opref.ret {
             return;
         }
         status = OpDeleteDirectory(real_path.as_ptr());
@@ -307,12 +313,13 @@ pub unsafe extern "stdcall" fn MirrorCleanup(
         call = VFSCall::unlink(unlink {
             path: Cow::Owned(wstr_to_path(path)),
         });
-        if let Some(_) = pre_op(&call) {
+        opref = pre_op(&call);
+        if let Some(_) = opref.ret {
             return;
         }
         status = OpDeleteFile(real_path.as_ptr());
     }
-    post_op(&call, status as i32);
+    post_op(opref, status as i32);
 }
 
 #[no_mangle]
@@ -324,6 +331,7 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
     mut offset: LONGLONG,
     info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    use server::DIFF_WRITES;
     let rpath = wstr_to_path(path);
 
     if (*info).WriteToEndOfFile != 0 {
@@ -340,7 +348,6 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
             );
         }
         let file_size = stat.unwrap().len();
-
         if offset as u64 >= file_size {
             *bytes_written = 0;
             return STATUS_SUCCESS;
@@ -354,16 +361,48 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
             }
         }
     }
+    let new_buf = slice::from_raw_parts(
+                        buffer as *const u8,
+                        len as usize,
+                    );
+    let call = if DIFF_WRITES {
+        use std::fs::File;
+        use std::os::windows::fs::FileExt;
+        use std::os::windows::io::FromRawHandle;
+        let file = File::from_raw_handle((*info).Context as HANDLE);
+        let mut old_buf = Vec::with_capacity(len as usize);
+        old_buf.set_len(len as usize);
+        let res = file.seek_read(&mut old_buf, offset as u64);
+        mem::forget(file);
+        match res {
+            Ok(diff_len) => {
+                xor_buf(&mut old_buf[..diff_len], &new_buf[..diff_len]);
+                old_buf[diff_len..].copy_from_slice(&new_buf[diff_len..]);
+                VFSCall::diff_write(write {
+                    path: Cow::Owned(rpath),
+                    buf: Cow::Owned(old_buf),
+                    offset,
+                })
+            },
+            Err(_) => {
+                // Cannot perform diff write, file may not be readable
+                VFSCall::write(write {
+                    path: Cow::Owned(rpath),
+                    buf: Cow::Borrowed(new_buf),
+                    offset,
+                })
+            }
+        }
+    } else {
+        VFSCall::write(write {
+            path: Cow::Owned(rpath),
+            buf: Cow::Borrowed(new_buf),
+            offset,
+        })
+    };
 
-    let call = VFSCall::write(write {
-        path: Cow::Owned(rpath),
-        buf: Cow::Borrowed(slice::from_raw_parts(
-            buffer as *const u8,
-            len as usize,
-        )),
-        offset,
-    });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpWriteFile(
@@ -374,7 +413,7 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
         (*info).Context as HANDLE,
     );
 
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -388,11 +427,12 @@ pub unsafe extern "stdcall" fn MirrorSetFileAttributes(
         path: Cow::Owned(wstr_to_path(path)),
         mode: attributes,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpSetFileAttributes(real_path.as_ptr(), attributes);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -411,12 +451,13 @@ pub unsafe extern "stdcall" fn MirrorSetFileTime(
             enc_timespec::from(*write),
         ],
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status =
         OpSetFileTime(creation, access, write, (*info).Context as HANDLE);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -432,12 +473,13 @@ pub unsafe extern "stdcall" fn MirrorMoveFile(
         to: Cow::Owned(wstr_to_path(new_name)),
         flags: replace as uint32_t,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status =
         OpMoveFile(real_new_name.as_ptr(), replace, (*info).Context as HANDLE);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -450,11 +492,12 @@ pub unsafe extern "stdcall" fn MirrorSetEndOfFile(
         path: Cow::Owned(wstr_to_path(path)),
         size: offset,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpSetEndOfFile(offset, (*info).Context as HANDLE);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -495,11 +538,12 @@ pub unsafe extern "stdcall" fn MirrorSetAllocationSize(
         path: Cow::Owned(wstr_to_path(path)),
         size,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpSetEndOfFile(size, (*info).Context as HANDLE);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -517,7 +561,7 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
         UNPROTECTED_SACL_SECURITY_INFORMATION,
     };
     let file_sec =
-        FileSecurity::parse_security(descriptor, Some(security), false)
+        FileSecurity::parse_security(descriptor, Some(security), TRANSLATE_SIDS)
             .expect("Failed to parse security");
 
     println!("Security {:#?}", file_sec);
@@ -532,13 +576,14 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
         security: file_sec,
     });
 
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
 
     let status =
         OpSetFileSecurity(security, descriptor, (*info).Context as HANDLE);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }
 
 #[no_mangle]
@@ -550,9 +595,10 @@ pub unsafe extern "stdcall" fn MirrorFlushFileBuffers(
         path: Cow::Owned(wstr_to_path(path)),
         isdatasync: 0,
     });
-    if let Some(r) = pre_op(&call) {
+    let opref = pre_op(&call);
+    if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);
     }
     let status = OpFlushFileBuffers((*info).Context as HANDLE);
-    DokanNtStatusFromWin32(post_op(&call, status as i32) as u32)
+    DokanNtStatusFromWin32(post_op(opref, status as i32) as u32)
 }

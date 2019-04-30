@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
 use error::{Error, FromError};
 use std::io;
 use std::path::Path;

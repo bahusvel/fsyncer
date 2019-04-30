@@ -53,6 +53,7 @@ macro_rules! flagset {
 macro_rules! debug {
     ($($e:expr),+) => {
         #[cfg(debug_assertions)]
+        #[allow(unused_unsafe)]
         {
             if unsafe {::DEBUG } {
                 $(
@@ -200,6 +201,11 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("diff-writes")
+                .long("diff-writes")
+                .help("Performs delta compression on overlapping writes"),
+        )
+        .arg(
             Arg::with_name("flush-interval")
                 .long("flush-interval")
                 .default_value("1")
@@ -265,6 +271,13 @@ fn main() {
                 .takes_value(true)
                 .default_value("0"),
         );
+    #[cfg(target_os = "windows")]
+    let server =
+        server.arg(Arg::with_name("send-sids").long("send-sids").help(
+            "Send SIDs instead of usernames when replicating, NOTE SIDs on \
+             source and destination must match,adjust them manually or use a \
+             domain controller",
+        ));
 
     let matches = App::new("Fsyncer Replication Daemon")
         .version(VERSION)
