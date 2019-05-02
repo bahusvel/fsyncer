@@ -114,7 +114,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         This is exactly what mirror.c from Dokan does,
         it doesn't handle them properly, just errors with 123 code.
         */
-        println!("Attr failed {:?}", attr.as_ref().unwrap_err());
+        println!("Attr failed {:?} {:?}", rpath, attr.as_ref().unwrap_err());
         return DokanNtStatusFromWin32(
             attr.unwrap_err()
                 .raw_os_error()
@@ -361,10 +361,7 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
             }
         }
     }
-    let new_buf = slice::from_raw_parts(
-                        buffer as *const u8,
-                        len as usize,
-                    );
+    let new_buf = slice::from_raw_parts(buffer as *const u8, len as usize);
     let call = if DIFF_WRITES {
         use std::fs::File;
         use std::os::windows::fs::FileExt;
@@ -383,7 +380,7 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
                     buf: Cow::Owned(old_buf),
                     offset,
                 })
-            },
+            }
             Err(_) => {
                 // Cannot perform diff write, file may not be readable
                 VFSCall::write(write {
@@ -560,11 +557,14 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
         UNPROTECTED_DACL_SECURITY_INFORMATION,
         UNPROTECTED_SACL_SECURITY_INFORMATION,
     };
-    let file_sec =
-        FileSecurity::parse_security(descriptor, Some(security), TRANSLATE_SIDS)
-            .expect("Failed to parse security");
+    let file_sec = FileSecurity::parse_security(
+        descriptor,
+        Some(security),
+        TRANSLATE_SIDS,
+    )
+    .expect("Failed to parse security");
 
-    println!("Security {:#?}", file_sec);
+    //println!("Security {:#?}", file_sec);
 
     debug!(flagset!((*security), UNPROTECTED_DACL_SECURITY_INFORMATION));
     debug!(flagset!((*security), PROTECTED_DACL_SECURITY_INFORMATION));

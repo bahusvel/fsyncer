@@ -4,6 +4,7 @@ use libc::c_int;
 use std::fs::OpenOptions;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
+use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
 
 pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
     use winapi::um::fileapi::CREATE_NEW;
@@ -19,7 +20,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let written = timespec[2].clone().into();
             with_file(
                 &translate_path(path, root),
-                OpenOptions::new().write(true),
+                OpenOptions::new().write(true).attributes(FILE_FLAG_BACKUP_SEMANTICS),
                 |handle| {
                     OpSetFileTime(
                         &created as *const FILETIME,
@@ -138,7 +139,7 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             let real_to = path_to_wstr(&rto);
             with_file(
                 &translate_path(from, root),
-                OpenOptions::new().access_mode(DELETE),
+                OpenOptions::new().access_mode(DELETE).attributes(FILE_FLAG_BACKUP_SEMANTICS),
                 |handle| {
                     OpMoveFile(real_to.as_ptr(), *flags as i32, handle) as i32
                 },
@@ -197,7 +198,6 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             res as i32
         }
         VFSCall::security(security { path, security }) => {
-            use winapi::um::winbase::FILE_FLAG_BACKUP_SEMANTICS;
             use winapi::um::winnt::ACCESS_SYSTEM_SECURITY;
             let info = if let FileSecurity::Windows { info, .. } = security {
                 info.unwrap()
@@ -242,6 +242,6 @@ pub unsafe fn dispatch(call: &VFSCall, root: &Path) -> c_int {
             OpSetFileAttributes(real_path.as_ptr(), *mode as u32) as i32
         }
         VFSCall::fsync(_) => ERROR_SUCCESS as i32, /* Don't need to execute it, just needed for flush synchronous mode */
-        _ => panic!("Windows cannot dispatch {:?}, translation required", call),
+        _ => panic!("Windows cannot dispatch {:?}", call),
     }
 }
