@@ -107,7 +107,8 @@ fs: build dirs
 
 client: build dirs
 	rm -rf test_dst || true
-	$(CLIENT_CP)
+	mkdir test_dst
+	#$(CLIENT_CP)
 	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) client test_dst $(CLIENT_FLAGS) $(END_CMD)
 	$(POST_CMD)
 
@@ -121,6 +122,12 @@ cmd: build dirs
 
 journal: build
 	$(FSYNCD_BIN) journal 
+
+flush_sync_perf: compile_tests
+	for i in `seq 10 10 1000`; do \
+		echo -n "$$i," ; \
+		tools/net_time.sh enp0s31f6 test/sync_test test_src/sync.txt $$i | awk '{print $$2 "," $$6}' ; \
+	done \
 
 compile_tests:
 	gcc test/sync_test.c -o test/sync_test

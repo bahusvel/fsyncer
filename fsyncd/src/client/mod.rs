@@ -18,21 +18,23 @@ use byteorder::{BigEndian, ReadBytesExt};
 use clap::ArgMatches;
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
+use error::{Error, FromError};
 use lz4;
 use net2::TcpStreamExt;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::{mem::size_of, net::TcpStream, path::Path};
 use zstd;
 
-pub struct Client<F: Send + Fn(&VFSCall) -> i32> {
+pub struct Client {
     write: Arc<Mutex<Box<Write + Send>>>,
     read: Box<Read + Send>,
     rcv_buf: Vec<u8>,
     mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
     pool: Option<ThreadPool>,
-    op_callback: F,
+    path: Arc<PathBuf>,
 }
 
 fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
@@ -43,15 +45,15 @@ fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
     write.flush()
 }
 
-impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
+impl Client {
     pub fn new(
         host: &str,
         port: i32,
         init_msg: InitMsg,
         buffer_size: usize,
         dispatch_threads: usize,
-        op_callback: F,
-    ) -> Result<Self, io::Error> {
+        path: PathBuf,
+    ) -> Result<Self, Error<io::Error>> {
         if dispatch_threads != 1 && init_msg.mode != ClientMode::MODE_SYNC {
             panic!(
                 "Only synchronous mode is compatible with multiple dispatch \
@@ -59,24 +61,32 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
             );
         }
 
-        let mut stream = TcpStream::connect(format!("{}:{}", host, port))?;
+        let mut stream =
+            trace!(TcpStream::connect(format!("{}:{}", host, port)));
+
+        trace!(send_msg(&mut stream, FsyncerMsg::InitMsg(init_msg.clone())));
 
         if init_msg.mode != ClientMode::MODE_ASYNC {
-            stream.set_nodelay(true)?;
+            trace!(stream.set_nodelay(true));
         }
 
-        stream.set_recv_buffer_size(buffer_size)?;
+        if init_msg.options.contains(Options::INITIAL_RSYNC) {
+            println!("Syncrhonising using rsync...");
+            trace!(rsync::client(trace!(stream.try_clone()), &path));
+            println!("Done!");
+        }
 
-        send_msg(&mut stream, FsyncerMsg::InitMsg(init_msg.clone()))?;
+        trace!(stream.set_recv_buffer_size(buffer_size));
 
         let reader = if init_msg.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(zstd::stream::Decoder::new(stream.try_clone()?)?)
-                as Box<Read + Send>
+            Box::new(trace!(zstd::stream::Decoder::new(trace!(
+                stream.try_clone()
+            )))) as Box<Read + Send>
         } else if init_msg.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(lz4::Decoder::new(stream.try_clone()?)?)
+            Box::new(trace!(lz4::Decoder::new(trace!(stream.try_clone()))))
                 as Box<Read + Send>
         } else {
-            Box::new(stream.try_clone()?) as Box<Read + Send>
+            Box::new(trace!(stream.try_clone())) as Box<Read + Send>
         };
 
         let rt_comp: Option<Box<Compressor>> =
@@ -95,13 +105,13 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
             mode: init_msg.mode,
             rt_comp: rt_comp,
             pool: if dispatch_threads > 1
-            //|| init_msg.mode == ClientMode::MODE_SEMISYNC will cause semisync jobs to queue up and execute in another thread leaving the network thread free to empty the buffer and ack early.
+            //|| init_msg.mode == ClientMode::MODE_SEMISYNC // will cause semisync jobs to queue up and execute in another thread leaving the network thread free to empty the buffer and ack early.
             {
                 Some(ThreadPool::new(dispatch_threads))
             } else {
                 None
             },
-            op_callback,
+            path: Arc::new(path),
         })
     }
 
@@ -150,6 +160,23 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
     }
 
     pub fn process_ops(&mut self) -> Result<(), io::Error> {
+        fn callback(call: &VFSCall, client_path: &Path) -> i32 {
+            let e = unsafe { dispatch(call, client_path) };
+            #[cfg(target_family = "unix")]
+            let failed = e < 0;
+            #[cfg(target_os = "windows")]
+            let failed = e as u32 != ERROR_SUCCESS;
+            if failed {
+                println!(
+                    "Dispatch {:?} failed {:?}({})",
+                    call,
+                    io::Error::from_raw_os_error(e),
+                    e
+                );
+            }
+            e
+        }
+
         loop {
             match self.read_msg() {
                 Ok(FsyncerMsg::SyncOp(call, tid)) => {
@@ -163,10 +190,10 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
                     let need_ack = self.mode == ClientMode::MODE_SYNC
                         || self.mode == ClientMode::MODE_FLUSHSYNC;
                     let write = self.write.clone();
-                    let callback = self.op_callback.clone();
+                    let path = self.path.clone();
 
                     let f = move || {
-                        let res = (callback)(&call);
+                        let res = callback(&call, &path);
                         if need_ack {
                             send_msg(
                                 &mut *write.lock().unwrap(),
@@ -188,7 +215,7 @@ impl<F: 'static + Clone + Send + Fn(&VFSCall) -> i32> Client<F> {
                 Ok(FsyncerMsg::AsyncOp(call)) => {
                     // TODO check return status
                     //debug!(call);
-                    let _res = (self.op_callback)(&call);
+                    let _res = callback(&call, &self.path);
                 }
                 Ok(FsyncerMsg::Cork(tid)) => {
                     println!("Received cork request");
@@ -258,6 +285,12 @@ pub fn client_main(matches: ArgMatches) {
         "none" | _ => (),
     }
 
+    let mut options = Options::empty();
+
+    if client_matches.is_present("rsync") {
+        options.insert(Options::INITIAL_RSYNC);
+    }
+
     let iolimit_bps =
         parse_human_size(client_matches.value_of("iolimit").unwrap())
             .expect("Invalid format for iolimit");
@@ -280,28 +313,14 @@ pub fn client_main(matches: ArgMatches) {
             dsthash,
             compress,
             iolimit_bps,
+            options,
         },
         buffer_size,
         client_matches
             .value_of("threads")
             .map(|v| v.parse().expect("Invalid thread number"))
             .unwrap(),
-        move |call| unsafe {
-            let e = dispatch(call, &client_path);
-            #[cfg(target_family = "unix")]
-            let failed = e < 0;
-            #[cfg(target_os = "windows")]
-            let failed = e as u32 != ERROR_SUCCESS;
-            if failed {
-                println!(
-                    "Dispatch {:?} failed {:?}({})",
-                    call,
-                    io::Error::from_raw_os_error(e),
-                    e
-                );
-            }
-            e
-        },
+        client_path,
     )
     .expect("Failed to connect to fsyncer");
 

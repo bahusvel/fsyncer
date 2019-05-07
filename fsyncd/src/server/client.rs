@@ -7,14 +7,11 @@ use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use error::{Error, FromError};
 use net2::TcpStreamExt;
-use server::{cork_server, uncork_server};
+use server::{cork_server, uncork_server, SERVER_PATH};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Condvar, Mutex};
-use std::{
-    mem::transmute, net::TcpStream, ops::Deref, path::PathBuf, thread,
-    time::Duration,
-};
+use std::{mem::transmute, net::TcpStream, ops::Deref, thread, time::Duration};
 use {lz4, zstd};
 
 const CLIENT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -132,7 +129,6 @@ impl<T> ClientResponse<T> {
 impl Client {
     pub fn from_stream(
         mut stream: TcpStream,
-        storage_path: PathBuf,
         dontcheck: bool,
         buffer_size: usize,
     ) -> Result<Self, Error<io::Error>> {
@@ -141,14 +137,19 @@ impl Client {
 
         let init = match Client::read_msg(&mut stream) {
             Ok(FsyncerMsg::InitMsg(msg)) => msg,
-            Err(e) => panic!("Failed to get init message from client {}", e),
+            Err(e) => return Err(trace_err!(e)),
             otherwise => panic!(
                 "Expected init message from client, received {:?}",
                 otherwise
             ),
         };
 
-        if init.mode != ClientMode::MODE_CONTROL && (!dontcheck) {
+        let storage_path = unsafe { SERVER_PATH.as_ref().unwrap() };
+
+        if !(init.mode == ClientMode::MODE_CONTROL
+            || dontcheck
+            || init.options.contains(Options::INITIAL_RSYNC))
+        {
             println!("Calculating source hash...");
             let srchash =
                 hash_metadata(&storage_path).expect("Hash check failed");
@@ -165,6 +166,13 @@ impl Client {
                     "Hash mismatch",
                 )));
             }
+        }
+
+        if init.options.contains(Options::INITIAL_RSYNC) {
+            //trace!(stream.set_nodelay(true));
+            println!("Syncrhonising using rsync...");
+            trace!(rsync::server(trace!(stream.try_clone()), storage_path));
+            println!("Done!");
         }
 
         let limiter = LimitWriter::new(

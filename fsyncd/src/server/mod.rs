@@ -143,8 +143,14 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
         unsafe { transmute::<thread::ThreadId, u64>(thread::current().id()) };
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
-        if client.mode == ClientMode::MODE_CONTROL {
-            continue; // Don't send control anything
+        if client.mode == ClientMode::MODE_CONTROL
+            || (is_variant!(&*call, VFSCall::fsync)
+                && (client.mode == ClientMode::MODE_ASYNC
+                    || client.mode == ClientMode::MODE_SEMISYNC))
+        {
+            // Don't send anything to control, don't send flushes to
+            // asynchronous client.
+            continue;
         }
         let (msg, sync) = if client.mode == ClientMode::MODE_SYNC
             || client.mode == ClientMode::MODE_SEMISYNC
@@ -430,12 +436,13 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         for stream in listener.incoming() {
             let client = Client::from_stream(
                 stream.expect("Failed client connection"),
-                backing_store.clone(),
                 dont_check,
                 buffer_size,
-            )
-            .expect("Failed handling client");
-            SYNC_LIST.write().unwrap().push(client);
+            );
+            match client {
+                Ok(client) => SYNC_LIST.write().unwrap().push(client),
+                Err(e) => println!("Failed handling client {:?}", e),
+            }
         }
     });
 

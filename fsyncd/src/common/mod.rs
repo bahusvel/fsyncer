@@ -7,6 +7,7 @@ metablock!(cfg(target_family="unix") {
     pub use self::ops_unix::*;
     mod ffi;
     pub use self::ffi::*;
+    pub mod rsync;
 });
 metablock!(cfg(target_family="windows") {
     mod ops_windows;
@@ -54,6 +55,14 @@ pub struct InitMsg {
     pub dsthash: u64,
     pub compress: CompMode,
     pub iolimit_bps: usize,
+    pub options: Options,
+}
+
+bitflags! {
+    #[derive(Serialize, Deserialize)]
+    pub struct Options: u32 {
+        const INITIAL_RSYNC      = 0b000001;
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

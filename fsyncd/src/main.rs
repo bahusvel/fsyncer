@@ -107,9 +107,9 @@ mod server;
 
 use std::process::exit;
 
-use clap::{App, Arg, ArgGroup, ErrorKind, SubCommand};
+use clap::{App, AppSettings, Arg, ArgGroup, ErrorKind, SubCommand};
 use client::{client_main, Client};
-use common::{ClientMode, CompMode, InitMsg};
+use common::{ClientMode, CompMode, InitMsg, Options};
 use server::server_main;
 use std::path::Path;
 
@@ -263,6 +263,10 @@ fn main() {
                 .default_value("1")
                 .help("Sets number of dispatch threads"),
         )
+        .arg(Arg::with_name("rsync").long("rsync").help(
+            "Do initial replication using rsync, NOTE: rsync must be present \
+             in path",
+        ))
         .arg(
             Arg::with_name("iolimit")
                 .long("iolimit")
@@ -363,6 +367,16 @@ fn main() {
                 .arg(Arg::with_name("cork").group("cmd"))
                 .arg(Arg::with_name("uncork").group("cmd")),
         )
+        .subcommand(
+            SubCommand::with_name("fakeshell")
+                .arg(Arg::with_name("fd").required(true).takes_value(true))
+                .arg(
+                    Arg::with_name("extra-args")
+                        .takes_value(true)
+                        .multiple(true),
+                )
+                .settings(&[AppSettings::TrailingVarArg, AppSettings::Hidden]),
+        )
         .get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
         .unwrap_or_else(|e| match e.kind {
             ErrorKind::HelpDisplayed => {
@@ -427,10 +441,11 @@ fn main() {
                     compress: CompMode::empty(),
                     dsthash: 0,
                     iolimit_bps: 0,
+                    options: Options::empty(),
                 },
                 buffer,
                 1,
-                |_| 0,
+                std::path::PathBuf::new(),
             )
             .expect("Failed to initialize client");
 
@@ -446,6 +461,28 @@ fn main() {
                 _ => unreachable!(),
             }
             .expect("Failed to execute command server");
+        }
+        Some("fakeshell") => {
+            use common::rsync::rsync_bridge;
+            use std::fs::File;
+            use std::net::TcpStream;
+            use std::os::unix::io::FromRawFd;
+            let mut fd = matches
+                .subcommand_matches("fakeshell")
+                .unwrap()
+                .value_of("fd")
+                .map(|v| v.parse().expect("Invalid integer"))
+                .unwrap();
+            unsafe {
+                rsync_bridge(
+                    TcpStream::from_raw_fd(fd),
+                    TcpStream::from_raw_fd(fd),
+                    File::from_raw_fd(1),
+                    File::from_raw_fd(0),
+                    true,
+                )
+                .unwrap()
+            };
         }
         _ => panic!("you must provide a command"),
     }

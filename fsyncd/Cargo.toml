@@ -14,7 +14,7 @@ winapi = { version = "0.3.6", features = ["securitybaseapi", "aclapi", "sddl", "
 [dependencies]
 net2 = "0.2"
 lazy_static = "1.2.0"
-clap = "2.29.0"
+clap = "2.33.0"
 zstd = "0.4.14"
 dssc = { path = "../dssc" }
 iolimit = { path = "../iolimit" }

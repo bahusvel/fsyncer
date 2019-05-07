@@ -2,10 +2,22 @@
 
 use libc::*;
 
+bitflags! {
+    #[repr(C)]
+    pub struct fuse_flags: c_uint {
+        const writepage     = 0b000001;
+        const direct_io     = 0b000010;
+        const keep_cache    = 0b000100;
+        const flush         = 0b001000;
+        const nonseekable   = 0b010000;
+        const cache_readdir = 0b100000;
+    }
+}
+
 #[repr(C)]
 pub struct fuse_file_info {
     pub flags: c_int,
-    pub fuse_flags: c_uint,
+    pub fuse_flags: fuse_flags,
     pub pad: c_uint, // fuse developers are retards
     pub fh: uint64_t,
     pub lock_owner: uint64_t,
@@ -95,23 +107,50 @@ pub struct fuse_config {
 #[derive(Debug, Copy, Clone, Default)]
 pub struct fuse_operations {
     pub getattr: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: *mut stat, fi: *mut fuse_file_info)
-            -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut stat,
+            fi: *mut fuse_file_info,
+        ) -> c_int,
     >,
-    pub readlink:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut c_char, arg3: usize) -> c_int>,
-    pub mknod:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: mode_t, arg3: dev_t) -> c_int>,
-    pub mkdir: Option<unsafe extern "C" fn(arg1: *const c_char, arg2: mode_t) -> c_int>,
+    pub readlink: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut c_char,
+            arg3: usize,
+        ) -> c_int,
+    >,
+    pub mknod: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: mode_t,
+            arg3: dev_t,
+        ) -> c_int,
+    >,
+    pub mkdir: Option<
+        unsafe extern "C" fn(arg1: *const c_char, arg2: mode_t) -> c_int,
+    >,
     pub unlink: Option<unsafe extern "C" fn(arg1: *const c_char) -> c_int>,
     pub rmdir: Option<unsafe extern "C" fn(arg1: *const c_char) -> c_int>,
-    pub symlink: Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char) -> c_int>,
-    pub rename: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char, flags: c_uint) -> c_int,
+    pub symlink: Option<
+        unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char) -> c_int,
     >,
-    pub link: Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char) -> c_int>,
+    pub rename: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *const c_char,
+            flags: c_uint,
+        ) -> c_int,
+    >,
+    pub link: Option<
+        unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char) -> c_int,
+    >,
     pub chmod: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: mode_t, fi: *mut fuse_file_info) -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: mode_t,
+            fi: *mut fuse_file_info,
+        ) -> c_int,
     >,
     pub chown: Option<
         unsafe extern "C" fn(
@@ -122,9 +161,18 @@ pub struct fuse_operations {
         ) -> c_int,
     >,
     pub truncate: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: off_t, fi: *mut fuse_file_info) -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: off_t,
+            fi: *mut fuse_file_info,
+        ) -> c_int,
     >,
-    pub open: Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut fuse_file_info) -> c_int>,
+    pub open: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut fuse_file_info,
+        ) -> c_int,
+    >,
     pub read: Option<
         unsafe extern "C" fn(
             arg1: *const c_char,
@@ -143,13 +191,27 @@ pub struct fuse_operations {
             arg5: *mut fuse_file_info,
         ) -> c_int,
     >,
-    pub statfs: Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut statvfs) -> c_int>,
-    pub flush:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut fuse_file_info) -> c_int>,
-    pub release:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut fuse_file_info) -> c_int>,
+    pub statfs: Option<
+        unsafe extern "C" fn(arg1: *const c_char, arg2: *mut statvfs) -> c_int,
+    >,
+    pub flush: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut fuse_file_info,
+        ) -> c_int,
+    >,
+    pub release: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut fuse_file_info,
+        ) -> c_int,
+    >,
     pub fsync: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: c_int, arg3: *mut fuse_file_info) -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: c_int,
+            arg3: *mut fuse_file_info,
+        ) -> c_int,
     >,
     pub setxattr: Option<
         unsafe extern "C" fn(
@@ -168,12 +230,22 @@ pub struct fuse_operations {
             arg4: usize,
         ) -> c_int,
     >,
-    pub listxattr:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut c_char, arg3: usize) -> c_int>,
-    pub removexattr:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char) -> c_int>,
-    pub opendir:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut fuse_file_info) -> c_int>,
+    pub listxattr: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut c_char,
+            arg3: usize,
+        ) -> c_int,
+    >,
+    pub removexattr: Option<
+        unsafe extern "C" fn(arg1: *const c_char, arg2: *const c_char) -> c_int,
+    >,
+    pub opendir: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut fuse_file_info,
+        ) -> c_int,
+    >,
     pub readdir: Option<
         unsafe extern "C" fn(
             arg1: *const c_char,
@@ -184,18 +256,34 @@ pub struct fuse_operations {
             arg6: fuse_readdir_flags,
         ) -> c_int,
     >,
-    pub releasedir:
-        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: *mut fuse_file_info) -> c_int>,
+    pub releasedir: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut fuse_file_info,
+        ) -> c_int,
+    >,
     pub fsyncdir: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: c_int, arg3: *mut fuse_file_info) -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: c_int,
+            arg3: *mut fuse_file_info,
+        ) -> c_int,
     >,
     pub init: Option<
-        unsafe extern "C" fn(conn: *mut fuse_conn_info, cfg: *mut fuse_config) -> *mut c_void,
+        unsafe extern "C" fn(
+            conn: *mut fuse_conn_info,
+            cfg: *mut fuse_config,
+        ) -> *mut c_void,
     >,
     pub destroy: Option<unsafe extern "C" fn(private_data: *mut c_void)>,
-    pub access: Option<unsafe extern "C" fn(arg1: *const c_char, arg2: c_int) -> c_int>,
+    pub access:
+        Option<unsafe extern "C" fn(arg1: *const c_char, arg2: c_int) -> c_int>,
     pub create: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: mode_t, arg3: *mut fuse_file_info) -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: mode_t,
+            arg3: *mut fuse_file_info,
+        ) -> c_int,
     >,
     pub lock: Option<
         unsafe extern "C" fn(
@@ -206,11 +294,19 @@ pub struct fuse_operations {
         ) -> c_int,
     >,
     pub utimens: Option<
-        unsafe extern "C" fn(arg1: *const c_char, tv: *const timespec, fi: *mut fuse_file_info)
-            -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            tv: *const timespec,
+            fi: *mut fuse_file_info,
+        ) -> c_int,
     >,
-    pub bmap:
-        Option<unsafe extern "C" fn(arg1: *const c_char, blocksize: usize, idx: *mut u64) -> c_int>,
+    pub bmap: Option<
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            blocksize: usize,
+            idx: *mut u64,
+        ) -> c_int,
+    >,
     pub ioctl: Option<
         unsafe extern "C" fn(
             arg1: *const c_char,
@@ -247,7 +343,11 @@ pub struct fuse_operations {
         ) -> c_int,
     >,
     pub flock: Option<
-        unsafe extern "C" fn(arg1: *const c_char, arg2: *mut fuse_file_info, op: c_int) -> c_int,
+        unsafe extern "C" fn(
+            arg1: *const c_char,
+            arg2: *mut fuse_file_info,
+            op: c_int,
+        ) -> c_int,
     >,
     pub fallocate: Option<
         unsafe extern "C" fn(
