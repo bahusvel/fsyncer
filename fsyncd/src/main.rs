@@ -466,7 +466,7 @@ fn main() {
                 .map(|v| v.parse().expect("Invalid integer"))
                 .unwrap();
             let mut netout = matches
-                .value_of("netin")
+                .value_of("netout")
                 .map(|v| v.parse().expect("Invalid integer"))
                 .unwrap();
             unsafe {
