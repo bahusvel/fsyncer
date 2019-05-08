@@ -18,6 +18,8 @@ pub fn server(
     netout: RawFd,
     src: &Path,
 ) -> Result<(), Error<io::Error>> {
+    let netin = unsafe { libc::dup(netin) };
+    let netout = unsafe { libc::dup(netout) };
     if unsafe { fcntl(netin, F_SETFD, 0) } == -1 {
         return Err(trace_err!(io::Error::last_os_error()));
     }
@@ -84,7 +86,7 @@ pub fn rsync_bridge<
         thread::spawn(move || loop {
             let len = nin.read_u32::<BigEndian>()? as usize;
             if len == 0 {
-                //eeprintln!("fakeshell terminated");
+                //eprintln!("fakeshell terminated");
                 if terminate {
                     netout_clone.lock().unwrap().write_u32::<BigEndian>(0)?;
                     std::process::exit(0);
@@ -102,9 +104,8 @@ pub fn rsync_bridge<
                 }
             }
             nin.read_exact(&mut vec[..len])?;
-            //eeprintln!("tcp->rsync {:?}", &vec[..len]);
+            //eprintln!("tcp->rsync {:?}", &vec[..len]);
             rin.write_all(&vec[..len])?;
-            return Ok(nin);
         });
     loop {
         let mut buf: [u8; 4096] = unsafe { mem::zeroed() };
@@ -117,7 +118,7 @@ pub fn rsync_bridge<
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
         };
-        //eeprintln!("rsync->tcp {:?}", &buf[..len]);
+        //eprintln!("rsync->tcp {:?}", &buf[..len]);
         netout.lock().unwrap().write_u32::<BigEndian>(len as u32)?;
         netout.lock().unwrap().write_all(&buf[..len])?;
     }

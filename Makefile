@@ -56,10 +56,10 @@ ifneq ($(journal),)
 	SERVER_FLAGS += --journal-size $(JOURNAL_SIZE)
 endif
 
-ifneq ($(connect),)
-	CLIENT_FLAGS += $(connect)
+ifneq ($(url),)
+	FSYNCD_FLAGS += $(url)
 else
-	CLIENT_FLAGS += 127.0.0.1
+	FSYNCD_FLAGS += tcp://127.0.0.1:2323
 endif
 
 ifneq ($(sync),)
@@ -106,8 +106,8 @@ fs: build dirs
 	$(POST_CMD)
 
 client: build dirs
-	rm -rf test_dst || true
-	mkdir test_dst
+	#rm -rf test_dst || true
+	#mkdir test_dst
 	#$(CLIENT_CP)
 	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) client test_dst $(CLIENT_FLAGS) $(END_CMD)
 	$(POST_CMD)
@@ -118,7 +118,7 @@ cmd: build dirs
 	ifeq ($(command),)
 		exit
 	endif
-	$(FSYNCD_BIN) control localhost $(command)
+	$(FSYNCD_BIN) control $(command)
 
 journal: build
 	$(FSYNCD_BIN) journal 

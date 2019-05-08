@@ -125,9 +125,12 @@ impl<I: Read + Send + 'static, O: Write + Send + 'static>
                  option"
             )
         }
+        eprintln!("Synchronising using rsync..");
         let (ni, no) = trace!(rsync::client(self.netin, self.netout, path));
+        eprintln!("Done!");
         self.netin = ni;
         self.netout = no;
+        self.rsynced = true;
         Ok(self)
     }
     pub fn build(self) -> Result<ServerConnection<O>, Error<io::Error>> {
@@ -296,9 +299,7 @@ impl<O: Write + Send + 'static> ServerConnection<O> {
     }
 }
 
-fn parse_options(matches: &ArgMatches) -> InitMsg {
-    let client_matches = matches.subcommand_matches("client").unwrap();
-
+fn parse_options(client_matches: &ArgMatches) -> InitMsg {
     let mode = match client_matches.value_of("sync").unwrap() {
         "sync" => ClientMode::MODE_SYNC,
         "async" => ClientMode::MODE_ASYNC,

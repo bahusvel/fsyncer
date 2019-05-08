@@ -459,6 +459,9 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
                 }
                 Box::new(trace!(TcpListener::bind(url))) as _
             } else {
+                if Path::new(url.path()).exists() {
+                    trace!(fs::remove_file(url.path()));
+                }
                 Box::new(trace!(UnixListener::bind(url.path()))) as _
             };
             thread::spawn(move || {

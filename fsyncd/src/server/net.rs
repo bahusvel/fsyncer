@@ -101,11 +101,11 @@ impl Listener for UnixListener {
         &self,
         _buffer_size: usize,
     ) -> Result<(Box<MyRead>, Box<MyWrite>, String), Error> {
-        let (stream, _addr) = self.accept()?;
+        let (stream, addr) = self.accept()?;
         Ok((
             Box::new(stream.try_clone()?) as _,
             Box::new(stream) as _,
-            String::new(),
+            format!("{:?}", addr),
         ))
     }
 }

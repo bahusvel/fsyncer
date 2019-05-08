@@ -477,7 +477,7 @@ fn main() {
                     File::from_raw_fd(0),
                     true,
                 )
-                .unwrap()
+                .unwrap();
             };
         }
         _ => panic!("you must provide a command"),
