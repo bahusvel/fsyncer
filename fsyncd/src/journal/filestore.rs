@@ -33,7 +33,7 @@ impl FileStore {
         let store_path = vfsroot.join(FILESTORE_PATH);
 
         if !Path::new(&store_path).exists() {
-            //println!(vfsroot);
+            //eprintln!(vfsroot);
             trace!(fs::create_dir(&store_path));
         }
 
@@ -103,7 +103,7 @@ impl FileStore {
 
         let token = this.current_token;
         this.current_token += 1;
-        //println!("{}/.fsyncer-deleted/{}", self.vfsroot, token);
+        //eprintln!("{}/.fsyncer-deleted/{}", self.vfsroot, token);
         trace!(fs::rename(
             &path,
             format!("{}/.fsyncer-deleted/{}", this.vfsroot.display(), token),

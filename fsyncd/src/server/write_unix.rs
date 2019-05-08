@@ -291,7 +291,7 @@ pub unsafe extern "C" fn do_setxattr(
         flags,
     });
 
-    //println!("setxattr {:?}", call);
+    //eprintln!("setxattr {:?}", call);
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -362,7 +362,7 @@ pub unsafe extern "C" fn do_create(
         (*context).gid,
     );
     (*fi).fh = fd as u64;
-    //println!("Created {:?} {}", real_path, fd);
+    //eprintln!("Created {:?} {}", real_path, fd);
     post_op(opref, res)
 }
 

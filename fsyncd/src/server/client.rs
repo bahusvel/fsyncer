@@ -6,12 +6,12 @@ use byteorder::{BigEndian, WriteBytesExt};
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use error::{Error, FromError};
-use net2::TcpStreamExt;
+use server::net::{MyRead, MyWrite};
 use server::{cork_server, uncork_server, SERVER_PATH};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Condvar, Mutex};
-use std::{mem::transmute, net::TcpStream, ops::Deref, thread, time::Duration};
+use std::{mem::transmute, ops::Deref, thread, time::Duration};
 use {lz4, zstd};
 
 const CLIENT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -48,55 +48,6 @@ pub struct ClientResponse<T> {
     cvar: Condvar,
 }
 
-struct NagleFlush(TcpStream);
-
-#[cfg(target_os = "linux")]
-impl Write for NagleFlush {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        use libc::*;
-        use std::os::unix::io::AsRawFd;
-        let res = unsafe {
-            send(
-                self.0.as_raw_fd(),
-                buf.as_ptr() as *const _,
-                buf.len(),
-                MSG_MORE,
-            )
-        };
-        if res == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(res as usize)
-    }
-    fn flush(&mut self) -> Result<(), io::Error> {
-        use libc::*;
-        use std::mem;
-        use std::os::unix::io::AsRawFd;
-        let optval = 0;
-        unsafe {
-            setsockopt(
-                self.0.as_raw_fd(),
-                SOL_TCP,
-                TCP_CORK,
-                &optval as *const _ as *const _,
-                mem::size_of::<i32>() as u32,
-            )
-        };
-        Ok(())
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-impl Write for NagleFlush {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        self.0.write(buf)
-    }
-    fn flush(&mut self) -> Result<(), io::Error> {
-        self.0.set_nodelay(true)?;
-        self.0.set_nodelay(false)
-    }
-}
-
 impl<T> ClientResponse<T> {
     pub fn new() -> Self {
         ClientResponse {
@@ -128,14 +79,11 @@ impl<T> ClientResponse<T> {
 
 impl Client {
     pub fn from_stream(
-        mut stream: TcpStream,
+        mut netin: Box<MyRead>,
+        netout: Box<MyWrite>,
         dontcheck: bool,
-        buffer_size: usize,
     ) -> Result<Self, Error<io::Error>> {
-        println!("Received connection from client {:?}", stream.peer_addr());
-        trace!(stream.set_send_buffer_size(buffer_size));
-
-        let init = match Client::read_msg(&mut stream) {
+        let init = match Client::read_msg(&mut netin) {
             Ok(FsyncerMsg::InitMsg(msg)) => msg,
             Err(e) => return Err(trace_err!(e)),
             otherwise => panic!(
@@ -150,17 +98,18 @@ impl Client {
             || dontcheck
             || init.options.contains(Options::INITIAL_RSYNC))
         {
-            println!("Calculating source hash...");
+            eprintln!("Calculating source hash...");
             let srchash =
                 hash_metadata(&storage_path).expect("Hash check failed");
-            println!("Source hash is {:x}", srchash);
+            eprintln!("Source hash is {:x}", srchash);
             if init.dsthash != srchash {
-                println!(
+                eprintln!(
                     "{:x} != {:x} client's hash does not match!",
                     init.dsthash, srchash
                 );
-                println!("Dropping this client!");
-                drop(stream);
+                eprintln!("Dropping this client!");
+                drop(netin);
+                drop(netout);
                 return Err(trace_err!(io::Error::new(
                     io::ErrorKind::Other,
                     "Hash mismatch",
@@ -170,24 +119,23 @@ impl Client {
 
         if init.options.contains(Options::INITIAL_RSYNC) {
             //trace!(stream.set_nodelay(true));
-            println!("Syncrhonising using rsync...");
-            trace!(rsync::server(trace!(stream.try_clone()), storage_path));
-            println!("Done!");
+            eprintln!("Syncrhonising using rsync...");
+            trace!(rsync::server(
+                netin.as_raw_fd(),
+                netout.as_raw_fd(),
+                storage_path
+            ));
+            eprintln!("Done!");
         }
 
-        let limiter = LimitWriter::new(
-            NagleFlush(trace!(stream.try_clone())),
-            init.iolimit_bps,
-        );
+        let limiter = LimitWriter::new(netout, init.iolimit_bps);
 
         let writer = if init.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(trace!(zstd::stream::Encoder::new(limiter, 0)))
-                as Box<Write + Send>
+            Box::new(trace!(zstd::stream::Encoder::new(limiter, 0))) as _
         } else if init.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(trace!(lz4::EncoderBuilder::new().build(limiter)))
-                as Box<Write + Send>
+            Box::new(trace!(lz4::EncoderBuilder::new().build(limiter))) as _
         } else {
-            Box::new(limiter) as Box<Write + Send>
+            Box::new(limiter) as _
         };
 
         let rt_comp: Option<Box<Compressor>> =
@@ -207,9 +155,9 @@ impl Client {
         }));
         let net_clone = net.clone();
 
-        thread::spawn(move || Client::reader(stream, net_clone));
+        thread::spawn(move || Client::reader(netin, net_clone));
 
-        println!("Client connected!");
+        eprintln!("Client connected!");
 
         Ok(Client {
             mode: init.mode,
@@ -276,10 +224,10 @@ impl Client {
                     let mut netlock = net.lock().unwrap();
                     netlock.status = ClientStatus::DEAD;
                     // Will kill this thread
-                    println!("Failed to read from client {}", e);
+                    eprintln!("Failed to read from client {}", e);
                     return;
                 }
-                msg => println!("Unexpected message from client {:?}", msg),
+                msg => eprintln!("Unexpected message from client {:?}", msg),
             }
         }
     }
@@ -347,7 +295,7 @@ impl Client {
         trace!(serialize_into(&mut serbuf, &msg_data)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
 
-        //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
+        //eprintln!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
         let mut net = self.net.lock().unwrap();
 
         if net.status == ClientStatus::DEAD {

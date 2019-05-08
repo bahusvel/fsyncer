@@ -187,7 +187,7 @@ impl FileSecurity {
                     match lookup_account(psid.as_ptr() as *mut _) {
                         Ok((_domain, name)) => format!("'{}'", name),
                         Err(e) => {
-                            println!("Account lookup failed {} {:?}", &caps[0], e);
+                            eprintln!("Account lookup failed {} {:?}", &caps[0], e);
                             String::from(&caps[0])
                         }
                     }
@@ -212,7 +212,7 @@ impl FileSecurity {
                                 match lookup_sid(&caps[1]) {
                                     Ok(sid) => sid,
                                     Err(e) => {
-                                        println!(
+                                        eprintln!(
                                             "Account lookup failed {} {:?}",
                                             &caps[1], e
                                         );

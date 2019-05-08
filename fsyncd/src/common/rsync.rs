@@ -1,7 +1,7 @@
 use error::{Error, FromError};
 use libc::{fcntl, F_SETFD};
 use std::io::{self, Read, Write};
-use std::os::unix::io::IntoRawFd;
+use std::os::unix::io::RawFd;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -13,12 +13,15 @@ use std::process::{Command, Stdio};
     4. Once the second thread on client side exits all threads belonging to rsync are terminated and normal communication may proceed over the TCP channel.
 */
 
-pub fn server<F: IntoRawFd>(
-    conn: F,
+pub fn server(
+    netin: RawFd,
+    netout: RawFd,
     src: &Path,
 ) -> Result<(), Error<io::Error>> {
-    let fd = conn.into_raw_fd();
-    if unsafe { fcntl(fd, F_SETFD, 0) } == -1 {
+    if unsafe { fcntl(netin, F_SETFD, 0) } == -1 {
+        return Err(trace_err!(io::Error::last_os_error()));
+    }
+    if unsafe { fcntl(netout, F_SETFD, 0) } == -1 {
         return Err(trace_err!(io::Error::last_os_error()));
     }
     let mut fsyncd = trace!(std::env::current_exe())
@@ -38,7 +41,10 @@ pub fn server<F: IntoRawFd>(
             "-avhAX".into(),
             "--delete".into(),
             "-e".into(),
-            std::ffi::OsString::from(format!("{} fakeshell {}", fsyncd, fd)),
+            std::ffi::OsString::from(format!(
+                "{} fakeshell {} {}",
+                fsyncd, netin, netout
+            )),
             src.into_os_string(),
             ":.".into(),
         ])
@@ -55,73 +61,81 @@ pub enum Direction {
 }
 
 pub fn rsync_bridge<
-    NI: Read + Write + Send + 'static,
+    NI: Read + Send + 'static,
     NO: Write + Send + 'static,
     RI: Write + Send + 'static,
     RO: Read + Send + 'static,
 >(
     mut nin: NI,
-    mut nout: NO,
+    nout: NO,
     mut rin: RI,
     mut rout: RO,
     terminate: bool,
-) -> Result<(), io::Error> {
+) -> Result<(NI, NO), io::Error> {
     use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
     use std::io::ErrorKind;
     use std::mem;
-    use std::thread;
+    use std::sync::{Arc, Mutex};
+    use std::thread::{self, JoinHandle};
     let mut vec = Vec::with_capacity(4096);
-    let handle = thread::spawn(move || loop {
-        let len = nin.read_u32::<BigEndian>()? as usize;
-        if len == 0 {
-            //eprintln!("fakeshell terminated");
-            if terminate {
-                nin.write_u32::<BigEndian>(0)?;
-                std::process::exit(0);
-            } else {
-                return Ok(());
+    let netout = Arc::new(Mutex::new(nout));
+    let netout_clone = netout.clone();
+    let handle: JoinHandle<Result<NI, io::Error>> =
+        thread::spawn(move || loop {
+            let len = nin.read_u32::<BigEndian>()? as usize;
+            if len == 0 {
+                //eeprintln!("fakeshell terminated");
+                if terminate {
+                    netout_clone.lock().unwrap().write_u32::<BigEndian>(0)?;
+                    std::process::exit(0);
+                } else {
+                    return Ok(nin);
+                }
             }
-        }
-        if len > vec.len() {
-            if len > vec.capacity() {
-                let res = len - vec.capacity();
-                vec.reserve(res);
+            if len > vec.len() {
+                if len > vec.capacity() {
+                    let res = len - vec.capacity();
+                    vec.reserve(res);
+                }
+                unsafe {
+                    vec.set_len(len);
+                }
             }
-            unsafe {
-                vec.set_len(len);
-            }
-        }
-        nin.read_exact(&mut vec[..len])?;
-        //eprintln!("tcp->rsync {:?}", &vec[..len]);
-        rin.write_all(&vec[..len])?;
-    });
+            nin.read_exact(&mut vec[..len])?;
+            //eeprintln!("tcp->rsync {:?}", &vec[..len]);
+            rin.write_all(&vec[..len])?;
+            return Ok(nin);
+        });
     loop {
         let mut buf: [u8; 4096] = unsafe { mem::zeroed() };
         let len = match rout.read(&mut buf) {
             Ok(0) => {
-                nout.write_u32::<BigEndian>(0)?;
+                netout.lock().unwrap().write_u32::<BigEndian>(0)?;
                 break;
             }
             Ok(len) => len,
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
         };
-        //eprintln!("rsync->tcp {:?}", &buf[..len]);
-        nout.write_u32::<BigEndian>(len as u32)?;
-        nout.write_all(&buf[..len])?;
+        //eeprintln!("rsync->tcp {:?}", &buf[..len]);
+        netout.lock().unwrap().write_u32::<BigEndian>(len as u32)?;
+        netout.lock().unwrap().write_all(&buf[..len])?;
     }
-    handle.join().expect("thread panicked")
+    Ok((
+        handle.join().expect("thread panicked")?,
+        if let Ok(lock) = Arc::try_unwrap(netout) {
+            lock.into_inner().unwrap()
+        } else {
+            unreachable!();
+        },
+    ))
 }
 
-pub fn client<N: IntoRawFd>(
-    net: N,
+pub fn client<NI: Read + Send + 'static, NO: Write + Send + 'static>(
+    nin: NI,
+    nout: NO,
     dst: &Path,
-) -> Result<(), Error<io::Error>> {
-    use std::fs::File;
-    use std::os::unix::io::FromRawFd;
-    let fd = net.into_raw_fd();
-    let nin = unsafe { File::from_raw_fd(fd) };
-    let nout = unsafe { File::from_raw_fd(fd) };
+) -> Result<(NI, NO), Error<io::Error>> {
     let child = trace!(Command::new("rsync")
         .args(&[
             //"rsync".into(),
@@ -134,14 +148,11 @@ pub fn client<N: IntoRawFd>(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn());
-    rsync_bridge(
+    Ok(trace!(rsync_bridge(
         nin,
         nout,
         child.stdin.unwrap(),
         child.stdout.unwrap(),
         false,
-    )
-    .unwrap();
-    // I must terminate the other thread before here.
-    Ok(())
+    )))
 }

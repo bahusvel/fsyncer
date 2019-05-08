@@ -83,7 +83,7 @@ pub unsafe fn xmp_rename(
     flags: c_uint,
 ) -> c_int {
     use server::CONST_RENAMEAT2;
-    //println!("Linux rename");
+    //eprintln!("Linux rename");
     return -syscall(CONST_RENAMEAT2, -1, from, -1, to, flags) as i32;
 }
 pub unsafe fn xmp_link(
@@ -152,7 +152,7 @@ pub unsafe fn xmp_write(
     offset: off_t,
     fd: c_int,
 ) -> c_int {
-    // println!(
+    // eprintln!(
     // "Doing write {:?} {:?} {} {} {}",
     // path, buf, size, offset, fd
     // );

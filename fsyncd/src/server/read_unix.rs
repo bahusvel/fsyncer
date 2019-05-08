@@ -220,7 +220,7 @@ pub unsafe extern "C" fn xmp_ioctl(
     flags: c_uint,
     data: *mut c_void,
 ) -> c_int {
-    println!("ioctl at {:?}", CStr::from_ptr(path));
+    eprintln!("ioctl at {:?}", CStr::from_ptr(path));
     0
 }
 */

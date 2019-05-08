@@ -15,6 +15,7 @@ metablock!(cfg(target_family = "unix") {
     use libc::c_char;
     pub use self::read_unix::CONST_RENAMEAT2;
     static mut JOURNAL: Option<Mutex<Journal>> = None;
+    use std::os::unix::net::UnixListener;
 });
 
 metablock!(cfg(target_os = "windows") {
@@ -37,6 +38,7 @@ metablock!(cfg(target_os = "windows") {
 });
 
 mod client;
+pub mod net;
 use self::client::{Client, ClientResponse, ClientStatus};
 use clap::ArgMatches;
 use common::file_security::copy_security;
@@ -67,7 +69,7 @@ fn flush_thread(interval: u64) {
         let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
         for client in list.iter().filter(|c| c.mode == ClientMode::MODE_ASYNC) {
             if client.flush().is_err() {
-                println!("Failed to flush to client");
+                eprintln!("Failed to flush to client");
             }
         }
         drop(list);
@@ -97,30 +99,30 @@ fn harvester_thread() {
 }
 
 pub fn cork_server() {
-    println!("Corking");
+    eprintln!("Corking");
     *CORK.lock().unwrap() = true;
     // Cork the individual clients
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
         if let Err(e) = client.cork() {
-            println!("Failed to cork client {}", e);
+            eprintln!("Failed to cork client {}", e);
         }
     }
-    println!("Cork done");
+    eprintln!("Cork done");
 }
 
 pub fn uncork_server() {
-    println!("Uncorking");
+    eprintln!("Uncorking");
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
         if let Err(e) = client.uncork() {
-            println!("Failed to uncork client {}", e);
+            eprintln!("Failed to uncork client {}", e);
         }
     }
     drop(list);
     *CORK.lock().unwrap() = false;
     CORK_VAR.notify_all();
-    println!("Uncork done");
+    eprintln!("Uncork done");
 }
 
 pub struct OpRef {
@@ -164,7 +166,7 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
         match client.response_msg(msg, sync, sync) {
             Ok(None) => {}
             Ok(Some(response)) => opref.waits.push(response),
-            Err(e) => println!("Failed sending message to client {}", e),
+            Err(e) => eprintln!("Failed sending message to client {}", e),
         }
     }
 
@@ -179,7 +181,7 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
         if unsafe { JOURNAL.is_none() } {
             return opref;
         }
-        //println!("writing journal event {:?}", call);
+        //eprintln!("writing journal event {:?}", call);
         let bilog = BilogEntry::from_vfscall(call, unsafe {
             &SERVER_PATH.as_ref().unwrap()
         })
@@ -203,15 +205,15 @@ pub fn post_op(opref: OpRef, ret: i32) -> i32 {
     for wait in opref.waits {
         let client_ret = wait.wait();
         if client_ret.is_none() {
-            println!("Client did not respond");
+            eprintln!("Client did not respond");
             continue;
         }
         let client_ret = client_ret.unwrap();
         match client_ret {
             ClientAck::Dead => {
-                println!("Client died before acknowledging write")
+                eprintln!("Client died before acknowledging write")
             }
-            ClientAck::RetCode(code) if code != ret => println!(
+            ClientAck::RetCode(code) if code != ret => eprintln!(
                 "Response from client {} does not match server {}",
                 code, ret
             ),
@@ -223,7 +225,7 @@ pub fn post_op(opref: OpRef, ret: i32) -> i32 {
 
 #[cfg(target_family = "unix")]
 pub fn display_fuse_help() {
-    println!("Fuse options, specify at the end, after --:");
+    eprintln!("Fuse options, specify at the end, after --:");
     let args = vec!["fsyncd", "--help"]
         .into_iter()
         .map(|arg| CString::new(arg).unwrap())
@@ -354,7 +356,7 @@ fn figure_out_paths(
                     == winapi::shared::winerror::ERROR_SHARING_VIOLATION
             {
                 if !recreated {
-                    println!("Mount path is busy, attempting to recreate it");
+                    eprintln!("Mount path is busy, attempting to recreate it");
                     trace!(fs::remove_dir(&mount_path));
                     trace!(fs::create_dir(&mount_path));
                     trace!(copy_security(&backing_store, &mount_path));
@@ -403,6 +405,10 @@ fn open_journal(
 }
 
 pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
+    use url::Url;
+    // Parse args
+    let url = Url::parse(matches.value_of("url").unwrap())
+        .expect("Invalid url specified");
     let server_matches = matches.subcommand_matches("server").unwrap();
     #[cfg(target_os = "windows")]
     unsafe {
@@ -419,41 +425,10 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         SERVER_PATH = Some(backing_store.clone());
     }
 
-    // FIXME use net2::TcpBuilder to set SO_REUSEADDR
-    let listener = trace!(TcpListener::bind(format!(
-        "0.0.0.0:{}",
-        matches
-            .value_of("port")
-            .map(|v| v.parse::<i32>().expect("Invalid format for port"))
-            .unwrap()
-    )));
-
-    let dont_check = server_matches.is_present("dont-check");
-    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
-        .expect("Buffer format incorrect");
-
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let client = Client::from_stream(
-                stream.expect("Failed client connection"),
-                dont_check,
-                buffer_size,
-            );
-            match client {
-                Ok(client) => SYNC_LIST.write().unwrap().push(client),
-                Err(e) => println!("Failed handling client {:?}", e),
-            }
-        }
-    });
-
     let interval = server_matches
         .value_of("flush-interval")
         .map(|v| v.parse::<u64>().expect("Invalid format for flush interval"))
         .unwrap();
-
-    if interval != 0 {
-        thread::spawn(move || flush_thread(interval));
-    }
 
     if server_matches.is_present("diff-writes") {
         unsafe {
@@ -461,7 +436,59 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         }
     }
 
+    let dont_check = server_matches.is_present("dont-check");
+    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
+        .expect("Buffer format incorrect");
+
+    // Network
+
+    if interval != 0 {
+        thread::spawn(move || flush_thread(interval));
+    }
+
     thread::spawn(harvester_thread);
+
+    use self::net::Listener;
+
+    match url.scheme() {
+        "tcp" | "unix" => {
+            let listener: Box<Listener> = if url.scheme() == "tcp" {
+                let mut url = url.clone();
+                if url.port().is_none() {
+                    url.set_port(Some(2323)).unwrap();
+                }
+                Box::new(trace!(TcpListener::bind(url))) as _
+            } else {
+                Box::new(trace!(UnixListener::bind(url.path()))) as _
+            };
+            thread::spawn(move || {
+                while let Ok((netin, netout, addr)) =
+                    listener.accept(buffer_size)
+                {
+                    eprintln!("Received connection from client {:?}", addr);
+                    let client = Client::from_stream(netin, netout, dont_check);
+                    match client {
+                        Ok(client) => SYNC_LIST.write().unwrap().push(client),
+                        Err(e) => eprintln!("Failed handling client {:?}", e),
+                    }
+                }
+            });
+        }
+        "stdio" => {
+            use std::fs::File;
+            use std::os::unix::io::FromRawFd;
+            thread::spawn(move || {
+                Client::from_stream(
+                    Box::new(unsafe { File::from_raw_fd(0) }) as _,
+                    Box::new(unsafe { File::from_raw_fd(1) }) as _,
+                    dont_check,
+                )
+            });
+        }
+        otherwise => panic!("Scheme {} is not supported", otherwise),
+    };
+
+    // Fs proxying
 
     #[cfg(target_family = "unix")]
     {
@@ -536,7 +563,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         let res = unsafe { dokan_main(options, DOKAN_OPS_PTR) };
         match res {
             Ok(DokanResult::Success) => {
-                println!("Dokan exited {:?}", res);
+                eprintln!("Dokan exited {:?}", res);
                 Ok(())
             }
             e => panic!("Dokan error {:?}", e),

@@ -133,7 +133,7 @@ where
             iter_try!(deserialize_from(&mut self.journal.file)
                 .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
-        // println!(
+        // eprintln!(
         //     "head {}, tail {}, entry {:?}",
         //     self.header.head, self.header.tail, entry
         // );
@@ -290,13 +290,13 @@ impl Journal {
             fstore: trace!(FileStore::new(&vfsroot, filestore_size)),
         };
 
-        println!("Traversing the journal {:?}", j.header);
+        eprintln!("Traversing the journal {:?}", j.header);
 
         let mut tx_max = j.header.trans_ctr as i64 - 1; // Because the ctr has been advanced before flush
         let mut new_tail = j.header.tail;
         loop {
             if new_tail > align_up_always(j.header.tail, BLOCK_SIZE) {
-                println!("Traversing past block boundary");
+                eprintln!("Traversing past block boundary");
                 break;
             }
             if align_up_always(new_tail, BLOCK_SIZE) - new_tail < 4 {
@@ -312,7 +312,7 @@ impl Journal {
             // FIXME next_tx is not neccessarily correct, it may be leftover
             // data from the previous block, I need to validate this entry.
             let next_tx = trace!(j.file.read_u32::<LittleEndian>());
-            //println!("Next tx {} old tx {}", next_tx, tx_max);
+            //eprintln!("Next tx {} old tx {}", next_tx, tx_max);
             // Allows for overflow to happen
             if next_tx != (tx_max + 1) as u32 {
                 debug!(next_tx, tx_max + 1);
@@ -337,7 +337,7 @@ impl Journal {
         let esize = trace!(serialized_size(&e)
             .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
-        //println!("Writing to journal {}", esize);
+        //eprintln!("Writing to journal {}", esize);
 
         assert!(
             esize < BLOCK_SIZE as u64,
@@ -345,7 +345,7 @@ impl Journal {
         );
 
         e.fsize = esize as u32;
-        // println!(
+        // eprintln!(
         // "esize {}, tail {}, head {}",
         // esize, self.header.tail, self.header.head
         // );
@@ -357,7 +357,7 @@ impl Journal {
 
         if space_in_block < esize {
             if space_in_block >= 4 {
-                //println!("Writing zero {}", self.header.tail);
+                //eprintln!("Writing zero {}", self.header.tail);
                 trace!(self.file.write_all_at(
                     &ZERO_SIZE[..],
                     self.file_off(self.header.tail),
@@ -488,9 +488,9 @@ fn journal_rw() {
             j.write_entry("Hello")?;
         }
         for e in j.read_reverse::<String>() {
-            println!("{:?}", e?);
+            eprintln!("{:?}", e?);
         }
-        println!("Header {:?}", j.header);
+        eprintln!("Header {:?}", j.header);
         Ok(())
     }
     inner().unwrap();
@@ -501,7 +501,7 @@ fn journal_recover() {
     fn inner() -> Result<(), Error> {
         let f = File::open("test.fj")?;
         let mut j = Journal::open(f, false)?;
-        println!("{:?}", j.header);
+        eprintln!("{:?}", j.header);
         Ok(())
     }
 

@@ -114,7 +114,7 @@ pub unsafe extern "stdcall" fn MirrorCreateFile(
         This is exactly what mirror.c from Dokan does,
         it doesn't handle them properly, just errors with 123 code.
         */
-        println!("Attr failed {:?} {:?}", rpath, attr.as_ref().unwrap_err());
+        eprintln!("Attr failed {:?} {:?}", rpath, attr.as_ref().unwrap_err());
         return DokanNtStatusFromWin32(
             attr.unwrap_err()
                 .raw_os_error()
@@ -337,7 +337,7 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
     if (*info).WriteToEndOfFile != 0 {
         offset = std::i64::MAX;
     } else if (*info).PagingIo != 0 {
-        println!("Write path hit \"stat\"");
+        eprintln!("Write path hit \"stat\"");
         let rrpath = translate_path(&rpath, SERVER_PATH.as_ref().unwrap());
         let stat = symlink_metadata(rrpath); // FIXME, I must avoid "stat" like wild fire in this code path!
         if stat.is_err() {
@@ -564,7 +564,7 @@ pub unsafe extern "stdcall" fn MirrorSetFileSecurity(
     )
     .expect("Failed to parse security");
 
-    //println!("Security {:#?}", file_sec);
+    //eprintln!("Security {:#?}", file_sec);
 
     debug!(flagset!((*security), UNPROTECTED_DACL_SECURITY_INFORMATION));
     debug!(flagset!((*security), PROTECTED_DACL_SECURITY_INFORMATION));

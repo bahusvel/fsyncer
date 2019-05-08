@@ -19,102 +19,155 @@ use clap::ArgMatches;
 use common::*;
 use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use error::{Error, FromError};
-use lz4;
 use net2::TcpStreamExt;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::{mem::size_of, net::TcpStream, path::Path};
-use zstd;
+use std::{fs::File, mem::size_of, net::TcpStream, path::Path};
+use url::Url;
 
-pub struct Client {
-    write: Arc<Mutex<Box<Write + Send>>>,
-    read: Box<Read + Send>,
+pub struct ServerConnection<O: Write + Send + 'static> {
+    write: Arc<Mutex<O>>,
+    read: Box<Read>,
     rcv_buf: Vec<u8>,
     mode: ClientMode,
     rt_comp: Option<Box<Compressor>>,
-    pool: Option<ThreadPool>,
-    path: Arc<PathBuf>,
 }
 
 fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
-    //println!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
+    //eprintln!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
     let buf =
         serialize(&msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     write.write_all(&buf[..])?;
     write.flush()
 }
 
-impl Client {
-    pub fn new(
-        host: &str,
-        port: i32,
-        init_msg: InitMsg,
+pub struct ConnectionBuilder<
+    I: Read + Send + 'static,
+    O: Write + Send + 'static,
+> {
+    netin: I,
+    netout: O,
+    init_msg: InitMsg,
+    rsynced: bool,
+}
+
+impl ConnectionBuilder<Box<Read + Send>, Box<Write + Send>> {
+    pub fn with_url(
+        url: &Url,
+        nodelay: bool,
         buffer_size: usize,
-        dispatch_threads: usize,
-        path: PathBuf,
+        init_msg: InitMsg,
     ) -> Result<Self, Error<io::Error>> {
-        if dispatch_threads != 1 && init_msg.mode != ClientMode::MODE_SYNC {
+        let (netin, netout) = match url.scheme() {
+            "tcp" => {
+                let mut url = url.clone();
+                if url.port().is_none() {
+                    url.set_port(Some(2323)).unwrap();
+                }
+                let mut stream = trace!(TcpStream::connect(url));
+                if nodelay {
+                    trace!(stream.set_nodelay(true));
+                }
+                trace!(stream.set_recv_buffer_size(buffer_size));
+                (
+                    Box::new(trace!(stream.try_clone())) as Box<Read + Send>,
+                    Box::new(stream) as Box<Write + Send>,
+                )
+            }
+            #[cfg(target_family = "unix")]
+            "unix" => {
+                use std::os::unix::net::UnixStream;
+                let stream = trace!(UnixStream::connect(url.path()));
+                (
+                    Box::new(trace!(stream.try_clone())) as Box<Read + Send>,
+                    Box::new(stream) as Box<Write + Send>,
+                )
+            }
+            "stdio" => {
+                use std::os::unix::io::FromRawFd;
+                unsafe {
+                    (
+                        Box::new(File::from_raw_fd(0)) as Box<Read + Send>,
+                        Box::new(File::from_raw_fd(1)) as Box<Write + Send>,
+                    )
+                }
+            }
+            otherwise => panic!("Scheme {} is not supported", otherwise),
+        };
+        ConnectionBuilder::with_net(netin, netout, init_msg)
+    }
+}
+
+impl<I: Read + Send + 'static, O: Write + Send + 'static>
+    ConnectionBuilder<I, O>
+{
+    pub fn with_net(
+        netin: I,
+        mut netout: O,
+        init_msg: InitMsg,
+    ) -> Result<Self, Error<io::Error>> {
+        trace!(send_msg(&mut netout, FsyncerMsg::InitMsg(init_msg.clone())));
+        Ok(ConnectionBuilder {
+            netin,
+            netout,
+            init_msg,
+            rsynced: false,
+        })
+    }
+    pub fn rsync(mut self, path: &Path) -> Result<Self, Error<io::Error>> {
+        if self.rsynced {
+            return Ok(self);
+        }
+        if !self.init_msg.options.contains(Options::INITIAL_RSYNC) {
             panic!(
-                "Only synchronous mode is compatible with multiple dispatch \
-                 threads"
-            );
+                "Cannot rsync without telling server first, use INITIAL_RSYNC \
+                 option"
+            )
         }
-
-        let mut stream =
-            trace!(TcpStream::connect(format!("{}:{}", host, port)));
-
-        trace!(send_msg(&mut stream, FsyncerMsg::InitMsg(init_msg.clone())));
-
-        if init_msg.mode != ClientMode::MODE_ASYNC {
-            trace!(stream.set_nodelay(true));
+        let (ni, no) = trace!(rsync::client(self.netin, self.netout, path));
+        self.netin = ni;
+        self.netout = no;
+        Ok(self)
+    }
+    pub fn build(self) -> Result<ServerConnection<O>, Error<io::Error>> {
+        if self.init_msg.options.contains(Options::INITIAL_RSYNC)
+            && !self.rsynced
+        {
+            panic!(
+                "If you requested rsync, you must rsync first before building \
+                 a connection"
+            )
         }
-
-        if init_msg.options.contains(Options::INITIAL_RSYNC) {
-            println!("Syncrhonising using rsync...");
-            trace!(rsync::client(trace!(stream.try_clone()), &path));
-            println!("Done!");
-        }
-
-        trace!(stream.set_recv_buffer_size(buffer_size));
-
-        let reader = if init_msg.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(trace!(zstd::stream::Decoder::new(trace!(
-                stream.try_clone()
-            )))) as Box<Read + Send>
-        } else if init_msg.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(trace!(lz4::Decoder::new(trace!(stream.try_clone()))))
-                as Box<Read + Send>
+        let reader = if self.init_msg.compress.contains(CompMode::STREAM_ZSTD) {
+            Box::new(trace!(zstd::stream::Decoder::new(self.netin)))
+                as Box<Read>
+        } else if self.init_msg.compress.contains(CompMode::STREAM_LZ4) {
+            Box::new(trace!(lz4::Decoder::new(self.netin))) as Box<Read>
         } else {
-            Box::new(trace!(stream.try_clone())) as Box<Read + Send>
+            Box::new(self.netin) as Box<Read>
         };
 
         let rt_comp: Option<Box<Compressor>> =
-            if init_msg.compress.contains(CompMode::RT_DSSC_CHUNKED) {
+            if self.init_msg.compress.contains(CompMode::RT_DSSC_CHUNKED) {
                 Some(Box::new(ChunkMap::new(0.5)))
-            } else if init_msg.compress.contains(CompMode::RT_DSSC_ZSTD) {
+            } else if self.init_msg.compress.contains(CompMode::RT_DSSC_ZSTD) {
                 Some(Box::new(ZstdBlock::default()))
             } else {
                 None
             };
 
-        Ok(Client {
-            write: Arc::new(Mutex::new(Box::new(stream))),
+        Ok(ServerConnection {
+            write: Arc::new(Mutex::new(self.netout)),
             read: reader,
             rcv_buf: Vec::with_capacity(32 * 1024),
-            mode: init_msg.mode,
+            mode: self.init_msg.mode,
             rt_comp: rt_comp,
-            pool: if dispatch_threads > 1
-            //|| init_msg.mode == ClientMode::MODE_SEMISYNC // will cause semisync jobs to queue up and execute in another thread leaving the network thread free to empty the buffer and ack early.
-            {
-                Some(ThreadPool::new(dispatch_threads))
-            } else {
-                None
-            },
-            path: Arc::new(path),
         })
     }
+}
 
+impl<O: Write + Send + 'static> ServerConnection<O> {
     fn send_msg(&mut self, msg_data: FsyncerMsg) -> Result<(), io::Error> {
         send_msg(&mut *self.write.lock().unwrap(), msg_data)
     }
@@ -149,7 +202,7 @@ impl Client {
         loop {
             let msg = self.read_msg()?;
             if let FsyncerMsg::Cork(tid) = msg {
-                println!("Acknowledging cork");
+                eprintln!("Acknowledging cork");
                 return self.send_msg(FsyncerMsg::AckCork(tid));
             }
         }
@@ -159,7 +212,11 @@ impl Client {
         self.send_msg(FsyncerMsg::Uncork)
     }
 
-    pub fn process_ops(&mut self) -> Result<(), io::Error> {
+    pub fn process_ops(
+        &mut self,
+        dispatch_threads: usize,
+        path: PathBuf,
+    ) -> Result<(), io::Error> {
         fn callback(call: &VFSCall, client_path: &Path) -> i32 {
             let e = unsafe { dispatch(call, client_path) };
             #[cfg(target_family = "unix")]
@@ -167,7 +224,7 @@ impl Client {
             #[cfg(target_os = "windows")]
             let failed = e as u32 != ERROR_SUCCESS;
             if failed {
-                println!(
+                eprintln!(
                     "Dispatch {:?} failed {:?}({})",
                     call,
                     io::Error::from_raw_os_error(e),
@@ -176,6 +233,14 @@ impl Client {
             }
             e
         }
+
+        let pool = if dispatch_threads > 1 {
+            Some(ThreadPool::new(dispatch_threads))
+        } else {
+            None
+        };
+
+        let path = Arc::new(path.to_path_buf());
 
         loop {
             match self.read_msg() {
@@ -190,10 +255,10 @@ impl Client {
                     let need_ack = self.mode == ClientMode::MODE_SYNC
                         || self.mode == ClientMode::MODE_FLUSHSYNC;
                     let write = self.write.clone();
-                    let path = self.path.clone();
+                    let path = path.clone();
 
                     let f = move || {
-                        let res = callback(&call, &path);
+                        let res = (callback)(&call, &path);
                         if need_ack {
                             send_msg(
                                 &mut *write.lock().unwrap(),
@@ -205,25 +270,24 @@ impl Client {
                             .expect("Failed to send ack");
                         }
                     };
-
-                    if self.pool.is_none() {
-                        f();
+                    if let Some(pool) = pool.as_ref() {
+                        pool.execute(f);
                     } else {
-                        self.pool.as_ref().unwrap().execute(f);
+                        f();
                     }
                 }
                 Ok(FsyncerMsg::AsyncOp(call)) => {
                     // TODO check return status
                     //debug!(call);
-                    let _res = callback(&call, &self.path);
+                    let _res = callback(&call, &path);
                 }
                 Ok(FsyncerMsg::Cork(tid)) => {
-                    println!("Received cork request");
+                    eprintln!("Received cork request");
                     self.send_msg(FsyncerMsg::AckCork(tid))?
                 }
                 Ok(FsyncerMsg::NOP) | Ok(FsyncerMsg::Uncork) => {} /* Nothing, safe to ingore */
                 Err(err) => return Err(err),
-                msg => println!(
+                msg => eprintln!(
                     "Unexpected message for current client state {:?}",
                     msg
                 ),
@@ -232,21 +296,8 @@ impl Client {
     }
 }
 
-pub fn client_main(matches: ArgMatches) {
-    println!("Calculating destination hash...");
+fn parse_options(matches: &ArgMatches) -> InitMsg {
     let client_matches = matches.subcommand_matches("client").unwrap();
-    let client_path = Path::new(
-        client_matches
-            .value_of("mount-path")
-            .expect("Destination not specified"),
-    )
-    .canonicalize()
-    .expect("Failed to normalize path");
-
-    let dsthash = hash_metadata(&client_path).expect("Hash failed");
-    println!("Destinaton hash is {:x}", dsthash);
-
-    let host = client_matches.value_of("host").expect("No host specified");
 
     let mode = match client_matches.value_of("sync").unwrap() {
         "sync" => ClientMode::MODE_SYNC,
@@ -256,18 +307,15 @@ pub fn client_main(matches: ArgMatches) {
         _ => panic!("That is not possible"),
     };
 
-    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
-        .expect("Buffer size format incorrect");
-
     let mut compress = CompMode::empty();
 
     match client_matches.value_of("stream-compressor").unwrap() {
         "default" | "lz4" => {
-            println!("Using a LZ4 stream compressor");
+            eprintln!("Using a LZ4 stream compressor");
             compress.insert(CompMode::STREAM_LZ4)
         }
         "zstd" => {
-            println!("Using a ZSTD stream compressor");
+            eprintln!("Using a ZSTD stream compressor");
             compress.insert(CompMode::STREAM_ZSTD)
         }
         _ => (),
@@ -275,11 +323,11 @@ pub fn client_main(matches: ArgMatches) {
 
     match client_matches.value_of("rt-compressor").unwrap() {
         "default" | "zstd" => {
-            println!("Using a RT_DSSC_ZSTD realtime compressor");
+            eprintln!("Using a RT_DSSC_ZSTD realtime compressor");
             compress.insert(CompMode::RT_DSSC_ZSTD)
         }
         "chunked" => {
-            println!("Using a RT_DSSC_CHUNKED realtime compressor");
+            eprintln!("Using a RT_DSSC_CHUNKED realtime compressor");
             compress.insert(CompMode::RT_DSSC_CHUNKED)
         }
         "none" | _ => (),
@@ -295,6 +343,50 @@ pub fn client_main(matches: ArgMatches) {
         parse_human_size(client_matches.value_of("iolimit").unwrap())
             .expect("Invalid format for iolimit");
 
+    InitMsg {
+        mode,
+        dsthash: 0,
+        compress,
+        iolimit_bps,
+        options,
+    }
+}
+
+pub fn client_main(matches: ArgMatches) {
+    let url = Url::parse(matches.value_of("url").unwrap())
+        .expect("Invalid url specified");
+
+    let client_matches = matches.subcommand_matches("client").unwrap();
+
+    let mut init_msg = parse_options(client_matches);
+    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
+        .expect("Buffer size format incorrect");
+
+    let dispatch_threads = client_matches
+        .value_of("threads")
+        .map(|v| v.parse().expect("Invalid thread number"))
+        .unwrap();
+
+    if dispatch_threads != 1 && init_msg.mode != ClientMode::MODE_SYNC {
+        panic!(
+            "Only synchronous mode is compatible with multiple dispatch \
+             threads"
+        );
+    }
+
+    let client_path = Path::new(
+        client_matches
+            .value_of("mount-path")
+            .expect("Destination not specified"),
+    )
+    .canonicalize()
+    .expect("Failed to normalize path");
+
+    eprintln!("Calculating destination hash...");
+
+    init_msg.dsthash = hash_metadata(&client_path).expect("Hash failed");
+    eprintln!("Destinaton hash is {:x}", init_msg.dsthash);
+
     #[cfg(target_os = "windows")]
     unsafe {
         if AddPrivileges() == 0 {
@@ -302,29 +394,24 @@ pub fn client_main(matches: ArgMatches) {
         }
     }
 
-    let mut client = Client::new(
-        host,
-        matches
-            .value_of("port")
-            .map(|v| v.parse().expect("Invalid format for port"))
-            .unwrap(),
-        InitMsg {
-            mode,
-            dsthash,
-            compress,
-            iolimit_bps,
-            options,
-        },
+    let need_rsync = init_msg.options.contains(Options::INITIAL_RSYNC);
+    let mut builder = ConnectionBuilder::with_url(
+        &url,
+        init_msg.mode != ClientMode::MODE_ASYNC,
         buffer_size,
-        client_matches
-            .value_of("threads")
-            .map(|v| v.parse().expect("Invalid thread number"))
-            .unwrap(),
-        client_path,
+        init_msg,
     )
-    .expect("Failed to connect to fsyncer");
+    .expect("Failed to connect to client");
+    if need_rsync {
+        builder = builder
+            .rsync(&client_path)
+            .expect("Failed to rsync with server")
+    }
+    let mut client =
+        builder.build().expect("Failed to create server connection");
 
-    println!("Connected to {}", host);
-
-    client.process_ops().expect("Stopped processing ops!");
+    eprintln!("Connected to {}", url);
+    client
+        .process_ops(dispatch_threads, client_path)
+        .expect("Stopped processing ops!");
 }

@@ -26,6 +26,7 @@ extern crate lz4;
 extern crate net2;
 extern crate regex;
 extern crate serde;
+extern crate url;
 extern crate walkdir;
 extern crate zstd;
 
@@ -59,7 +60,7 @@ macro_rules! debug {
                 $(
                     print!(concat!(stringify!($e), "={:?} "), $e);
                 )*
-                println!();
+                eprintln!();
             }
         }
     }
@@ -108,8 +109,8 @@ mod server;
 use std::process::exit;
 
 use clap::{App, AppSettings, Arg, ArgGroup, ErrorKind, SubCommand};
-use client::{client_main, Client};
-use common::{ClientMode, CompMode, InitMsg, Options};
+use client::{client_main, ConnectionBuilder};
+use common::{parse_human_size, ClientMode, CompMode, InitMsg, Options};
 use server::server_main;
 use std::path::Path;
 
@@ -129,7 +130,7 @@ metablock!(cfg(target_os = "windows") {
 extern "C" fn stop_profiler(_: i32) {
     use cpuprofiler::PROFILER;
     PROFILER.lock().unwrap().stop().unwrap();
-    println!("Stopped profiler");
+    eprintln!("Stopped profiler");
     exit(0);
 }
 
@@ -139,7 +140,7 @@ fn start_profiler() {
     use nix::sys::signal;
     PROFILER.lock().unwrap().start("./fsyncd.profile").unwrap();
 
-    println!("Started profiler");
+    eprintln!("Started profiler");
 
     let sig_action = signal::SigAction::new(
         signal::SigHandler::Handler(stop_profiler),
@@ -224,12 +225,6 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("host")
-                .required(true)
-                .takes_value(true)
-                .default_value("localhost"),
-        )
-        .arg(
             Arg::with_name("rt-compressor")
                 .long("rt-compressor")
                 .possible_values(&["default", "chunked", "zstd", "none"])
@@ -288,12 +283,14 @@ fn main() {
         .author("Denis Lavrov <bahus.vel@gmail.com>")
         .about("Filesystem replication daemon")
         .arg(
-            Arg::with_name("port")
-                .short("p")
-                .long("port")
-                .default_value("2323")
-                .help("Port the fsyncer is running on")
-                .takes_value(true),
+            Arg::with_name("url")
+                .required(true)
+                .takes_value(true)
+                .default_value("tcp://localhost:2323")
+                .help(
+                    "Can be tcp://<host>:<port>, unix:<path>, stdio:, server \
+                     binds on this address, client connects",
+                ),
         )
         .arg(
             Arg::with_name("buffer")
@@ -369,7 +366,8 @@ fn main() {
         )
         .subcommand(
             SubCommand::with_name("fakeshell")
-                .arg(Arg::with_name("fd").required(true).takes_value(true))
+                .arg(Arg::with_name("netin").required(true).takes_value(true))
+                .arg(Arg::with_name("netout").required(true).takes_value(true))
                 .arg(
                     Arg::with_name("extra-args")
                         .takes_value(true)
@@ -415,27 +413,24 @@ fn main() {
                     .expect("No destination specified"),
             ))
             .expect("Hash failed");
-            println!("{:x}", hash);
+            eprintln!("{:x}", hash);
         }
         Some("control") => {
+            use url::Url;
             let control_matches =
                 matches.subcommand_matches("control").unwrap();
-            let host =
-                control_matches.value_of("host").expect("No host specified");
-            let port = matches
-                .value_of("port")
-                .map(|v| v.parse().expect("Invalid format for port"))
-                .unwrap();
-            let buffer = matches
-                .value_of("buffer")
-                .and_then(|b| b.parse().ok())
-                .expect("Buffer format incorrect");
+            let buffer_size =
+                parse_human_size(matches.value_of("buffer").unwrap())
+                    .expect("Buffer size format incorrect");
+            let url = Url::parse(matches.value_of("url").unwrap())
+                .expect("Invalid url specified");
 
-            println!("cmd {:?}", control_matches.value_of("cmd"));
+            eprintln!("cmd {:?}", control_matches.value_of("cmd"));
 
-            let mut client = Client::new(
-                host,
-                port,
+            let mut client = ConnectionBuilder::with_url(
+                &url,
+                true,
+                buffer_size,
                 InitMsg {
                     mode: ClientMode::MODE_CONTROL,
                     compress: CompMode::empty(),
@@ -443,19 +438,18 @@ fn main() {
                     iolimit_bps: 0,
                     options: Options::empty(),
                 },
-                buffer,
-                1,
-                std::path::PathBuf::new(),
             )
-            .expect("Failed to initialize client");
+            .expect("Failed to initialize client")
+            .build()
+            .expect("Failed to create server connection");
 
             match control_matches.value_of("cmd").unwrap() {
                 "cork" => {
-                    println!("Corking");
+                    eprintln!("Corking");
                     client.cork_server()
                 }
                 "uncork" => {
-                    println!("Uncorking");
+                    eprintln!("Uncorking");
                     client.uncork_server()
                 }
                 _ => unreachable!(),
@@ -465,18 +459,20 @@ fn main() {
         Some("fakeshell") => {
             use common::rsync::rsync_bridge;
             use std::fs::File;
-            use std::net::TcpStream;
             use std::os::unix::io::FromRawFd;
-            let mut fd = matches
-                .subcommand_matches("fakeshell")
-                .unwrap()
-                .value_of("fd")
+            let matches = matches.subcommand_matches("fakeshell").unwrap();
+            let mut netin = matches
+                .value_of("netin")
+                .map(|v| v.parse().expect("Invalid integer"))
+                .unwrap();
+            let mut netout = matches
+                .value_of("netin")
                 .map(|v| v.parse().expect("Invalid integer"))
                 .unwrap();
             unsafe {
                 rsync_bridge(
-                    TcpStream::from_raw_fd(fd),
-                    TcpStream::from_raw_fd(fd),
+                    File::from_raw_fd(netin),
+                    File::from_raw_fd(netout),
                     File::from_raw_fd(1),
                     File::from_raw_fd(0),
                     true,

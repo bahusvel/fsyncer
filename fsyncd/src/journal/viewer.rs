@@ -81,13 +81,13 @@ pub fn viewer_main(matches: ArgMatches) {
             let verbose = view_matches.is_present("verbose");
             for entry in filtered {
                 match entry.contents() {
-                    EntryContent::Payload(e) => println!(
+                    EntryContent::Payload(e) => eprintln!(
                         "{}\t{}",
                         entry.trans_id(),
                         e.describe(verbose)
                     ),
                     EntryContent::Time(t) => {
-                        println!("{}", DateTime::<Local>::from(*t))
+                        eprintln!("{}", DateTime::<Local>::from(*t))
                     }
                 }
             }
@@ -119,7 +119,7 @@ pub fn viewer_main(matches: ArgMatches) {
                             );
                         }
                     }
-                    EntryContent::Time(t) => println!(
+                    EntryContent::Time(t) => eprintln!(
                         "Replaying events from {}",
                         DateTime::<Local>::from(*t)
                     ),

@@ -13,7 +13,7 @@ fn main() {
         let mut lib = "cargo:rustc-link-search=".to_string();
         lib.push_str(DOKAN_PATH);
         lib.push_str("lib");
-        println!("{}", lib);
+        eprintln!("{}", lib);
         let mut include = DOKAN_PATH.to_string();
         include.push_str("include");
         cc::Build::new()
