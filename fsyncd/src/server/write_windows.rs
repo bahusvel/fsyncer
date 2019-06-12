@@ -397,7 +397,6 @@ pub unsafe extern "stdcall" fn MirrorWriteFile(
             offset,
         })
     };
-
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
         return DokanNtStatusFromWin32(r as u32);

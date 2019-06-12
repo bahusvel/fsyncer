@@ -42,7 +42,7 @@ trait Bilog: XorS {
     fn xor(o: &Self::O, n: &Self::N) -> Self::X;
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String>;
     fn old(
-        Either<&Self::N, &Self::X>,
+        either: Either<&Self::N, &Self::X>,
         fspath: &Path,
     ) -> Result<Self::O, Error<io::Error>>;
 }

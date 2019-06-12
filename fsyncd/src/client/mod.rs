@@ -28,10 +28,10 @@ use url::Url;
 
 pub struct ServerConnection<O: Write + Send + 'static> {
     write: Arc<Mutex<O>>,
-    read: Box<Read>,
+    read: Box<dyn Read>,
     rcv_buf: Vec<u8>,
     mode: ClientMode,
-    rt_comp: Option<Box<Compressor>>,
+    rt_comp: Option<Box<dyn Compressor>>,
 }
 
 fn send_msg<W: Write>(mut write: W, msg: FsyncerMsg) -> Result<(), io::Error> {
@@ -52,7 +52,7 @@ pub struct ConnectionBuilder<
     rsynced: bool,
 }
 
-impl ConnectionBuilder<Box<Read + Send>, Box<Write + Send>> {
+impl ConnectionBuilder<Box<dyn Read + Send>, Box<dyn Write + Send>> {
     pub fn with_url(
         url: &Url,
         nodelay: bool,
@@ -65,14 +65,14 @@ impl ConnectionBuilder<Box<Read + Send>, Box<Write + Send>> {
                 if url.port().is_none() {
                     url.set_port(Some(2323)).unwrap();
                 }
-                let mut stream = trace!(TcpStream::connect(url));
+                let stream = trace!(TcpStream::connect(url));
                 if nodelay {
                     trace!(stream.set_nodelay(true));
                 }
                 trace!(stream.set_recv_buffer_size(buffer_size));
                 (
-                    Box::new(trace!(stream.try_clone())) as Box<Read + Send>,
-                    Box::new(stream) as Box<Write + Send>,
+                    Box::new(trace!(stream.try_clone())) as _,
+                    Box::new(stream) as _,
                 )
             }
             #[cfg(target_family = "unix")]
@@ -80,16 +80,16 @@ impl ConnectionBuilder<Box<Read + Send>, Box<Write + Send>> {
                 use std::os::unix::net::UnixStream;
                 let stream = trace!(UnixStream::connect(url.path()));
                 (
-                    Box::new(trace!(stream.try_clone())) as Box<Read + Send>,
-                    Box::new(stream) as Box<Write + Send>,
+                    Box::new(trace!(stream.try_clone())) as _,
+                    Box::new(stream) as _,
                 )
             }
             "stdio" => {
                 use std::os::unix::io::FromRawFd;
                 unsafe {
                     (
-                        Box::new(File::from_raw_fd(0)) as Box<Read + Send>,
-                        Box::new(File::from_raw_fd(1)) as Box<Write + Send>,
+                        Box::new(File::from_raw_fd(0)) as _,
+                        Box::new(File::from_raw_fd(1)) as _,
                     )
                 }
             }
@@ -143,15 +143,14 @@ impl<I: Read + Send + 'static, O: Write + Send + 'static>
             )
         }
         let reader = if self.init_msg.compress.contains(CompMode::STREAM_ZSTD) {
-            Box::new(trace!(zstd::stream::Decoder::new(self.netin)))
-                as Box<Read>
+            Box::new(trace!(zstd::stream::Decoder::new(self.netin))) as _
         } else if self.init_msg.compress.contains(CompMode::STREAM_LZ4) {
-            Box::new(trace!(lz4::Decoder::new(self.netin))) as Box<Read>
+            Box::new(trace!(lz4::Decoder::new(self.netin))) as _
         } else {
-            Box::new(self.netin) as Box<Read>
+            Box::new(self.netin) as _
         };
 
-        let rt_comp: Option<Box<Compressor>> =
+        let rt_comp: Option<Box<dyn Compressor>> =
             if self.init_msg.compress.contains(CompMode::RT_DSSC_CHUNKED) {
                 Some(Box::new(ChunkMap::new(0.5)))
             } else if self.init_msg.compress.contains(CompMode::RT_DSSC_ZSTD) {
@@ -269,8 +268,7 @@ impl<O: Write + Send + 'static> ServerConnection<O> {
                                     retcode: ClientAck::RetCode(res),
                                     tid,
                                 }),
-                            )
-                            .expect("Failed to send ack");
+                            ).expect("Failed to send ack");
                         }
                     };
                     if let Some(pool) = pool.as_ref() {
@@ -379,8 +377,7 @@ pub fn client_main(matches: ArgMatches) {
         client_matches
             .value_of("mount-path")
             .expect("Destination not specified"),
-    )
-    .canonicalize()
+    ).canonicalize()
     .expect("Failed to normalize path");
 
     eprintln!("Calculating destination hash...");
@@ -401,8 +398,7 @@ pub fn client_main(matches: ArgMatches) {
         init_msg.mode != ClientMode::MODE_ASYNC,
         buffer_size,
         init_msg,
-    )
-    .expect("Failed to connect to client");
+    ).expect("Failed to connect to client");
     if need_rsync {
         builder = builder
             .rsync(&client_path)

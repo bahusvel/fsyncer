@@ -32,20 +32,12 @@ pub fn viewer_main(matches: ArgMatches) {
     };
     let mut j = Journal::open(f, c).expect("Failed to recover journal");
 
-    let iter = if journal_matches.is_present("reverse") {
+    let iter: Box<
+        dyn Iterator<Item = Result<StoreEntry<BilogEntry>, Error<io::Error>>>,
+    > = if journal_matches.is_present("reverse") {
         Box::new(j.read_reverse())
-            as Box<
-                Iterator<
-                    Item = Result<StoreEntry<BilogEntry>, Error<io::Error>>,
-                >,
-            >
     } else {
         Box::new(j.read_forward())
-            as Box<
-                Iterator<
-                    Item = Result<StoreEntry<BilogEntry>, Error<io::Error>>,
-                >,
-            >
     };
 
     let filter = journal_matches

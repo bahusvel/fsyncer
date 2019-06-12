@@ -2,7 +2,6 @@
 #![feature(const_string_new)]
 #![feature(test)]
 #![feature(concat_idents)]
-#![cfg_attr(target_family = "unix", feature(rw_exact_all_at))]
 
 #[cfg(feature = "profile")]
 extern crate cpuprofiler;
@@ -164,57 +163,48 @@ fn main() {
                 .help("Mount path for the daemon")
                 .required(true)
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("journal")
                 .long("journal")
                 .takes_value(true)
                 .default_value("off")
                 .possible_values(&["bilog", "off"]),
-        )
-        .arg(Arg::with_name("journal-sync").long("journal-sync"))
+        ).arg(Arg::with_name("journal-sync").long("journal-sync"))
         .arg(
             Arg::with_name("journal-path")
                 .long("journal-path")
                 .takes_value(true)
                 .default_value("test.fj")
                 .required_ifs(&[("bilog", "journal"), ("undo", "journal")]),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("journal-size")
                 .long("journal-size")
                 .takes_value(true)
                 .default_value("1024M"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("dont-check")
                 .long("dont-check")
                 .help("Disables comparison of the source and destination"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("backing-store")
                 .short("b")
                 .long("backing-store")
                 .help(
                     "Explicitly specifies which directory server should use \
                      to store files",
-                )
-                .takes_value(true),
-        )
-        .arg(
+                ).takes_value(true),
+        ).arg(
             Arg::with_name("diff-writes")
                 .long("diff-writes")
                 .help("Performs delta compression on overlapping writes"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("flush-interval")
                 .long("flush-interval")
                 .default_value("1")
                 .help(
                     "Sets the interval in seconds for periodic flush for \
                      synchronous clients, 0 disables flushing altogether",
-                )
-                .takes_value(true),
+                ).takes_value(true),
         );
 
     let client = SubCommand::with_name("client")
@@ -223,16 +213,14 @@ fn main() {
                 .help("Mount path for the daemon")
                 .required(true)
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("rt-compressor")
                 .long("rt-compressor")
                 .possible_values(&["default", "chunked", "zstd", "none"])
                 .default_value("none")
                 .help("Discrete compression method to use")
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("stream-compressor")
                 .long("stream-compressor")
                 .possible_values(&["default", "zstd", "lz4", "none"])
@@ -241,28 +229,24 @@ fn main() {
                 .default_value("default")
                 .help("Stream compression method to use")
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("sync")
                 .short("s")
                 .long("sync")
                 .possible_values(&["sync", "async", "semi", "flush"])
                 .default_value("async")
                 .help("Selects replication mode"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("threads")
                 .short("t")
                 .long("threads")
                 .takes_value(true)
                 .default_value("1")
                 .help("Sets number of dispatch threads"),
-        )
-        .arg(Arg::with_name("rsync").long("rsync").help(
+        ).arg(Arg::with_name("rsync").long("rsync").help(
             "Do initial replication using rsync, NOTE: rsync must be present \
              in path",
-        ))
-        .arg(
+        )).arg(
             Arg::with_name("iolimit")
                 .long("iolimit")
                 .help("Restricts network transmission, 0 means unlimited")
@@ -291,28 +275,24 @@ fn main() {
                     "Can be tcp://<host>:<port>, unix:<path>, stdio:, server \
                      binds on this address, client connects",
                 ),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("buffer")
                 .long("buffer")
                 .default_value("1M")
                 .help("TX/RX buffer size")
                 .takes_value(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("debug")
                 .long("debug")
                 .help("Enables debug output"),
-        )
-        .subcommand(client)
+        ).subcommand(client)
         .subcommand(server)
         .subcommand(
             SubCommand::with_name("journal")
                 .subcommand(
                     SubCommand::with_name("view")
                         .arg(Arg::with_name("verbose").long("verbose")),
-                )
-                .subcommand(
+                ).subcommand(
                     SubCommand::with_name("replay").arg(
                         Arg::with_name("backing-store")
                             .short("b")
@@ -320,39 +300,33 @@ fn main() {
                             .help(
                                 "Explicitly specifies which directory server \
                                  should use to store files",
-                            )
-                            .takes_value(true)
+                            ).takes_value(true)
                             .required(true),
                     ),
-                )
-                .arg(
+                ).arg(
                     Arg::with_name("journal-path")
                         .long("journal-path")
                         .short("j")
                         .takes_value(true)
                         .default_value("test.fj")
                         .required(true),
-                )
-                .arg(Arg::with_name("reverse").long("reverse").short("r"))
+                ).arg(Arg::with_name("reverse").long("reverse").short("r"))
                 .arg(
                     Arg::with_name("filter")
                         .long("filter")
                         .short("f")
                         .takes_value(true),
-                )
-                .arg(
+                ).arg(
                     Arg::with_name("inverse-filter").long("inverse").short("i"),
                 ),
-        )
-        .subcommand(
+        ).subcommand(
             SubCommand::with_name("checksum").arg(
                 Arg::with_name("mount-path")
                     .help("Mount path for the daemon")
                     .required(true)
                     .takes_value(true),
             ),
-        )
-        .subcommand(
+        ).subcommand(
             SubCommand::with_name("control")
                 .group(ArgGroup::with_name("cmd").required(true))
                 .arg(
@@ -360,11 +334,9 @@ fn main() {
                         .required(true)
                         .takes_value(true)
                         .default_value("localhost"),
-                )
-                .arg(Arg::with_name("cork").group("cmd"))
+                ).arg(Arg::with_name("cork").group("cmd"))
                 .arg(Arg::with_name("uncork").group("cmd")),
-        )
-        .subcommand(
+        ).subcommand(
             SubCommand::with_name("fakeshell")
                 .arg(Arg::with_name("netin").required(true).takes_value(true))
                 .arg(Arg::with_name("netout").required(true).takes_value(true))
@@ -372,10 +344,8 @@ fn main() {
                     Arg::with_name("extra-args")
                         .takes_value(true)
                         .multiple(true),
-                )
-                .settings(&[AppSettings::TrailingVarArg, AppSettings::Hidden]),
-        )
-        .get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
+                ).settings(&[AppSettings::TrailingVarArg, AppSettings::Hidden]),
+        ).get_matches_from_safe(std::env::args().take_while(|v| v != "--"))
         .unwrap_or_else(|e| match e.kind {
             ErrorKind::HelpDisplayed => {
                 eprintln!("{}", e);
@@ -411,8 +381,7 @@ fn main() {
                 matches
                     .value_of("mount-path")
                     .expect("No destination specified"),
-            ))
-            .expect("Hash failed");
+            )).expect("Hash failed");
             eprintln!("{:x}", hash);
         }
         Some("control") => {
@@ -438,8 +407,7 @@ fn main() {
                     iolimit_bps: 0,
                     options: Options::empty(),
                 },
-            )
-            .expect("Failed to initialize client")
+            ).expect("Failed to initialize client")
             .build()
             .expect("Failed to create server connection");
 
@@ -453,19 +421,18 @@ fn main() {
                     client.uncork_server()
                 }
                 _ => unreachable!(),
-            }
-            .expect("Failed to execute command server");
+            }.expect("Failed to execute command server");
         }
         Some("fakeshell") => {
             use common::rsync::rsync_bridge;
             use std::fs::File;
             use std::os::unix::io::FromRawFd;
             let matches = matches.subcommand_matches("fakeshell").unwrap();
-            let mut netin = matches
+            let netin = matches
                 .value_of("netin")
                 .map(|v| v.parse().expect("Invalid integer"))
                 .unwrap();
-            let mut netout = matches
+            let netout = matches
                 .value_of("netout")
                 .map(|v| v.parse().expect("Invalid integer"))
                 .unwrap();
@@ -476,8 +443,7 @@ fn main() {
                     File::from_raw_fd(1),
                     File::from_raw_fd(0),
                     true,
-                )
-                .unwrap();
+                ).unwrap();
             };
         }
         _ => panic!("you must provide a command"),

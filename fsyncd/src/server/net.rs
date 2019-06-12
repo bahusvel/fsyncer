@@ -14,7 +14,6 @@ struct NagleFlush(TcpStream);
 impl Write for NagleFlush {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         use libc::*;
-        use std::os::unix::io::AsRawFd;
         let res = unsafe {
             send(
                 self.0.as_raw_fd(),
@@ -31,7 +30,6 @@ impl Write for NagleFlush {
     fn flush(&mut self) -> Result<(), Error> {
         use libc::*;
         use std::mem;
-        use std::os::unix::io::AsRawFd;
         let optval = 0;
         unsafe {
             setsockopt(
@@ -78,14 +76,14 @@ pub trait Listener: Send {
     fn accept(
         &self,
         buffer_size: usize,
-    ) -> Result<(Box<MyRead>, Box<MyWrite>, String), Error>;
+    ) -> Result<(Box<dyn MyRead>, Box<dyn MyWrite>, String), Error>;
 }
 
 impl Listener for TcpListener {
     fn accept(
         &self,
         buffer_size: usize,
-    ) -> Result<(Box<MyRead>, Box<MyWrite>, String), Error> {
+    ) -> Result<(Box<dyn MyRead>, Box<dyn MyWrite>, String), Error> {
         let (stream, addr) = self.accept()?;
         stream.set_send_buffer_size(buffer_size)?;
         Ok((
@@ -100,7 +98,7 @@ impl Listener for UnixListener {
     fn accept(
         &self,
         _buffer_size: usize,
-    ) -> Result<(Box<MyRead>, Box<MyWrite>, String), Error> {
+    ) -> Result<(Box<dyn MyRead>, Box<dyn MyWrite>, String), Error> {
         let (stream, addr) = self.accept()?;
         Ok((
             Box::new(stream.try_clone()?) as _,

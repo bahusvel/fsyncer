@@ -30,8 +30,8 @@ pub enum ClientStatus {
 }
 
 struct ClientNetwork {
-    write: Box<Write + Send>,
-    rt_comp: Option<Box<Compressor>>,
+    write: Box<dyn Write + Send>,
+    rt_comp: Option<Box<dyn Compressor>>,
     // TODO remvoe this hashmap and use an array
     parked: HashMap<u64, Arc<ClientResponse<ClientAck>>>,
     status: ClientStatus,
@@ -79,8 +79,8 @@ impl<T> ClientResponse<T> {
 
 impl Client {
     pub fn from_stream(
-        mut netin: Box<MyRead>,
-        netout: Box<MyWrite>,
+        mut netin: Box<dyn MyRead>,
+        netout: Box<dyn MyWrite>,
         dontcheck: bool,
     ) -> Result<Self, Error<io::Error>> {
         let init = match Client::read_msg(&mut netin) {
@@ -138,7 +138,7 @@ impl Client {
             Box::new(limiter) as _
         };
 
-        let rt_comp: Option<Box<Compressor>> =
+        let rt_comp: Option<Box<dyn Compressor>> =
             if init.compress.contains(CompMode::RT_DSSC_CHUNKED) {
                 Some(Box::new(ChunkMap::new(0.5)))
             } else if init.compress.contains(CompMode::RT_DSSC_ZSTD) {
@@ -201,7 +201,7 @@ impl Client {
         loop {
             match Client::read_msg(&mut read) {
                 Ok(FsyncerMsg::AckCork(tid)) => {
-                    let mut netlock = net.lock().unwrap();
+                    let netlock = net.lock().unwrap();
                     netlock.parked.get(&tid).map(|t| {
                         assert!(Arc::strong_count(t) <= 2);
                         t.notify(ClientAck::Ack)
@@ -286,14 +286,17 @@ impl Client {
             Ok(())
         }
 
-        let size = trace!(serialized_size(&msg_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)))
-            as usize;
+        let size = trace!(
+            serialized_size(&msg_data)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        ) as usize;
 
         let mut serbuf = Vec::with_capacity(size);
 
-        trace!(serialize_into(&mut serbuf, &msg_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
+        trace!(
+            serialize_into(&mut serbuf, &msg_data)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        );
 
         //eprintln!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
         let mut net = self.net.lock().unwrap();

@@ -5,6 +5,8 @@ extern crate crc;
 
 mod bilog;
 mod filestore;
+mod forward;
+mod snapshot;
 mod store;
 mod viewer;
 

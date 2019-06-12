@@ -239,11 +239,44 @@ pub unsafe extern "C" fn do_write(
     offset: off_t,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::write(write {
-        path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
-        buf: Cow::Borrowed(slice::from_raw_parts(buf, size)),
-        offset,
-    });
+    use server::DIFF_WRITES;
+    let cpath = CStr::from_ptr(path).to_path();
+    let new_buf = slice::from_raw_parts(buf, size);
+    let call = if DIFF_WRITES {
+        let file = std::fs::File::from_raw_fd((*fi).fh as c_int);
+        use std::os::unix::fs::FileExt;
+        use std::os::unix::io::FromRawFd;
+        let mut old_buf = Vec::with_capacity(size);
+        old_buf.set_len(size);
+        let res = file.read_at(&mut old_buf[..], offset as u64);
+        std::mem::forget(file);
+        match res {
+            Ok(0) | Err(_) => {
+                // Optimisation, there is no overlap, or:
+                // Cannot perform diff write, file may not be readable
+                VFSCall::write(write {
+                    path: Cow::Borrowed(cpath),
+                    buf: Cow::Borrowed(new_buf),
+                    offset,
+                })
+            }
+            Ok(diff_len) => {
+                xor_buf(&mut old_buf[..diff_len], &new_buf[..diff_len]);
+                old_buf[diff_len..].copy_from_slice(&new_buf[diff_len..]);
+                VFSCall::diff_write(write {
+                    path: Cow::Borrowed(cpath),
+                    buf: Cow::Owned(old_buf),
+                    offset,
+                })
+            }
+        }
+    } else {
+        VFSCall::write(write {
+            path: Cow::Borrowed(cpath),
+            buf: Cow::Borrowed(new_buf),
+            offset,
+        })
+    };
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
         return r;
