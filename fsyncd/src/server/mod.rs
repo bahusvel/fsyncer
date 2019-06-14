@@ -9,12 +9,13 @@ metablock!(cfg(target_family = "unix") {
     mod read_unix;
     mod write_unix;
     use self::fusemain::fuse_main;
-    use journal::{BilogEntry, Journal, JournalConfig, JournalEntry};
+    use journal::{BilogEntry, Journal, JournalConfig, JournalType};
     use std::{env, ffi::CString};
     use std::fs::OpenOptions;
     use libc::c_char;
     pub use self::read_unix::CONST_RENAMEAT2;
     static mut JOURNAL: Option<Mutex<Journal>> = None;
+    static mut JOURNAL_TYPE: JournalType = JournalType::Invalid;
     use std::os::unix::net::UnixListener;
 });
 
@@ -181,20 +182,39 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
         if unsafe { JOURNAL.is_none() } {
             return opref;
         }
-        //eprintln!("writing journal event {:?}", call);
-        let bilog = BilogEntry::from_vfscall(call, unsafe {
-            &SERVER_PATH.as_ref().unwrap()
-        }).expect("Failed to generate journal entry from vfscall");
-        {
-            // Reduce the time journal lock is held
-            let mut j = unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
-            j.write_entry(&bilog)
-                .expect("Failed to write journal entry");
-        }
 
-        if is_variant!(bilog, BilogEntry::filestore, struct) {
-            // Bypass real unlink when using filestore
-            opref.ret = Some(0);
+        //eprintln!("writing journal event {:?}", call);
+
+        use std::convert::TryFrom;
+        match unsafe { JOURNAL_TYPE } {
+            JournalType::Bilog => {
+                let bilog = BilogEntry::try_from((call, unsafe {
+                    &SERVER_PATH.as_ref().unwrap() as &Path
+                }))
+                .expect("Failed to generate journal entry from vfscall");
+                if is_variant!(bilog, BilogEntry::filestore, struct) {
+                    // Bypass real unlink when using filestore
+                    opref.ret = Some(0);
+                }
+                {
+                    // Reduce the time journal lock is held
+                    let mut j =
+                        unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
+                    j.write_entry(&bilog)
+                        .expect("Failed to write journal entry");
+                }
+            }
+            JournalType::Forward => {
+                {
+                    // Reduce the time journal lock is held
+                    let mut j =
+                        unsafe { JOURNAL.as_ref().unwrap() }.lock().unwrap();
+                    j.write_entry(call).expect("Failed to write journal entry");
+                }
+            }
+            _ => panic!("Cannot generate entries of type {:?}", unsafe {
+                JOURNAL_TYPE
+            }),
         }
     }
     opref
@@ -271,7 +291,8 @@ fn figure_out_paths(
                         } else {
                             false
                         }
-                    }).next()
+                    })
+                    .next()
                     .is_some();
             }
         }
@@ -286,10 +307,8 @@ fn figure_out_paths(
                 "Backing path does not exist",
             )));
         }
-        trace!(
-            PathBuf::from(matches.value_of("backing-store").unwrap())
-                .canonicalize()
-        )
+        trace!(PathBuf::from(matches.value_of("backing-store").unwrap())
+            .canonicalize())
     } else {
         // Implictly inferring backing store
         mount_path.with_file_name(format!(
@@ -308,15 +327,12 @@ fn figure_out_paths(
             && check_mount(mount_path.to_str().unwrap())?
         {
             trace!(fs::create_dir_all(&mount_path));
-            let res = trace!(
-                trace!(
-                    Command::new("mount")
-                        .arg("--move")
-                        .arg(matches.value_of("mount-path").unwrap())
-                        .arg(backing_store.to_str().unwrap())
-                        .spawn()
-                ).wait()
-            );
+            let res = trace!(trace!(Command::new("mount")
+                .arg("--move")
+                .arg(matches.value_of("mount-path").unwrap())
+                .arg(backing_store.to_str().unwrap())
+                .spawn())
+            .wait());
             if !res.success() {
                 trace!(Err(io::Error::new(
                     ErrorKind::Other,
@@ -385,13 +401,11 @@ fn open_journal(
     c: JournalConfig,
 ) -> Result<Journal, Error<io::Error>> {
     let exists = Path::new(path).exists();
-    let f = trace!(
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(path)
-    );
+    let f = trace!(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(path));
 
     if exists {
         if f.metadata()
@@ -410,11 +424,11 @@ fn open_journal(
 }
 
 pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
+    let server_matches = matches.subcommand_matches("server").unwrap();
     use url::Url;
     // Parse args
-    let url = Url::parse(matches.value_of("url").unwrap())
+    let url = Url::parse(server_matches.value_of("url").unwrap())
         .expect("Invalid url specified");
-    let server_matches = matches.subcommand_matches("server").unwrap();
     #[cfg(target_os = "windows")]
     unsafe {
         if AddPrivileges() == 0 {
@@ -442,8 +456,9 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
     }
 
     let dont_check = server_matches.is_present("dont-check");
-    let buffer_size = parse_human_size(matches.value_of("buffer").unwrap())
-        .expect("Buffer format incorrect");
+    let buffer_size =
+        parse_human_size(server_matches.value_of("buffer").unwrap())
+            .expect("Buffer format incorrect");
 
     // Network
 
@@ -496,7 +511,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
         otherwise => panic!("Scheme {} is not supported", otherwise),
     };
 
-    // Fs proxying
+    // Journal
 
     #[cfg(target_family = "unix")]
     {
@@ -505,29 +520,41 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
                 .expect("Invalid format for journal-size");
         let journal_sync = server_matches.is_present("journal-sync");
 
-        match server_matches.value_of("journal").unwrap() {
-            "bilog" => {
-                let journal_path = server_matches
-                    .value_of("journal-path")
-                    .expect("Journal path must be set in bilog mode");
+        if server_matches.value_of("journal").unwrap() != "off" {
+            let journal_path = server_matches
+                .value_of("journal-path")
+                .expect("Journal path must be set if journaling is enabled");
 
-                let c = JournalConfig {
-                    journal_size: journal_size as u64,
-                    sync: journal_sync,
-                    vfsroot: unsafe { SERVER_PATH.as_ref().unwrap().clone() },
-                    filestore_size: 1024 * 1024 * 1024,
-                };
-                unsafe {
-                    JOURNAL = Some(Mutex::new(
-                        open_journal(journal_path, c)
-                            .expect("Failed to open journal"),
-                    ))
-                }
+            let journal_type = match server_matches.value_of("journal").unwrap()
+            {
+                "bilog" => JournalType::Bilog,
+                "forward" => JournalType::Forward,
+                "undo" => JournalType::Undo,
+                _ => unreachable!(),
+            };
+
+            unsafe { JOURNAL_TYPE = journal_type };
+
+            let c = JournalConfig {
+                journal_size: journal_size as u64,
+                sync: journal_sync,
+                journal_type,
+                vfsroot: unsafe { SERVER_PATH.as_ref().unwrap().clone() },
+                filestore_size: 1024 * 1024 * 1024,
+            };
+            unsafe {
+                JOURNAL = Some(Mutex::new(
+                    open_journal(journal_path, c)
+                        .expect("Failed to open journal"),
+                ))
             }
-            "off" => {}
-            _ => panic!("Unknown journal type"),
         }
+    }
 
+    // Fs proxying
+
+    #[cfg(target_family = "unix")]
+    {
         // Fuse args parsing
         let args = vec![
             "fsyncd".to_string(),
@@ -536,7 +563,8 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
                     .to_str()
                     .expect("Mount path is not a valid string"),
             ),
-        ].into_iter()
+        ]
+        .into_iter()
         .chain(env::args().skip_while(|v| v != "--").skip(1))
         .map(|arg| CString::new(arg).unwrap())
         .collect::<Vec<CString>>();

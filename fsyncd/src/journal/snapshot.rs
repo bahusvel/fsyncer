@@ -37,11 +37,17 @@ enum FileType {
     Moved(PathBuf),
 }
 
+enum FileSize {
+    Unknown,
+    MoreThan(u64),
+    Exactly(u64),
+}
+
 struct File {
     uid: Option<u32>,
     gid: Option<u32>,
     mode: Option<u32>,
-    size: Option<usize>,
+    size: FileSize,
     xattrs: Option<HashMap<Vec<u8>, Option<Vec<u8>>>>,
     time: Option<[enc_timespec; 3]>,
     ty: FileType,
@@ -54,7 +60,7 @@ impl Default for File {
             uid: None,
             gid: None,
             mode: None,
-            size: None,
+            size: FileSize::Unknown,
             xattrs: None,
             time: None,
             ty: FileType::Invalid,
@@ -63,7 +69,7 @@ impl Default for File {
     }
 }
 
-struct Snapshot {
+pub struct Snapshot {
     files: HashMap<PathBuf, File>,
     serialised: fs::File,
     free_list: BTreeMap<u64, usize>,
@@ -81,14 +87,6 @@ macro_rules! set_fields {
     };
 }
 
-struct ReverseIterator<T: DoubleEndedIterator>(T);
-impl<T: DoubleEndedIterator> Iterator for ReverseIterator<T> {
-    type Item = T::Item;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_back()
-    }
-}
-
 fn move_file_range(
     file: &mut fs::File,
     from: u64,
@@ -96,7 +94,7 @@ fn move_file_range(
     size: usize,
 ) -> Result<(), Error> {
     use std::cmp::min;
-    const BUF_SIZE: usize = 4096;
+    const BUF_SIZE: usize = 16 * 1024;
     let mut buf = [0; BUF_SIZE];
     for offset in (from..from + size as u64).step_by(BUF_SIZE) {
         let len = min(from as usize + size - offset as usize, BUF_SIZE);
@@ -186,16 +184,16 @@ impl Snapshot {
 
         // Previous file data ranges that overlap this write, rust is very
         // elegant here.
-        let overlaps: Vec<(usize, Block)> = ReverseIterator(
-            file.data
-                .as_mut()
-                .expect("Cannot encode write when there is no data")
-                .0
-                .range(..offset + buff.len()),
-        )
-        .take_while(|(k, v)| *k + v.size > offset)
-        .map(|(k, v)| (*k, *v))
-        .collect();
+        let overlaps: Vec<(usize, Block)> = file
+            .data
+            .as_mut()
+            .expect("Cannot encode write when there is no data")
+            .0
+            .range(..offset + buff.len())
+            .rev()
+            .take_while(|(k, v)| *k + v.size > offset)
+            .map(|(k, v)| (*k, *v))
+            .collect();
 
         if overlaps.len() == 0 {
             // No overlap simply allocate from free_list and write
@@ -393,16 +391,60 @@ impl Snapshot {
                     self.get_or_open(&path).mode = Some(mode);
                 }
                 VFSCall::truncate(truncate { path, size }) => {
-                    self.get_or_open(&path).size = Some(size as usize);
-                    // TODO delete any data past the size offset
+                    let file = self.get_or_open(&path);
+                    file.size = FileSize::Exactly(size as u64);
+                    //let t: Vec<(u64, usize)> = Vec::new();
+                    let mut dealloc = Vec::new();
+                    if let Some(ref mut d) = file.data {
+                        let delete: Vec<usize> =
+                            d.0.range(size as usize..)
+                                .map(|(k, _)| *k)
+                                .collect();
+                        for offset in delete {
+                            let block = d.0.remove(&offset).unwrap();
+                            dealloc.push((block.location, block.size));
+                        }
+                        d.0.iter_mut().next_back().map_or(
+                            {},
+                            |(offset, block)| {
+                                if offset + block.size > size as usize {
+                                    let dealloc_size =
+                                        offset + block.size - size as usize;
+                                    dealloc.push((
+                                        block.location
+                                            + (block.size - dealloc_size)
+                                                as u64,
+                                        dealloc_size,
+                                    ));
+                                    block.size -= dealloc_size;
+                                }
+                            },
+                        );
+                    }
+                    for (offset, size) in dealloc {
+                        self.deallocate(offset, size);
+                    }
                 }
                 VFSCall::fallocate(fallocate {
                     path,
-                    mode,
                     offset,
                     length,
+                    ..
                 }) => {
-                    // TODO implement snapshot for fallocate
+                    let size = &mut self.get_or_open(&path).size;
+                    let nsize = (offset + length) as u64;
+                    // This is only valid for posix_fallocate which basically
+                    // only extends the file.
+                    match size {
+                        FileSize::Exactly(s) if *s < nsize => {
+                            *size = FileSize::Exactly(nsize)
+                        }
+                        FileSize::MoreThan(s) if *s < nsize => {
+                            *size = FileSize::MoreThan(nsize)
+                        }
+                        FileSize::Unknown => *size = FileSize::MoreThan(nsize),
+                        FileSize::Exactly(_) | FileSize::MoreThan(_) => {}
+                    }
                 }
                 VFSCall::write(write { path, buf, offset })
                 | VFSCall::diff_write(write { path, buf, offset }) => {

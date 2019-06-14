@@ -157,18 +157,41 @@ pub static mut DEBUG: bool = false;
 const VERSION: &str = env!("VERSION");
 
 fn main() {
+    let client_and_server_args = &[
+        Arg::with_name("mount-path")
+            .help("Mount path for the daemon")
+            .required(true)
+            .takes_value(true),
+        Arg::with_name("rsync").long("rsync").help(
+            "Do initial replication using rsync, NOTE: rsync must be present \
+             in path",
+        ),
+    ];
+    let net_args = &[
+        Arg::with_name("url")
+            .required(true)
+            .takes_value(true)
+            .default_value("tcp://localhost:2323")
+            .help(
+                "Can be tcp://<host>:<port>, unix:<path>, stdio:, server \
+                 binds on this address, client connects",
+            ),
+        Arg::with_name("buffer")
+            .long("buffer")
+            .default_value("1M")
+            .help("TX/RX buffer size")
+            .takes_value(true),
+    ];
+
     let server = SubCommand::with_name("server")
+        .args(client_and_server_args)
+        .args(net_args)
         .arg(
-            Arg::with_name("mount-path")
-                .help("Mount path for the daemon")
-                .required(true)
-                .takes_value(true),
-        ).arg(
             Arg::with_name("journal")
                 .long("journal")
                 .takes_value(true)
                 .default_value("off")
-                .possible_values(&["bilog", "off"]),
+                .possible_values(&["bilog", "forward", "off"]),
         ).arg(Arg::with_name("journal-sync").long("journal-sync"))
         .arg(
             Arg::with_name("journal-path")
@@ -208,12 +231,9 @@ fn main() {
         );
 
     let client = SubCommand::with_name("client")
+        .args(client_and_server_args)
+        .args(net_args)
         .arg(
-            Arg::with_name("mount-path")
-                .help("Mount path for the daemon")
-                .required(true)
-                .takes_value(true),
-        ).arg(
             Arg::with_name("rt-compressor")
                 .long("rt-compressor")
                 .possible_values(&["default", "chunked", "zstd", "none"])
@@ -243,10 +263,7 @@ fn main() {
                 .takes_value(true)
                 .default_value("1")
                 .help("Sets number of dispatch threads"),
-        ).arg(Arg::with_name("rsync").long("rsync").help(
-            "Do initial replication using rsync, NOTE: rsync must be present \
-             in path",
-        )).arg(
+        ).arg(
             Arg::with_name("iolimit")
                 .long("iolimit")
                 .help("Restricts network transmission, 0 means unlimited")
@@ -262,26 +279,20 @@ fn main() {
              domain controller",
         ));
 
+    let view_and_replay_args = &[
+        Arg::with_name("reverse").long("reverse").short("r"),
+        Arg::with_name("filter")
+            .long("filter")
+            .short("f")
+            .takes_value(true),
+        Arg::with_name("invert-filter").long("invert").short("i"),
+    ];
+
     let matches = App::new("Fsyncer Replication Daemon")
         .version(VERSION)
         .author("Denis Lavrov <bahus.vel@gmail.com>")
         .about("Filesystem replication daemon")
         .arg(
-            Arg::with_name("url")
-                .required(true)
-                .takes_value(true)
-                .default_value("tcp://localhost:2323")
-                .help(
-                    "Can be tcp://<host>:<port>, unix:<path>, stdio:, server \
-                     binds on this address, client connects",
-                ),
-        ).arg(
-            Arg::with_name("buffer")
-                .long("buffer")
-                .default_value("1M")
-                .help("TX/RX buffer size")
-                .takes_value(true),
-        ).arg(
             Arg::with_name("debug")
                 .long("debug")
                 .help("Enables debug output"),
@@ -289,41 +300,40 @@ fn main() {
         .subcommand(server)
         .subcommand(
             SubCommand::with_name("journal")
-                .subcommand(
-                    SubCommand::with_name("view")
-                        .arg(Arg::with_name("verbose").long("verbose")),
-                ).subcommand(
-                    SubCommand::with_name("replay").arg(
-                        Arg::with_name("backing-store")
-                            .short("b")
-                            .long("backing-store")
-                            .help(
-                                "Explicitly specifies which directory server \
-                                 should use to store files",
-                            ).takes_value(true)
-                            .required(true),
-                    ),
-                ).arg(
+                .arg(
                     Arg::with_name("journal-path")
-                        .long("journal-path")
-                        .short("j")
                         .takes_value(true)
                         .default_value("test.fj")
                         .required(true),
-                ).arg(Arg::with_name("reverse").long("reverse").short("r"))
-                .arg(
-                    Arg::with_name("filter")
-                        .long("filter")
-                        .short("f")
-                        .takes_value(true),
-                ).arg(
-                    Arg::with_name("inverse-filter").long("inverse").short("i"),
+                ).subcommand(
+                    SubCommand::with_name("view")
+                        .arg(Arg::with_name("verbose").long("verbose"))
+                        .args(view_and_replay_args),
+                ).subcommand(
+                    SubCommand::with_name("replay")
+                        .arg(
+                            Arg::with_name("backing-store")
+                                .short("b")
+                                .long("backing-store")
+                                .help(
+                                    "Specifies the directory to replay \
+                                     journal to",
+                                ).takes_value(true)
+                                .required(true),
+                        ).args(view_and_replay_args),
+                ).subcommand(
+                    SubCommand::with_name("flatten").arg(
+                        Arg::with_name("snapshot-path")
+                            .required(true)
+                            .takes_value(true),
+                    ),
                 ),
         ).subcommand(
             SubCommand::with_name("checksum").arg(
                 Arg::with_name("mount-path")
-                    .help("Mount path for the daemon")
+                    .help("Path to compute checksum of")
                     .required(true)
+                    .multiple(true)
                     .takes_value(true),
             ),
         ).subcommand(

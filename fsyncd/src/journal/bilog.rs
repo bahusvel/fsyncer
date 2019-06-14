@@ -107,19 +107,11 @@ macro_rules! hash_crc32 {
     }
 }
 
-
-impl<'a> JournalEntry<'a> for BilogEntry {
-    fn journal(mut self, j: &mut Journal) -> Result<(), Error<io::Error>> {
-        if let BilogEntry::filestore { path, .. } = self {
-            let token = trace!(FileStore::store(j, &path));
-            self = BilogEntry::filestore { path, token }
-        }
-        j.write_entry(self)
-    }
-    fn from_vfscall(
-        call: &VFSCall,
-        fspath: &Path,
-    ) -> Result<Self, Error<io::Error>> {
+impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
+    type Error = Error<io::Error>;
+    fn try_from(
+        (call, fspath): (&VFSCall, &Path),
+    ) -> Result<Self, Self::Error> {
         Ok(match call {
             VFSCall::mknod(mknod {
                 path,
@@ -277,6 +269,16 @@ impl<'a> JournalEntry<'a> for BilogEntry {
             VFSCall::fsync(_) => panic!("Not an IO call"),
             _ => panic!("Not implemented"),
         })
+    }
+}
+
+impl JournalEntry<'_> for BilogEntry {
+    fn journal(mut self, j: &mut Journal) -> Result<(), Error<io::Error>> {
+        if let BilogEntry::filestore { path, .. } = self {
+            let token = trace!(FileStore::store(j, &path));
+            self = BilogEntry::filestore { path, token }
+        }
+        j.write_entry(self)
     }
     fn describe(&self, detail: bool) -> String {
         if detail {

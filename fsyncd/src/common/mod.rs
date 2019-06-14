@@ -181,32 +181,6 @@ pub enum VFSCall<'a> {
     security(security<'a>), //chown on linux
 }
 
-impl<'a> VFSCall<'a> {
-    pub fn primary_path(&self) -> &Path {
-        match self {
-            VFSCall::chmod(c) => &c.path,
-            VFSCall::security(c) => &c.path,
-            VFSCall::utimens(c) => &c.path,
-            VFSCall::rename(c) => &c.from,
-            VFSCall::mkdir(c) => &c.path,
-            VFSCall::rmdir(c) => &c.path,
-            VFSCall::symlink(c) => &c.to,
-            VFSCall::link(c) => &c.to,
-            VFSCall::mknod(c) => &c.path,
-            VFSCall::unlink(c) => &c.path,
-            VFSCall::create(c) => &c.path,
-            VFSCall::truncate(c) => &c.path,
-            VFSCall::write(c) => &c.path,
-            VFSCall::diff_write(c) => &c.path,
-            VFSCall::fallocate(c) => &c.path,
-            VFSCall::setxattr(c) => &c.path,
-            VFSCall::removexattr(c) => &c.path,
-            VFSCall::fsync(c) => &c.path,
-            VFSCall::truncating_write { write: c, .. } => &c.path,
-        }
-    }
-}
-
 pub fn translate_path(path: &Path, root: &Path) -> PathBuf {
     root.join(if path.starts_with("/") {
         path.strip_prefix("/").unwrap()

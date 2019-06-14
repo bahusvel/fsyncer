@@ -9,8 +9,7 @@ use std::{fs::OpenOptions, io::Read};
 use bincode::{deserialize, deserialize_from, serialize_into, serialized_size};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use error::{Error, FromError};
-use journal::crc32;
-use journal::filestore::FileStore;
+use journal::{crc32, filestore::FileStore, JournalType};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::File;
@@ -26,7 +25,8 @@ lazy_static! {
     static ref HEADER_SIZE: u64 = serialized_size(&JournalHeader {
         tail: 0,
         head: 0,
-        trans_ctr: 0
+        trans_ctr: 0,
+        ty: JournalType::Invalid,
     })
     .unwrap();
 }
@@ -36,6 +36,7 @@ struct JournalHeader {
     tail: u64,
     head: u64,
     trans_ctr: u32,
+    ty: JournalType,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -59,6 +60,9 @@ impl<T> StoreEntry<T> {
     pub fn contents(&self) -> &EntryContent<T> {
         &self.inner
     }
+    pub fn take_content(self) -> EntryContent<T> {
+        self.inner
+    }
 }
 
 pub struct JournalConfig {
@@ -66,6 +70,7 @@ pub struct JournalConfig {
     pub journal_size: u64,
     pub filestore_size: u64,
     pub vfsroot: PathBuf,
+    pub journal_type: JournalType,
 }
 
 pub struct Journal {
@@ -239,17 +244,12 @@ where
 
 impl Journal {
     pub fn new(file: File, c: JournalConfig) -> Result<Self, Error<io::Error>> {
-        let JournalConfig {
-            sync,
-            filestore_size,
-            vfsroot,
-            ..
-        } = c;
         Ok(Journal {
             header: JournalHeader {
                 head: 0,
                 tail: 0,
                 trans_ctr: 0,
+                ty: c.journal_type,
             },
             size: align_down(
                 trace!(file.metadata()).len() - *HEADER_SIZE,
@@ -257,25 +257,26 @@ impl Journal {
             ),
             file: file,
             sbuf: Vec::new(),
-            sync,
+            sync: c.sync,
             last_time: SystemTime::now(),
-            fstore: trace!(FileStore::new(&vfsroot, filestore_size)),
+            fstore: trace!(FileStore::new(&c.vfsroot, c.filestore_size)),
         })
     }
     pub fn open(
         mut file: File,
         c: JournalConfig,
     ) -> Result<Self, Error<io::Error>> {
-        let JournalConfig {
-            sync,
-            filestore_size,
-            vfsroot,
-            ..
-        } = c;
-
         trace!(file.seek(SeekFrom::Start(0)));
-        let header = trace!(deserialize_from(&mut file)
+        let header: JournalHeader = trace!(deserialize_from(&mut file)
             .map_err(|e| io::Error::new(ErrorKind::Other, e)));
+
+        if c.journal_type != JournalType::Invalid && header.ty != c.journal_type
+        {
+            return Err(trace_err!(io::Error::new(
+                io::ErrorKind::Other,
+                "Journal type on disk does not match requested"
+            )));
+        }
 
         let mut j = Journal {
             header: header,
@@ -285,9 +286,9 @@ impl Journal {
             ),
             file: file,
             sbuf: Vec::new(),
-            sync,
+            sync: c.sync,
             last_time: SystemTime::now(),
-            fstore: trace!(FileStore::new(&vfsroot, filestore_size)),
+            fstore: trace!(FileStore::new(&c.vfsroot, c.filestore_size)),
         };
 
         eprintln!("Traversing the journal {:?}", j.header);
@@ -471,6 +472,9 @@ impl Journal {
             journal: self,
             block_buffer: Vec::new(),
         }
+    }
+    pub fn journal_type(&self) -> JournalType {
+        self.header.ty
     }
 }
 

@@ -13,6 +13,7 @@ mod viewer;
 pub use self::bilog::BilogEntry;
 pub use self::crc::crc32;
 pub use self::filestore::FileStore;
+pub use self::snapshot::Snapshot;
 pub use self::store::*;
 pub use self::viewer::viewer_main;
 
@@ -22,18 +23,33 @@ use error::{Error, FromError};
 use libc::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::convert::TryFrom;
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntryExt, WalkDir};
 
-pub trait JournalEntry<'a>: Serialize + Deserialize<'a> + Clone {
-    fn journal(self, j: &mut Journal) -> Result<(), Error<io::Error>>;
-    fn from_vfscall(
-        call: &VFSCall,
-        fspath: &Path,
-    ) -> Result<Self, Error<io::Error>>;
-    fn describe(&self, detail: bool) -> String;
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum JournalType {
+    Invalid,
+    Bilog,
+    Forward,
+    Undo,
+}
+
+pub trait JournalEntry<'a>:
+    Serialize + Deserialize<'a> + TryFrom<(&'a VFSCall<'a>, &'static Path)> + Clone
+{
+    fn journal(self, j: &mut Journal) -> Result<(), Error<io::Error>> {
+        j.write_entry(self)
+    }
+    fn describe(&self, _: bool) -> String
+    where
+        Self: Debug,
+    {
+        format!("{:?}", self)
+    }
     fn apply(&self, fspath: &Path) -> Result<VFSCall, Error<io::Error>>;
     fn affected_paths(&self) -> Vec<&Path>;
 }

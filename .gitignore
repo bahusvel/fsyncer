@@ -6,6 +6,7 @@ build
 .fsyncer-*
 bindgen
 *.fj
+*.fs
 doc/mirror.exe
 doc/mirror.obj
 
