@@ -1,26 +1,175 @@
 use bincode::{deserialize_from, serialize_into, serialized_size};
 use common::*;
-use std::collections::{btree_map, hash_map, BTreeMap, HashMap};
+use intrusive_collections::{
+    RBTree, RBTreeLink, LinkedList, LinkedListLink, KeyAdapter, Adapter, rbtree, Bound,
+};
+use serde::{Serialize, Deserialize, Serializer, Deserializer, ser::SerializeSeq, de::Visitor, de::SeqAccess};
+use std::collections::{hash_map, HashMap};
 use std::fs;
 use std::io::Error;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::fmt;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+enum BlockStatus {
+    Free(LinkedListLink),
+    Allocated(RBTreeLink, u64),
+}
+
+impl Default for BlockStatus {
+    fn default() -> Self {
+        BlockStatus::Free(LinkedListLink::default())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Block {
+    #[serde(skip)]
+    status: BlockStatus,
     location: u64,
     size: usize,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct DataList(BTreeMap<usize, Block>);
+impl Block {
+    fn new(location: u64, size: usize) -> Box<Self> {
+        Box::new(Block {
+            status: BlockStatus::Free(LinkedListLink::default()),
+            location, size
+        })
+    }
+    fn file_offset(&self) -> Option<u64> {
+        if let BlockStatus::Allocated(_, offset) = self.status {
+            Some(offset)
+        } else {
+            None
+        }
+    }
+}
+
+
+struct FreeListAdapter; 
+unsafe impl Adapter for FreeListAdapter{
+    type Link = LinkedListLink;
+    type Value = Block;
+    type Pointer = Box<Block>;
+    #[inline]
+    unsafe fn get_value(&self, link: *const Self::Link) -> *const Self::Value {
+        container_of!(link, Block, status) // It's inside enum, so probably -usize or something like that.
+    }
+    #[inline]
+    unsafe fn get_link(&self, value: *const Self::Value) -> *const Self::Link {
+        if let BlockStatus::Free(link) = &(*value).status {
+            link as *const _
+        } else {
+            panic!("This block is not free");
+        }
+    }
+}
+
+struct FileBlockAdapter;
+unsafe impl Adapter for FileBlockAdapter{
+    type Link = RBTreeLink;
+    type Value = Block;
+    type Pointer = Box<Block>;
+    #[inline]
+    unsafe fn get_value(&self, link: *const Self::Link) -> *const Self::Value {
+        container_of!(link, Block, status)
+    }
+    #[inline]
+    unsafe fn get_link(&self, value: *const Self::Value) -> *const Self::Link {
+        if let BlockStatus::Allocated(link, _ ) = &(*value).status {
+            link as *const _
+        } else {
+            panic!("This block is not allocated");
+        }
+    }
+}
+
+
+// intrusive_adapter!(FreeListAdapter = Rc<Block>: Block { free_list_link: SinglyLinkedListLink });
+// intrusive_adapter!(FileBlockAdapter = Rc<Block>: Block { file_block_link: RBTreeLink });
+impl<'a> KeyAdapter<'a> for FileBlockAdapter {
+    type Key = u64;
+    fn get_key(&self, x: &'a Block) -> Self::Key { if let BlockStatus::Allocated(_, offset) = x.status {
+            offset
+        } else {
+            panic!("This block is not allocated");
+        } }
+}
+
+struct DataList(RBTree<FileBlockAdapter>);
+
+impl Clone for DataList {
+    fn clone(&self) -> Self {
+        let mut list = RBTree::new(FileBlockAdapter);
+        let mut cursor = list.front_mut();
+        for entry in self.0.iter() {
+            cursor.insert_before(Box::new(entry.clone()));
+        }
+        DataList(list)
+    }
+}
+
+impl Serialize for DataList {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.0.iter().count()))?;
+        for element in self.0.iter() {
+            seq.serialize_element(element)?;
+        }
+        seq.end()
+    }
+}
+
+struct DataListVisitor;
+
+impl<'de> Visitor<'de> for DataListVisitor
+{
+    // The type that our Visitor is going to produce.
+    type Value = DataList;
+
+    // Format a message stating what data this Visitor expects to receive.
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a data list")
+    }
+
+    // Deserialize MyMap from an abstract "map" provided by the
+    // Deserializer. The MapAccess input is a callback provided by
+    // the Deserializer to let us see each entry in the map.
+    fn visit_seq<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+    where
+        M: SeqAccess<'de>,
+    {
+        let mut list = RBTree::new(FileBlockAdapter);
+        let mut cursor = list.front_mut();
+
+        // While there are entries remaining in the input, add them
+        // into our map.
+        while let Some(block) = access.next_element()? {
+            cursor.insert_before(Box::new(block))
+        }
+
+        Ok(DataList(list))
+    }
+}
+
+
+
+impl<'de> Deserialize<'de> for DataList {
+    fn deserialize<D>(deserializer: D) -> Result<DataList, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(DataListVisitor)
+    }
+}
 
 impl DataList {
     fn new() -> Self {
-        DataList(BTreeMap::new())
-    }
-    fn shared(other: &DataList) -> Self {
-        DataList(other.0.clone())
+        DataList(RBTree::new(FileBlockAdapter))
     }
 }
 
@@ -92,7 +241,7 @@ pub struct Snapshot {
     header: Header,
     files: HashMap<PathBuf, File>,
     serialised: fs::File,
-    free_list: BTreeMap<u64, usize>,
+    free_list: LinkedList<FreeListAdapter>,
 }
 
 macro_rules! set_fields {
@@ -130,8 +279,8 @@ impl Snapshot {
             ty: SnapshotType::Forward,
             ft_offset: 0,
         };
-        let mut free_list = BTreeMap::new();
-        free_list.insert(serialized_size(&header).unwrap(), std::usize::MAX);
+        let mut free_list = LinkedList::new(FreeListAdapter);
+        free_list.push_front(Block::new(serialized_size(&header).unwrap(), std::usize::MAX));
         Snapshot {
             header,
             files: HashMap::new(),
@@ -148,8 +297,10 @@ impl Snapshot {
         from_file.seek(SeekFrom::Start(header.ft_offset))?;
         let files = deserialize_from(&mut from_file)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
-        let mut free_list = BTreeMap::new();
-        free_list.insert(header.ft_offset, std::usize::MAX);
+
+
+        let mut free_list = LinkedList::new(FreeListAdapter);
+        free_list.push_front(Block::new(header.ft_offset, std::usize::MAX));
 
         Ok(Snapshot {
             header,
@@ -166,47 +317,52 @@ impl Snapshot {
             }),
         )
     }
-    fn allocate(&mut self, size: usize) -> u64 {
-        let (offset, entry_size) = self
+    fn allocate(&mut self, size: usize) -> Box<Block> {
+        let mut cursor = self
             .free_list
-            .iter()
-            .find(|(_, v)| **v >= size)
-            .map(|(k, v)| (*k, *v))
-            .unwrap();
-        self.free_list.remove(&offset);
-        if entry_size > size {
-            self.free_list
-                .insert(offset + size as u64, entry_size - size);
+            .cursor_mut();
+        loop {
+            let (val_offset, val_size) = {
+                let val = cursor.get().unwrap();
+                (val.location, val.size)
+            };
+            if val_size > size {
+                return cursor.replace_with(Block::new(val_offset + size as u64, val_size - size)).unwrap();
+            } else if val_size == size {
+                return cursor.remove().unwrap();
+            }
+            cursor.move_next();
         }
-        offset
     }
-    fn deallocate(&mut self, mut offset: u64, mut size: usize) {
-        let prev = self
+    fn deallocate(&mut self, block: Box<Block>) {
+        let mut cursor = self
             .free_list
-            .range(..offset)
-            .next_back()
-            .map(|(k, v)| (*k, *v));
-        if prev.is_some() {
-            let prev = prev.unwrap();
-            if prev.0 + prev.1 as u64 == offset {
-                self.free_list.remove(&prev.0);
-                offset = prev.0;
-                size += prev.1;
+            .cursor_mut();
+
+        loop {
+            let val = cursor.get();
+            if val.is_none()  {
+                panic!("End of list disappeared");
             }
-        }
-        let next = self
-            .free_list
-            .range(offset + size as u64..)
-            .next()
-            .map(|(k, v)| (*k, *v));
-        if next.is_some() {
-            let next = next.unwrap();
-            if next.0 == offset + size as u64 {
-                self.free_list.remove(&next.0);
-                size += next.1;
+            let val = val.unwrap();
+            if val.location == block.location + block.size as u64 {
+                // Back merge
+                block.size += val.size;
+                cursor.replace_with(block);
+                return;
             }
+            if val.location > block.location {
+                cursor.insert_before(block);
+                return;
+            }
+            if val.location + val.size as u64 == block.location {
+                // Front merge
+                block.location = val.location;
+                block.size += val.size;
+                cursor.remove();
+            }
+            cursor.move_next();
         }
-        self.free_list.insert(offset, size);
     }
     /*
     This is the most complex part of the algorithm.
@@ -227,38 +383,47 @@ impl Snapshot {
 
         // Previous file data ranges that overlap this write, rust is very
         // elegant here.
-        let overlaps: Vec<(usize, Block)> = file
+        let overlaps = Vec::new();
+
+        let bound = (offset + buff.len()) as u64;
+        
+        let mut cursor = file
             .data
             .as_mut()
             .expect("Cannot encode write when there is no data")
             .0
-            .range(..offset + buff.len())
-            .rev()
-            .take_while(|(k, v)| *k + v.size > offset)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+            .upper_bound_mut(Bound::Included(&bound));
+
+        loop {
+            let block = cursor.get();
+            if block.is_none() {
+                break;
+            }
+            if block.unwrap().file_offset().unwrap() + block.unwrap().size as u64 > offset as u64 {
+                overlaps.push(cursor.remove().unwrap());
+            }
+            cursor.move_prev();
+        }
+
 
         if overlaps.len() == 0 {
             // No overlap simply allocate from free_list and write
-            let location = self.allocate(buff.len());
-            self.get_or_open(path).data.as_mut().unwrap().0.insert(
-                offset,
-                Block {
-                    location,
-                    size: buff.len(),
-                },
-            );
-            return self.serialised.write_all_at(buff, location as u64);
+            let mut block = self.allocate(buff.len());
+            block.status = BlockStatus::Allocated(RBTreeLink::default(), offset as u64);
+            self.get_or_open(path).data.as_mut().unwrap().0.insert(block);
+            return self.serialised.write_all_at(buff, block.location);
         }
+
+
         let first = overlaps.first().unwrap();
         let last = overlaps.last().unwrap();
         if overlaps.len() == 1
-            && first.0 <= offset
-            && first.1.size >= buff.len()
+            && first.file_offset().unwrap() <= offset as u64
+            && first.size >= buff.len()
         {
             // This write fits completely into another write, just write the
             // data there
-            let location = first.1.location + (offset - first.0) as u64;
+            let location = first.location + offset as u64 - first.file_offset().unwrap();
             return self.serialised.write_all_at(buff, location as u64);
         }
 
@@ -279,22 +444,22 @@ impl Snapshot {
         let need_space = first_exclusive + buff.len() + last_exclusive;
         // Allocation must happen first to avoid overwriting blocks if they are
         // out of order
-        let location = self.allocate(need_space);
+        let mut block = self.allocate(need_space);
         if first_exclusive != 0 {
             move_file_range(
                 &mut self.serialised,
                 first.1.location,
-                location,
+                block.location,
                 first_exclusive,
             )?;
         }
         self.serialised
-            .write_all_at(buff, location + first_exclusive as u64)?;
+            .write_all_at(buff, block.location + first_exclusive as u64)?;
         if last_exclusive != 0 {
             move_file_range(
                 &mut self.serialised,
                 last.1.location + (last.1.size - last_exclusive) as u64,
-                location + (first_exclusive + buff.len()) as u64,
+                block.location + (first_exclusive + buff.len()) as u64,
                 last_exclusive,
             )?;
         }
@@ -302,12 +467,9 @@ impl Snapshot {
         for overlap in overlaps.iter() {
             data_blocks.remove(&overlap.0);
         }
+        block.status = BlockStatus::Allocated(RBTreeLink::default(), first.0 as u64);
         data_blocks.insert(
-            first.0,
-            Block {
-                location,
-                size: need_space,
-            },
+            block,
         );
         for overlap in overlaps.iter() {
             self.deallocate(overlap.1.location, overlap.1.size);
@@ -385,18 +547,16 @@ impl Snapshot {
                         .files
                         .get(&from as &Path)
                         .map(|f| {
-                            DataList::shared(f.data.as_ref().expect(
-                                "Hardlink from is not a regualar file?",
-                            ))
+                            None
                         })
-                        .unwrap_or(DataList::new());
+                        .unwrap_or(Some(DataList::new()));
                     self.files.insert(
                         to.into_owned(),
                         set_fields!(File::default() => {
                             .uid: Some(uid),
                             .gid: Some(gid),
                             .ty: FileType::Hardlink(from.into_owned()),
-                            .data: Some(data),
+                            .data: data,
                         }),
                     );
                 }
@@ -421,8 +581,8 @@ impl Snapshot {
                 | VFSCall::rmdir(rmdir { path }) => {
                     let file = self.files.remove(&path as &Path);
                     file.and_then(|f| f.data).map_or({}, |d| {
-                        for (_, block) in d.0 {
-                            self.deallocate(block.location, block.size);
+                        for block in d.0 {
+                            self.deallocate(block);
                         }
                     });
                 }
@@ -440,36 +600,23 @@ impl Snapshot {
                 VFSCall::truncate(truncate { path, size }) => {
                     let file = self.get_or_open(&path);
                     file.size = FileSize::Exactly(size as u64);
-                    //let t: Vec<(u64, usize)> = Vec::new();
-                    let mut dealloc = Vec::new();
                     if let Some(ref mut d) = file.data {
-                        let delete: Vec<usize> =
-                            d.0.range(size as usize..)
-                                .map(|(k, _)| *k)
-                                .collect();
-                        for offset in delete {
-                            let block = d.0.remove(&offset).unwrap();
-                            dealloc.push((block.location, block.size));
+                        let mut cursor = d.0.lower_bound_mut(Bound::Included(&(size as u64)));
+                        while let Some(block) = cursor.remove() {
+                            self.deallocate(block);
                         }
-                        d.0.iter_mut().next_back().map_or(
-                            {},
-                            |(offset, block)| {
-                                if offset + block.size > size as usize {
-                                    let dealloc_size =
-                                        offset + block.size - size as usize;
-                                    dealloc.push((
-                                        block.location
-                                            + (block.size - dealloc_size)
-                                                as u64,
-                                        dealloc_size,
-                                    ));
-                                    block.size -= dealloc_size;
-                                }
-                            },
-                        );
-                    }
-                    for (offset, size) in dealloc {
-                        self.deallocate(offset, size);
+                        cursor.move_prev();
+                        if let Some(block) = cursor.get() {
+                            if block.file_offset().unwrap() + block.size as u64 > size as u64 {
+                                let dealloc_size =
+                                        block.file_offset().unwrap() + block.size as u64 - size as u64;
+                                block.size -= dealloc_size as usize;
+                                self.deallocate(Block::new(block.location
+                                            + (block.size as u64 - dealloc_size)
+                                                as u64, dealloc_size as usize));
+           
+                            }
+                        }
                     }
                 }
                 VFSCall::fallocate(fallocate {
@@ -528,7 +675,7 @@ impl Snapshot {
     }
     pub fn finalize(mut self) -> Result<(), Error> {
         use std::io::{ErrorKind, Seek, SeekFrom};
-        let end_of_data = *self.free_list.iter().next_back().unwrap().0;
+        let end_of_data = self.free_list.iter().last().unwrap().location;
         self.header.ft_offset = end_of_data;
         self.serialised.seek(SeekFrom::Start(0))?;
         serialize_into(&mut self.serialised, &self.header)
@@ -553,7 +700,7 @@ struct SnapshotApply<'a> {
     snapshot: &'a Snapshot,
     file_iter: hash_map::Iter<'a, PathBuf, File>,
     current_file: Option<(&'a PathBuf, File)>,
-    data_iter: Option<btree_map::Iter<'a, usize, Block>>,
+    data_iter: Option<rbtree::Iter<'a, FileBlockAdapter>>,
     xattr_iter: Option<hash_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>>,
 }
 
@@ -564,15 +711,15 @@ impl<'a> Iterator for SnapshotApply<'a> {
         if let Some(data_blocks) = &mut self.data_iter {
             if let Some(block) = data_blocks.next() {
                 let (cp, _) = self.current_file.as_ref().unwrap();
-                let mut buf = Vec::with_capacity(block.1.size);
-                unsafe { buf.set_len(block.1.size) };
+                let mut buf = Vec::with_capacity(block.size);
+                unsafe { buf.set_len(block.size) };
                 self.snapshot
                     .serialised
-                    .read_exact_at(&mut buf, block.1.location)
+                    .read_exact_at(&mut buf, block.location)
                     .expect("Failed to read snapshot data");
                 return Some(VFSCall::write(write {
                     path: Cow::Borrowed(cp),
-                    offset: *block.0 as i64,
+                    offset: block.file_offset().unwrap() as i64,
                     buf: Cow::Owned(buf),
                 }));
             } else {

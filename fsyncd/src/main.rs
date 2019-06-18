@@ -14,6 +14,8 @@ extern crate bitflags;
 extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate intrusive_collections;
 extern crate bincode;
 extern crate byteorder;
 extern crate clap;
