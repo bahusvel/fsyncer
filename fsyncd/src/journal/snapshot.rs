@@ -1,17 +1,20 @@
+use bincode::{deserialize_from, serialize_into, serialized_size};
 use common::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{btree_map, hash_map, BTreeMap, HashMap};
 use std::fs;
 use std::io::Error;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Block {
     location: u64,
     size: usize,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 struct DataList(BTreeMap<usize, Block>);
+
 impl DataList {
     fn new() -> Self {
         DataList(BTreeMap::new())
@@ -21,6 +24,7 @@ impl DataList {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 enum FileType {
     Invalid,
     Opened,
@@ -37,12 +41,14 @@ enum FileType {
     Moved(PathBuf),
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 enum FileSize {
     Unknown,
     MoreThan(u64),
     Exactly(u64),
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 struct File {
     uid: Option<u32>,
     gid: Option<u32>,
@@ -69,7 +75,21 @@ impl Default for File {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+enum SnapshotType {
+    Forward,
+    Bidirectional,
+    Undo,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Header {
+    ty: SnapshotType,
+    ft_offset: u64,
+}
+
 pub struct Snapshot {
+    header: Header,
     files: HashMap<PathBuf, File>,
     serialised: fs::File,
     free_list: BTreeMap<u64, usize>,
@@ -106,13 +126,37 @@ fn move_file_range(
 
 impl Snapshot {
     pub fn new(to_file: fs::File) -> Self {
+        let header = Header {
+            ty: SnapshotType::Forward,
+            ft_offset: 0,
+        };
         let mut free_list = BTreeMap::new();
-        free_list.insert(0, std::usize::MAX);
+        free_list.insert(serialized_size(&header).unwrap(), std::usize::MAX);
         Snapshot {
+            header,
             files: HashMap::new(),
             serialised: to_file,
             free_list: free_list,
         }
+    }
+    pub fn open(mut from_file: fs::File) -> Result<Self, Error> {
+        use std::io::{ErrorKind, Seek, SeekFrom};
+        from_file.seek(SeekFrom::Start(0))?;
+        let header: Header = deserialize_from(&mut from_file)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+        from_file.seek(SeekFrom::Start(header.ft_offset))?;
+        let files = deserialize_from(&mut from_file)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let mut free_list = BTreeMap::new();
+        free_list.insert(header.ft_offset, std::usize::MAX);
+
+        Ok(Snapshot {
+            header,
+            serialised: from_file,
+            free_list,
+            files,
+        })
     }
     fn get_or_open(&mut self, path: &Path) -> &mut File {
         self.files.entry(path.into()).or_insert(
@@ -123,14 +167,13 @@ impl Snapshot {
         )
     }
     fn allocate(&mut self, size: usize) -> u64 {
-        let offset = *self
+        let (offset, entry_size) = self
             .free_list
             .iter()
             .find(|(_, v)| **v >= size)
-            .take()
-            .unwrap()
-            .0;
-        let entry_size = self.free_list.remove(&offset).unwrap();
+            .map(|(k, v)| (*k, *v))
+            .unwrap();
+        self.free_list.remove(&offset);
         if entry_size > size {
             self.free_list
                 .insert(offset + size as u64, entry_size - size);
@@ -213,9 +256,13 @@ impl Snapshot {
             && first.0 <= offset
             && first.1.size >= buff.len()
         {
+            // This write fits completely into another write, just write the
+            // data there
             let location = first.1.location + (offset - first.0) as u64;
             return self.serialised.write_all_at(buff, location as u64);
         }
+
+        eprintln!("Doing write compaction");
 
         // Need to defragment, defragmentation strategy is to copy and
         // deallocate overlaps
@@ -479,9 +526,190 @@ impl Snapshot {
         }
         Ok(())
     }
-    pub fn finalize(self) -> Result<(), Error> {
-        // Serialise the table to the end of the file
-        // Write table offset to the header
+    pub fn finalize(mut self) -> Result<(), Error> {
+        use std::io::{ErrorKind, Seek, SeekFrom};
+        let end_of_data = *self.free_list.iter().next_back().unwrap().0;
+        self.header.ft_offset = end_of_data;
+        self.serialised.seek(SeekFrom::Start(0))?;
+        serialize_into(&mut self.serialised, &self.header)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        self.serialised.seek(SeekFrom::Start(end_of_data))?;
+        serialize_into(&mut self.serialised, &self.files)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
         Ok(())
+    }
+    pub fn apply(&self) -> SnapshotApply {
+        SnapshotApply {
+            snapshot: &self,
+            file_iter: self.files.iter(),
+            current_file: None,
+            data_iter: None,
+            xattr_iter: None,
+        }
+    }
+}
+
+struct SnapshotApply<'a> {
+    snapshot: &'a Snapshot,
+    file_iter: hash_map::Iter<'a, PathBuf, File>,
+    current_file: Option<(&'a PathBuf, File)>,
+    data_iter: Option<btree_map::Iter<'a, usize, Block>>,
+    xattr_iter: Option<hash_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>>,
+}
+
+impl<'a> Iterator for SnapshotApply<'a> {
+    type Item = VFSCall<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::borrow::Cow;
+        if let Some(data_blocks) = &mut self.data_iter {
+            if let Some(block) = data_blocks.next() {
+                let (cp, _) = self.current_file.as_ref().unwrap();
+                let mut buf = Vec::with_capacity(block.1.size);
+                unsafe { buf.set_len(block.1.size) };
+                self.snapshot
+                    .serialised
+                    .read_exact_at(&mut buf, block.1.location)
+                    .expect("Failed to read snapshot data");
+                return Some(VFSCall::write(write {
+                    path: Cow::Borrowed(cp),
+                    offset: *block.0 as i64,
+                    buf: Cow::Owned(buf),
+                }));
+            } else {
+                self.data_iter = None;
+            }
+        }
+        if self.current_file.is_none() {
+            let (path, file) = self.file_iter.next()?;
+            self.xattr_iter = file.xattrs.as_ref().map(|x| x.iter());
+            self.data_iter = file.data.as_ref().map(|d| d.0.iter());
+            self.current_file = Some((path, file.clone()));
+            let (cp, cf) = self.current_file.as_mut().unwrap();
+            cf.data = None; // Take the data to avoid wasting memory
+            cf.xattrs = None;
+            match cf.ty.clone() {
+                FileType::Invalid => panic!("Invalid file type"),
+                FileType::Opened => {}
+                FileType::Directory => {
+                    return Some(VFSCall::mkdir(mkdir {
+                        mode: cf.mode.take().unwrap(),
+                        path: Cow::Borrowed(cp),
+                        security: FileSecurity::Unix {
+                            uid: cf.uid.take().unwrap(),
+                            gid: cf.gid.take().unwrap(),
+                        },
+                    }))
+                }
+                FileType::New(flags) => {
+                    return Some(VFSCall::create(create {
+                        flags,
+                        mode: cf.mode.take().unwrap(),
+                        path: Cow::Borrowed(cp),
+                        security: FileSecurity::Unix {
+                            uid: cf.uid.take().unwrap(),
+                            gid: cf.gid.take().unwrap(),
+                        },
+                    }))
+                }
+                FileType::Special(rdev) => {
+                    return Some(VFSCall::mknod(mknod {
+                        mode: cf.mode.take().unwrap(),
+                        path: Cow::Borrowed(cp),
+                        security: FileSecurity::Unix {
+                            uid: cf.uid.take().unwrap(),
+                            gid: cf.gid.take().unwrap(),
+                        },
+                        rdev,
+                    }))
+                }
+                FileType::Symlink(from) => {
+                    return Some(VFSCall::symlink(symlink {
+                        from: Cow::Owned(from),
+                        to: Cow::Borrowed(cp),
+                        security: FileSecurity::Unix {
+                            uid: cf.uid.take().unwrap(),
+                            gid: cf.gid.take().unwrap(),
+                        },
+                    }))
+                }
+                FileType::Hardlink(from) => {
+                    return Some(VFSCall::link(link {
+                        from: Cow::Owned(from),
+                        to: Cow::Borrowed(cp),
+                        security: FileSecurity::Unix {
+                            uid: cf.uid.take().unwrap(),
+                            gid: cf.gid.take().unwrap(),
+                        },
+                    }))
+                }
+                FileType::Moved(from) => {
+                    return Some(VFSCall::rename(rename {
+                        from: Cow::Owned(from),
+                        to: Cow::Borrowed(cp),
+                        flags: 0,
+                    }))
+                }
+            }
+        }
+        let (cp, cf) = self.current_file.as_mut().unwrap();
+        if let (Some(uid), Some(gid)) = (cf.uid.take(), cf.gid.take()) {
+            return Some(VFSCall::security(security {
+                path: Cow::Borrowed(cp),
+                security: FileSecurity::Unix { uid, gid },
+            }));
+        }
+        if let Some(mode) = cf.mode.take() {
+            return Some(VFSCall::chmod(chmod {
+                path: Cow::Borrowed(cp),
+                mode,
+            }));
+        }
+        if let FileSize::Exactly(tsize) = cf.size {
+            cf.size = FileSize::Unknown;
+            return Some(VFSCall::truncate(truncate {
+                path: Cow::Borrowed(cp),
+                size: tsize as i64,
+            }));
+        }
+        if let FileSize::MoreThan(fsize) = cf.size {
+            cf.size = FileSize::Unknown;
+            return Some(VFSCall::fallocate(fallocate {
+                path: Cow::Borrowed(cp),
+                length: fsize as i64,
+                offset: 0,
+                mode: 0,
+            })); // HACK, I don't think this is good.
+        }
+        if let Some(timespec) = cf.time.take() {
+            return Some(VFSCall::utimens(utimens {
+                path: Cow::Borrowed(cp),
+                timespec,
+            }));
+        }
+        if let Some(xattrs) = &mut self.xattr_iter {
+            use std::ffi::CStr;
+            if let Some((k, v)) = xattrs.next() {
+                if let Some(value) = v {
+                    return Some(VFSCall::setxattr(setxattr {
+                        path: Cow::Borrowed(cp),
+                        name: Cow::Borrowed(
+                            CStr::from_bytes_with_nul(&k).unwrap(),
+                        ),
+                        value: Cow::Borrowed(value),
+                        flags: 0,
+                    }));
+                } else {
+                    return Some(VFSCall::removexattr(removexattr {
+                        path: Cow::Borrowed(cp),
+                        name: Cow::Borrowed(
+                            CStr::from_bytes_with_nul(&k).unwrap(),
+                        ),
+                    }));
+                }
+            } else {
+                self.xattr_iter = None;
+            }
+        }
+        None
     }
 }

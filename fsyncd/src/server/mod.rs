@@ -190,8 +190,7 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
             JournalType::Bilog => {
                 let bilog = BilogEntry::try_from((call, unsafe {
                     &SERVER_PATH.as_ref().unwrap() as &Path
-                }))
-                .expect("Failed to generate journal entry from vfscall");
+                })).expect("Failed to generate journal entry from vfscall");
                 if is_variant!(bilog, BilogEntry::filestore, struct) {
                     // Bypass real unlink when using filestore
                     opref.ret = Some(0);
@@ -291,8 +290,7 @@ fn figure_out_paths(
                         } else {
                             false
                         }
-                    })
-                    .next()
+                    }).next()
                     .is_some();
             }
         }
@@ -307,8 +305,10 @@ fn figure_out_paths(
                 "Backing path does not exist",
             )));
         }
-        trace!(PathBuf::from(matches.value_of("backing-store").unwrap())
-            .canonicalize())
+        trace!(
+            PathBuf::from(matches.value_of("backing-store").unwrap())
+                .canonicalize()
+        )
     } else {
         // Implictly inferring backing store
         mount_path.with_file_name(format!(
@@ -327,12 +327,15 @@ fn figure_out_paths(
             && check_mount(mount_path.to_str().unwrap())?
         {
             trace!(fs::create_dir_all(&mount_path));
-            let res = trace!(trace!(Command::new("mount")
-                .arg("--move")
-                .arg(matches.value_of("mount-path").unwrap())
-                .arg(backing_store.to_str().unwrap())
-                .spawn())
-            .wait());
+            let res = trace!(
+                trace!(
+                    Command::new("mount")
+                        .arg("--move")
+                        .arg(matches.value_of("mount-path").unwrap())
+                        .arg(backing_store.to_str().unwrap())
+                        .spawn()
+                ).wait()
+            );
             if !res.success() {
                 trace!(Err(io::Error::new(
                     ErrorKind::Other,
@@ -401,11 +404,13 @@ fn open_journal(
     c: JournalConfig,
 ) -> Result<Journal, Error<io::Error>> {
     let exists = Path::new(path).exists();
-    let f = trace!(OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(path));
+    let f = trace!(
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)
+    );
 
     if exists {
         if f.metadata()
@@ -563,8 +568,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
                     .to_str()
                     .expect("Mount path is not a valid string"),
             ),
-        ]
-        .into_iter()
+        ].into_iter()
         .chain(env::args().skip_while(|v| v != "--").skip(1))
         .map(|arg| CString::new(arg).unwrap())
         .collect::<Vec<CString>>();

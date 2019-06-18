@@ -329,6 +329,25 @@ fn main() {
                     ),
                 ),
         ).subcommand(
+            SubCommand::with_name("snapshot")
+                .arg(
+                    Arg::with_name("snapshot-path")
+                        .takes_value(true)
+                        .required(true),
+                ).subcommand(SubCommand::with_name("merge").arg(
+                    Arg::with_name("with").required(true).takes_value(true),
+                )).subcommand(
+                    SubCommand::with_name("apply").arg(
+                        Arg::with_name("backing-store")
+                            .short("b")
+                            .long("backing-store")
+                            .help(
+                                "Specifies the directory to replay journal to",
+                            ).takes_value(true)
+                            .required(true),
+                    ),
+                ),
+        ).subcommand(
             SubCommand::with_name("checksum").arg(
                 Arg::with_name("mount-path")
                     .help("Path to compute checksum of")
