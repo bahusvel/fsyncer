@@ -1,4 +1,4 @@
-use common::{link, FileSecurity, VFSCall};
+use common::{FileSecurity, VFSCall};
 use error::{Error, FromError};
 use journal::Journal;
 use std::borrow::Cow;
@@ -124,14 +124,14 @@ impl FileStore {
             token
         )));
 
-        Ok(VFSCall::link(link {
+        Ok(VFSCall::link {
             from: Cow::Owned(rela_path),
             to: Cow::Owned(path.to_path_buf()),
             security: FileSecurity::Unix {
                 uid: stbuf.uid(),
                 gid: stbuf.gid(),
             },
-        }))
+        })
     }
     pub fn delete(&mut self, token: u64) -> Result<u64, Error<io::Error>> {
         let path =

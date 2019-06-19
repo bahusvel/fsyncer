@@ -15,7 +15,7 @@ pub unsafe extern "C" fn do_mknod(
 ) -> c_int {
     let real_path = trans_ppath!(path);
     let context = fuse_get_context();
-    let call = VFSCall::mknod(mknod {
+    let call = VFSCall::mknod {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         mode,
         rdev,
@@ -23,7 +23,7 @@ pub unsafe extern "C" fn do_mknod(
             uid: (*context).uid,
             gid: (*context).gid,
         },
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -42,14 +42,14 @@ pub unsafe extern "C" fn do_mknod(
 pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
     let real_path = trans_ppath!(path);
     let context = fuse_get_context();
-    let call = VFSCall::mkdir(mkdir {
+    let call = VFSCall::mkdir {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         mode,
         security: FileSecurity::Unix {
             uid: (*context).uid,
             gid: (*context).gid,
         },
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -62,9 +62,9 @@ pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
 
 pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
     let real_path = trans_ppath!(path);
-    let call = VFSCall::unlink(unlink {
+    let call = VFSCall::unlink{
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -76,9 +76,9 @@ pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
 
 pub unsafe extern "C" fn do_rmdir(path: *const c_char) -> c_int {
     let real_path = trans_ppath!(path);
-    let call = VFSCall::rmdir(rmdir {
+    let call = VFSCall::rmdir {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -94,14 +94,14 @@ pub unsafe extern "C" fn do_symlink(
 ) -> c_int {
     let real_to = trans_ppath!(to);
     let context = fuse_get_context();
-    let call = VFSCall::symlink(symlink {
+    let call = VFSCall::symlink {
         from: Cow::Borrowed(CStr::from_ptr(from).to_path()),
         to: Cow::Borrowed(CStr::from_ptr(to).to_path()),
         security: FileSecurity::Unix {
             uid: (*context).uid,
             gid: (*context).gid,
         },
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -119,11 +119,11 @@ pub unsafe extern "C" fn do_rename(
 ) -> c_int {
     let real_from = trans_ppath!(from);
     let real_to = trans_ppath!(to);
-    let call = VFSCall::rename(rename {
+    let call = VFSCall::rename {
         from: Cow::Borrowed(CStr::from_ptr(from).to_path()),
         to: Cow::Borrowed(CStr::from_ptr(to).to_path()),
         flags,
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -140,14 +140,14 @@ pub unsafe extern "C" fn do_link(
     let real_from = trans_ppath!(from);
     let real_to = trans_ppath!(to);
     let context = fuse_get_context();
-    let call = VFSCall::link(link {
+    let call = VFSCall::link {
         from: Cow::Borrowed(CStr::from_ptr(from).to_path()),
         to: Cow::Borrowed(CStr::from_ptr(to).to_path()),
         security: FileSecurity::Unix {
             uid: (*context).uid,
             gid: (*context).gid,
         },
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -167,10 +167,10 @@ pub unsafe extern "C" fn do_chmod(
     mode: mode_t,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::chmod(chmod {
+    let call = VFSCall::chmod {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         mode,
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -191,10 +191,10 @@ pub unsafe extern "C" fn do_chown(
     gid: gid_t,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::security(security {
+    let call = VFSCall::security {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         security: FileSecurity::Unix { uid: uid, gid: gid },
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -214,10 +214,10 @@ pub unsafe extern "C" fn do_truncate(
     size: off_t,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::truncate(truncate {
+    let call = VFSCall::truncate{
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         size,
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -254,28 +254,28 @@ pub unsafe extern "C" fn do_write(
             Ok(0) | Err(_) => {
                 // Optimisation, there is no overlap, or:
                 // Cannot perform diff write, file may not be readable
-                VFSCall::write(write {
+                VFSCall::write {
                     path: Cow::Borrowed(cpath),
                     buf: Cow::Borrowed(new_buf),
                     offset,
-                })
+                }
             }
             Ok(diff_len) => {
                 xor_buf(&mut old_buf[..diff_len], &new_buf[..diff_len]);
                 old_buf[diff_len..].copy_from_slice(&new_buf[diff_len..]);
-                VFSCall::diff_write(write {
+                VFSCall::diff_write{
                     path: Cow::Borrowed(cpath),
                     buf: Cow::Owned(old_buf),
                     offset,
-                })
+                }
             }
         }
     } else {
-        VFSCall::write(write {
+        VFSCall::write {
             path: Cow::Borrowed(cpath),
             buf: Cow::Borrowed(new_buf),
             offset,
-        })
+        }
     };
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -292,12 +292,12 @@ pub unsafe extern "C" fn do_fallocate(
     length: off_t,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::fallocate(fallocate {
+    let call = VFSCall::fallocate {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         mode,
         offset,
         length,
-    });
+    };
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
         return r;
@@ -317,12 +317,12 @@ pub unsafe extern "C" fn do_setxattr(
     flags: c_int,
 ) -> c_int {
     let real_path = trans_ppath!(path);
-    let call = VFSCall::setxattr(setxattr {
+    let call = VFSCall::setxattr {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         name: Cow::Borrowed(CStr::from_ptr(name)),
         value: Cow::Borrowed(slice::from_raw_parts(value, size)),
         flags,
-    });
+    };
 
     //eprintln!("setxattr {:?}", call);
 
@@ -347,10 +347,10 @@ pub unsafe extern "C" fn do_removexattr(
     name: *const c_char,
 ) -> c_int {
     let real_path = trans_ppath!(path);
-    let call = VFSCall::removexattr(removexattr {
+    let call = VFSCall::removexattr{
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         name: Cow::Borrowed(CStr::from_ptr(name)),
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -371,7 +371,7 @@ pub unsafe extern "C" fn do_create(
     let real_path = trans_ppath!(path);
     let context = fuse_get_context();
 
-    let call = VFSCall::create(create {
+    let call = VFSCall::create{
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         mode,
         flags: (*fi).flags,
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn do_create(
             uid: (*context).uid,
             gid: (*context).gid,
         },
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -404,14 +404,14 @@ pub unsafe extern "C" fn do_utimens(
     ts: *const timespec,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::utimens(utimens {
+    let call = VFSCall::utimens{
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         timespec: [
             (*ts).into(),
             (*ts.offset(1)).into(),
             enc_timespec { high: 0, low: 0 },
         ],
-    });
+    };
 
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
@@ -432,10 +432,10 @@ pub unsafe extern "C" fn do_fsync(
     fi: *mut fuse_file_info,
 ) -> c_int {
     debug!("fsync", (*fi).fuse_flags);
-    let call = VFSCall::fsync(fsync {
+    let call = VFSCall::fsync {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         isdatasync: isdatasync,
-    });
+    };
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {
         return r;

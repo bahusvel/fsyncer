@@ -147,7 +147,7 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
     let list = SYNC_LIST.read().expect("Failed to lock SYNC_LIST");
     for client in list.deref() {
         if client.mode == ClientMode::MODE_CONTROL
-            || (is_variant!(&*call, VFSCall::fsync)
+            || (is_variant!(&*call, VFSCall::fsync, struct)
                 && (client.mode == ClientMode::MODE_ASYNC
                     || client.mode == ClientMode::MODE_SEMISYNC))
         {
@@ -158,7 +158,7 @@ pub fn pre_op(call: &VFSCall) -> OpRef {
         let (msg, sync) = if client.mode == ClientMode::MODE_SYNC
             || client.mode == ClientMode::MODE_SEMISYNC
             || (client.mode == ClientMode::MODE_FLUSHSYNC
-                && is_variant!(&*call, VFSCall::fsync))
+                && is_variant!(&*call, VFSCall::fsync, struct))
         {
             (FsyncerMsg::SyncOp(Cow::Borrowed(call), tid), true)
         } else {

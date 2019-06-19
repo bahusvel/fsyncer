@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-mod encoded;
 pub mod file_security;
 
 metablock!(cfg(target_family="unix") {
@@ -12,20 +11,79 @@ metablock!(cfg(target_family="unix") {
 metablock!(cfg(target_family="windows") {
     mod ops_windows;
     pub use self::ops_windows::*;
+    use common::FILETIME;
     use std::ffi::{OsString, OsStr};
 });
 
-pub use self::encoded::*;
 pub use self::file_security::FileSecurity;
 use libc::int64_t;
+use libc::*;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::{CStr, CString};
 use std::fs::OpenOptions;
-
 use std::hash::{Hash, Hasher};
 use std::io::Error;
+use std::ops::BitXor;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy, Hash)]
+pub struct enc_timespec {
+    pub high: int64_t,
+    pub low: int64_t,
+}
+
+impl BitXor for enc_timespec {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self {
+        enc_timespec {
+            high: self.high ^ rhs.high,
+            low: self.low ^ rhs.low,
+        }
+    }
+}
+
+#[cfg(target_family = "unix")]
+impl From<timespec> for enc_timespec {
+    fn from(spec: timespec) -> Self {
+        enc_timespec {
+            high: spec.tv_sec,
+            low: spec.tv_nsec,
+        }
+    }
+}
+
+#[cfg(target_family = "unix")]
+impl Into<timespec> for enc_timespec {
+    fn into(self) -> timespec {
+        timespec {
+            tv_sec: self.high,
+            tv_nsec: self.low,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl From<FILETIME> for enc_timespec {
+    fn from(spec: FILETIME) -> Self {
+        enc_timespec {
+            high: spec.dwHighDateTime as i64,
+            low: spec.dwLowDateTime as i64,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Into<FILETIME> for enc_timespec {
+    fn into(self) -> FILETIME {
+        FILETIME {
+            dwHighDateTime: self.high as u32,
+            dwLowDateTime: self.low as u32,
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum FsyncerMsg<'a> {
@@ -160,25 +218,97 @@ pub fn parse_human_size(s: &str) -> Option<usize> {
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum VFSCall<'a> {
-    mknod(mknod<'a>),
-    mkdir(mkdir<'a>),
-    unlink(unlink<'a>),
-    rmdir(rmdir<'a>),
-    symlink(symlink<'a>),
-    rename(rename<'a>),
-    link(link<'a>),
-    chmod(chmod<'a>), // On windows this represents attributes
-    truncate(truncate<'a>),
-    write(write<'a>),
-    diff_write(write<'a>),
-    fallocate(fallocate<'a>),
-    setxattr(setxattr<'a>),
-    removexattr(removexattr<'a>),
-    create(create<'a>),
-    utimens(utimens<'a>),
-    fsync(fsync<'a>),
-    truncating_write { write: write<'a>, length: int64_t },
-    security(security<'a>), //chown on linux
+    mknod {
+        path: Cow<'a, Path>,
+        mode: uint32_t,
+        rdev: uint64_t,
+        security: FileSecurity,
+    },
+    mkdir {
+        path: Cow<'a, Path>,
+        security: FileSecurity,
+        mode: uint32_t, // Attributes on windows
+    },
+    unlink {
+        path: Cow<'a, Path>,
+    },
+    rmdir {
+        path: Cow<'a, Path>,
+    },
+    symlink {
+        from: Cow<'a, Path>,
+        to: Cow<'a, Path>,
+        security: FileSecurity,
+    },
+    rename {
+        from: Cow<'a, Path>,
+        to: Cow<'a, Path>,
+        flags: uint32_t,
+    },
+    link {
+        from: Cow<'a, Path>,
+        to: Cow<'a, Path>,
+        security: FileSecurity,
+    },
+    chmod {
+        path: Cow<'a, Path>,
+        mode: uint32_t,
+    }, // On windows this represents attributes
+    truncate {
+        path: Cow<'a, Path>,
+        size: int64_t,
+    },
+    write {
+        path: Cow<'a, Path>,
+        offset: int64_t,
+        buf: Cow<'a, [u8]>,
+    },
+    diff_write {
+        path: Cow<'a, Path>,
+        offset: int64_t,
+        buf: Cow<'a, [u8]>,
+    },
+    fallocate {
+        path: Cow<'a, Path>,
+        mode: int32_t,
+        offset: int64_t,
+        length: int64_t,
+    },
+    setxattr {
+        path: Cow<'a, Path>,
+        name: Cow<'a, CStr>,
+        value: Cow<'a, [u8]>,
+        flags: int32_t,
+    },
+    removexattr {
+        path: Cow<'a, Path>,
+        name: Cow<'a, CStr>,
+    },
+    create {
+        path: Cow<'a, Path>,
+        flags: int32_t,
+        security: FileSecurity,
+        mode: uint32_t, // Attributes on windows
+    },
+    utimens {
+        path: Cow<'a, Path>,
+        timespec: [enc_timespec; 3], /* 2 on POSIX last is 0, 3 on Windows
+                                      * (Created, Accessed, Written) */
+    },
+    fsync {
+        path: Cow<'a, Path>,
+        isdatasync: c_int,
+    },
+    truncating_write {
+        path: Cow<'a, Path>,
+        offset: int64_t,
+        buf: Cow<'a, [u8]>,
+        length: int64_t,
+    },
+    security {
+        path: Cow<'a, Path>,
+        security: FileSecurity,
+    }, //chown on linux
 }
 
 pub fn translate_path(path: &Path, root: &Path) -> PathBuf {
@@ -189,7 +319,6 @@ pub fn translate_path(path: &Path, root: &Path) -> PathBuf {
     })
 }
 metablock!(cfg(target_family = "unix") {
-    use std::ffi::{CStr, CString};
     pub fn trans_cstr(path: &CStr, root: &Path) -> CString {
         translate_path(path.to_path(), root).into_cstring()
     }

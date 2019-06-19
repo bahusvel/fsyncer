@@ -320,7 +320,7 @@ impl Snapshot {
     ) -> Result<(), Error> {
         for call in iter {
             match call {
-                VFSCall::rename(rename { from, to, .. }) => {
+                VFSCall::rename { from, to, .. } => {
                     let from_file = self
                         .files
                         .remove(&from as &Path)
@@ -330,12 +330,12 @@ impl Snapshot {
                         }));
                     self.files.insert(to.into_owned(), from_file);
                 }
-                VFSCall::mknod(mknod {
+                VFSCall::mknod {
                     path,
                     mode,
                     rdev,
                     security: FileSecurity::Unix { uid, gid },
-                }) => {
+                } => {
                     self.files.insert(
                         path.into_owned(),
                         set_fields!(File::default() => {
@@ -347,11 +347,11 @@ impl Snapshot {
                         }),
                     );
                 }
-                VFSCall::mkdir(mkdir {
+                VFSCall::mkdir {
                     path,
                     mode,
                     security: FileSecurity::Unix { uid, gid },
-                }) => {
+                } => {
                     self.files.insert(
                         path.into_owned(),
                         set_fields!(File::default() => {
@@ -362,11 +362,11 @@ impl Snapshot {
                         }),
                     );
                 }
-                VFSCall::symlink(symlink {
+                VFSCall::symlink {
                     from,
                     to,
                     security: FileSecurity::Unix { uid, gid },
-                }) => {
+                } => {
                     self.files.insert(
                         to.into_owned(),
                         set_fields!(File::default() => {
@@ -376,11 +376,11 @@ impl Snapshot {
                         }),
                     );
                 }
-                VFSCall::link(link {
+                VFSCall::link {
                     from,
                     to,
                     security: FileSecurity::Unix { uid, gid },
-                }) => {
+                } => {
                     let data = self
                         .files
                         .get(&from as &Path)
@@ -400,12 +400,12 @@ impl Snapshot {
                         }),
                     );
                 }
-                VFSCall::create(create {
+                VFSCall::create {
                     path,
                     mode,
                     flags,
                     security: FileSecurity::Unix { uid, gid },
-                }) => {
+                } => {
                     self.files.insert(
                         path.into_owned(),
                         set_fields!(File::default() => {
@@ -417,8 +417,8 @@ impl Snapshot {
                         }),
                     );
                 }
-                VFSCall::unlink(unlink { path })
-                | VFSCall::rmdir(rmdir { path }) => {
+                VFSCall::unlink { path }
+                | VFSCall::rmdir { path } => {
                     let file = self.files.remove(&path as &Path);
                     file.and_then(|f| f.data).map_or({}, |d| {
                         for (_, block) in d.0 {
@@ -426,18 +426,18 @@ impl Snapshot {
                         }
                     });
                 }
-                VFSCall::security(security {
+                VFSCall::security{
                     path,
                     security: FileSecurity::Unix { uid, gid },
-                }) => {
+                } => {
                     let file = self.get_or_open(&path);
                     file.uid = Some(uid);
                     file.gid = Some(gid);
                 }
-                VFSCall::chmod(chmod { path, mode }) => {
+                VFSCall::chmod { path, mode } => {
                     self.get_or_open(&path).mode = Some(mode);
                 }
-                VFSCall::truncate(truncate { path, size }) => {
+                VFSCall::truncate { path, size } => {
                     let file = self.get_or_open(&path);
                     file.size = FileSize::Exactly(size as u64);
                     //let t: Vec<(u64, usize)> = Vec::new();
@@ -472,12 +472,12 @@ impl Snapshot {
                         self.deallocate(offset, size);
                     }
                 }
-                VFSCall::fallocate(fallocate {
+                VFSCall::fallocate {
                     path,
                     offset,
                     length,
                     ..
-                }) => {
+                } => {
                     let size = &mut self.get_or_open(&path).size;
                     let nsize = (offset + length) as u64;
                     // This is only valid for posix_fallocate which basically
@@ -493,13 +493,13 @@ impl Snapshot {
                         FileSize::Exactly(_) | FileSize::MoreThan(_) => {}
                     }
                 }
-                VFSCall::write(write { path, buf, offset })
-                | VFSCall::diff_write(write { path, buf, offset }) => {
+                VFSCall::write { path, buf, offset }
+                | VFSCall::diff_write { path, buf, offset } => {
                     self.encode_write(&path, offset as usize, &buf)?;
                 }
-                VFSCall::setxattr(setxattr {
+                VFSCall::setxattr {
                     path, name, value, ..
-                }) => {
+                } => {
                     self.get_or_open(&path)
                         .xattrs
                         .get_or_insert(HashMap::new())
@@ -508,16 +508,16 @@ impl Snapshot {
                             Some(value.into_owned()),
                         );
                 }
-                VFSCall::removexattr(removexattr { path, name }) => {
+                VFSCall::removexattr { path, name } => {
                     self.get_or_open(&path)
                         .xattrs
                         .get_or_insert(HashMap::new())
                         .insert(name.to_bytes().into(), None);
                 }
-                VFSCall::utimens(utimens { path, timespec }) => {
+                VFSCall::utimens { path, timespec } => {
                     self.get_or_open(&path).time = Some(timespec);
                 }
-                VFSCall::fsync(_) => {} // fsync is not snapshotted
+                VFSCall::fsync{..} => {} // fsync is not snapshotted
                 VFSCall::truncating_write { .. } => {
                     panic!("This is a bullshit vfscall")
                 }
@@ -570,11 +570,11 @@ impl<'a> Iterator for SnapshotApply<'a> {
                     .serialised
                     .read_exact_at(&mut buf, block.1.location)
                     .expect("Failed to read snapshot data");
-                return Some(VFSCall::write(write {
+                return Some(VFSCall::write {
                     path: Cow::Borrowed(cp),
                     offset: *block.0 as i64,
                     buf: Cow::Owned(buf),
-                }));
+                });
             } else {
                 self.data_iter = None;
             }
@@ -591,17 +591,17 @@ impl<'a> Iterator for SnapshotApply<'a> {
                 FileType::Invalid => panic!("Invalid file type"),
                 FileType::Opened => {}
                 FileType::Directory => {
-                    return Some(VFSCall::mkdir(mkdir {
+                    return Some(VFSCall::mkdir {
                         mode: cf.mode.take().unwrap(),
                         path: Cow::Borrowed(cp),
                         security: FileSecurity::Unix {
                             uid: cf.uid.take().unwrap(),
                             gid: cf.gid.take().unwrap(),
                         },
-                    }))
+                    })
                 }
                 FileType::New(flags) => {
-                    return Some(VFSCall::create(create {
+                    return Some(VFSCall::create {
                         flags,
                         mode: cf.mode.take().unwrap(),
                         path: Cow::Borrowed(cp),
@@ -609,10 +609,10 @@ impl<'a> Iterator for SnapshotApply<'a> {
                             uid: cf.uid.take().unwrap(),
                             gid: cf.gid.take().unwrap(),
                         },
-                    }))
+                    })
                 }
                 FileType::Special(rdev) => {
-                    return Some(VFSCall::mknod(mknod {
+                    return Some(VFSCall::mknod {
                         mode: cf.mode.take().unwrap(),
                         path: Cow::Borrowed(cp),
                         security: FileSecurity::Unix {
@@ -620,91 +620,91 @@ impl<'a> Iterator for SnapshotApply<'a> {
                             gid: cf.gid.take().unwrap(),
                         },
                         rdev,
-                    }))
+                    })
                 }
                 FileType::Symlink(from) => {
-                    return Some(VFSCall::symlink(symlink {
+                    return Some(VFSCall::symlink{
                         from: Cow::Owned(from),
                         to: Cow::Borrowed(cp),
                         security: FileSecurity::Unix {
                             uid: cf.uid.take().unwrap(),
                             gid: cf.gid.take().unwrap(),
                         },
-                    }))
+                    })
                 }
                 FileType::Hardlink(from) => {
-                    return Some(VFSCall::link(link {
+                    return Some(VFSCall::link {
                         from: Cow::Owned(from),
                         to: Cow::Borrowed(cp),
                         security: FileSecurity::Unix {
                             uid: cf.uid.take().unwrap(),
                             gid: cf.gid.take().unwrap(),
                         },
-                    }))
+                    })
                 }
                 FileType::Moved(from) => {
-                    return Some(VFSCall::rename(rename {
+                    return Some(VFSCall::rename {
                         from: Cow::Owned(from),
                         to: Cow::Borrowed(cp),
                         flags: 0,
-                    }))
+                    })
                 }
             }
         }
         let (cp, cf) = self.current_file.as_mut().unwrap();
         if let (Some(uid), Some(gid)) = (cf.uid.take(), cf.gid.take()) {
-            return Some(VFSCall::security(security {
+            return Some(VFSCall::security {
                 path: Cow::Borrowed(cp),
                 security: FileSecurity::Unix { uid, gid },
-            }));
+            });
         }
         if let Some(mode) = cf.mode.take() {
-            return Some(VFSCall::chmod(chmod {
+            return Some(VFSCall::chmod{
                 path: Cow::Borrowed(cp),
                 mode,
-            }));
+            });
         }
         if let FileSize::Exactly(tsize) = cf.size {
             cf.size = FileSize::Unknown;
-            return Some(VFSCall::truncate(truncate {
+            return Some(VFSCall::truncate {
                 path: Cow::Borrowed(cp),
                 size: tsize as i64,
-            }));
+            });
         }
         if let FileSize::MoreThan(fsize) = cf.size {
             cf.size = FileSize::Unknown;
-            return Some(VFSCall::fallocate(fallocate {
+            return Some(VFSCall::fallocate{
                 path: Cow::Borrowed(cp),
                 length: fsize as i64,
                 offset: 0,
                 mode: 0,
-            })); // HACK, I don't think this is good.
+            }); // HACK, I don't think this is good.
         }
         if let Some(timespec) = cf.time.take() {
-            return Some(VFSCall::utimens(utimens {
+            return Some(VFSCall::utimens {
                 path: Cow::Borrowed(cp),
                 timespec,
-            }));
+            });
         }
         if let Some(xattrs) = &mut self.xattr_iter {
             use std::ffi::CStr;
             if let Some((k, v)) = xattrs.next() {
                 if let Some(value) = v {
-                    return Some(VFSCall::setxattr(setxattr {
+                    return Some(VFSCall::setxattr {
                         path: Cow::Borrowed(cp),
                         name: Cow::Borrowed(
                             CStr::from_bytes_with_nul(&k).unwrap(),
                         ),
                         value: Cow::Borrowed(value),
                         flags: 0,
-                    }));
+                    });
                 } else {
-                    return Some(VFSCall::removexattr(removexattr {
+                    return Some(VFSCall::removexattr {
                         path: Cow::Borrowed(cp),
                         name: Cow::Borrowed(
                             CStr::from_bytes_with_nul(&k).unwrap(),
                         ),
-                    }));
+                    });
                 }
             } else {
                 self.xattr_iter = None;
