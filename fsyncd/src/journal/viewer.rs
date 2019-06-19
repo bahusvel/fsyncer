@@ -7,7 +7,7 @@ use common::VFSCall;
 use error::Error;
 use journal::{
     BilogEntry, EntryContent, Journal, JournalConfig, JournalEntry,
-    JournalType, Snapshot, StoreEntry,
+    JournalType, StoreEntry,
 };
 use regex::Regex;
 use std::fmt::Debug;
@@ -186,34 +186,6 @@ pub fn viewer_main(matches: ArgMatches) {
             }
             JournalType::Bilog => replay::<BilogEntry>(&mut j, journal_matches),
             JournalType::Invalid => panic!("Invalid journal type"),
-        },
-        Some("flatten") => match j.journal_type() {
-            JournalType::Forward => {
-                let flatten_matches =
-                    journal_matches.subcommand_matches("flatten").unwrap();
-                let file = File::create(
-                    flatten_matches.value_of("snapshot-path").unwrap(),
-                )
-                .expect("Failed to open snapshot file");
-                let mut snapshot = Snapshot::new(file);
-                let iter = j.read_forward().filter_map(|e| {
-                    if let EntryContent::Payload(p) =
-                        e.expect("Failed to read journal").take_content()
-                    {
-                        Some(p)
-                    } else {
-                        None
-                    }
-                });
-                snapshot
-                    .merge_from(iter)
-                    .expect("Failed to process journal entries");
-                snapshot.finalize().expect("Failed to finalize snapshot");
-            }
-            _ => panic!(
-                "Journal flattening is not supported for {:?}",
-                j.journal_type()
-            ),
         },
         _ => unreachable!(),
     }

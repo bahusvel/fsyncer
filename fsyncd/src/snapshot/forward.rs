@@ -549,7 +549,7 @@ impl Snapshot {
     }
 }
 
-struct SnapshotApply<'a> {
+pub struct SnapshotApply<'a> {
     snapshot: &'a Snapshot,
     file_iter: hash_map::Iter<'a, PathBuf, File>,
     current_file: Option<(&'a PathBuf, File)>,

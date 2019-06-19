@@ -6,14 +6,12 @@ extern crate crc;
 mod bilog;
 mod filestore;
 mod forward;
-mod snapshot;
 mod store;
 mod viewer;
 
 pub use self::bilog::BilogEntry;
 pub use self::crc::crc32;
 pub use self::filestore::FileStore;
-pub use self::snapshot::Snapshot;
 pub use self::store::*;
 pub use self::viewer::viewer_main;
 
