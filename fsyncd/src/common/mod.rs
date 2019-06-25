@@ -16,7 +16,6 @@ metablock!(cfg(target_family="windows") {
 });
 
 pub use self::file_security::FileSecurity;
-use libc::int64_t;
 use libc::*;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
@@ -29,16 +28,16 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy, Hash)]
-pub struct enc_timespec {
-    pub high: int64_t,
-    pub low: int64_t,
+pub struct Timespec {
+    pub high: i64,
+    pub low: i64,
 }
 
-impl BitXor for enc_timespec {
+impl BitXor for Timespec {
     type Output = Self;
 
     fn bitxor(self, rhs: Self) -> Self {
-        enc_timespec {
+        Timespec {
             high: self.high ^ rhs.high,
             low: self.low ^ rhs.low,
         }
@@ -46,9 +45,9 @@ impl BitXor for enc_timespec {
 }
 
 #[cfg(target_family = "unix")]
-impl From<timespec> for enc_timespec {
+impl From<timespec> for Timespec {
     fn from(spec: timespec) -> Self {
-        enc_timespec {
+        Timespec {
             high: spec.tv_sec,
             low: spec.tv_nsec,
         }
@@ -56,7 +55,7 @@ impl From<timespec> for enc_timespec {
 }
 
 #[cfg(target_family = "unix")]
-impl Into<timespec> for enc_timespec {
+impl Into<timespec> for Timespec {
     fn into(self) -> timespec {
         timespec {
             tv_sec: self.high,
@@ -66,9 +65,9 @@ impl Into<timespec> for enc_timespec {
 }
 
 #[cfg(target_os = "windows")]
-impl From<FILETIME> for enc_timespec {
+impl From<FILETIME> for Timespec {
     fn from(spec: FILETIME) -> Self {
-        enc_timespec {
+        Timespec {
             high: spec.dwHighDateTime as i64,
             low: spec.dwLowDateTime as i64,
         }
@@ -76,7 +75,7 @@ impl From<FILETIME> for enc_timespec {
 }
 
 #[cfg(target_os = "windows")]
-impl Into<FILETIME> for enc_timespec {
+impl Into<FILETIME> for Timespec {
     fn into(self) -> FILETIME {
         FILETIME {
             dwHighDateTime: self.high as u32,
@@ -215,19 +214,76 @@ pub fn parse_human_size(s: &str) -> Option<usize> {
     })
 }
 
+pub fn zrle(buf: &mut [u8]) -> Option<&mut [u8]> {
+    let mut saved: usize = 0;
+    let mut i = 0;
+    while i < buf.len() {
+        let mut run: u8 = 0;
+        while i < buf.len() && buf[i] == 0 && run != 255 {
+            i += 1;
+            run += 1;
+        }
+        if run == 1 && saved == 0 {
+            return None;
+        }
+        saved = saved + run as usize - 2;
+        eprintln!("{} {}", i, saved);
+        buf[i - saved - 2] = 0;
+        buf[i - saved - 1] = run;
+        while i < buf.len() && buf[i] != 0 {
+            buf[i - saved] = buf[i];
+            i += 1;
+        }
+    }
+    let final_len = buf.len() - saved;
+    Some(&mut buf[..final_len])
+}
+
+#[test]
+fn test_zrle() {
+    let mut data = [0, 1, 0, 1, 0, 1, 2, 3, 0, 0];
+    eprintln!("{:?}", data);
+    eprintln!("{:?}", zrle(&mut data));
+}
+
+pub fn zrld(buf: &[u8], size_hint: Option<usize>) -> Vec<u8> {
+    let mut vec = if let Some(size) = size_hint {
+        Vec::with_capacity(size)
+    } else {
+        Vec::new()
+    };
+    let mut i = 0;
+    while i < buf.len() {
+        if buf[i] == 0 {
+            i += 2;
+            let num = buf[i - 1] as usize;
+            unsafe { vec.set_len(vec.len() + num) };
+            for j in vec.len() - num..vec.len() {
+                vec[j] = 0;
+            }
+        }
+        let old_i = i;
+        while i < buf.len() && buf[i] != 0 {
+            i += 1;
+        }
+        vec.extend_from_slice(&buf[old_i..i]);
+    }
+    vec
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum VFSCall<'a> {
     mknod {
         path: Cow<'a, Path>,
-        mode: uint32_t,
-        rdev: uint64_t,
+        mode: u32,
+        rdev: u64,
         security: FileSecurity,
     },
     mkdir {
         path: Cow<'a, Path>,
         security: FileSecurity,
-        mode: uint32_t, // Attributes on windows
+        mode: u32, // Attributes on windows
     },
     unlink {
         path: Cow<'a, Path>,
@@ -243,7 +299,7 @@ pub enum VFSCall<'a> {
     rename {
         from: Cow<'a, Path>,
         to: Cow<'a, Path>,
-        flags: uint32_t,
+        flags: u32,
     },
     link {
         from: Cow<'a, Path>,
@@ -252,33 +308,33 @@ pub enum VFSCall<'a> {
     },
     chmod {
         path: Cow<'a, Path>,
-        mode: uint32_t,
+        mode: u32,
     }, // On windows this represents attributes
     truncate {
         path: Cow<'a, Path>,
-        size: int64_t,
+        size: i64,
     },
     write {
         path: Cow<'a, Path>,
-        offset: int64_t,
+        offset: i64,
         buf: Cow<'a, [u8]>,
     },
     diff_write {
         path: Cow<'a, Path>,
-        offset: int64_t,
+        offset: i64,
         buf: Cow<'a, [u8]>,
     },
     fallocate {
         path: Cow<'a, Path>,
-        mode: int32_t,
-        offset: int64_t,
-        length: int64_t,
+        mode: i32,
+        offset: i64,
+        length: i64,
     },
     setxattr {
         path: Cow<'a, Path>,
         name: Cow<'a, CStr>,
         value: Cow<'a, [u8]>,
-        flags: int32_t,
+        flags: i32,
     },
     removexattr {
         path: Cow<'a, Path>,
@@ -286,14 +342,14 @@ pub enum VFSCall<'a> {
     },
     create {
         path: Cow<'a, Path>,
-        flags: int32_t,
+        flags: i32,
         security: FileSecurity,
-        mode: uint32_t, // Attributes on windows
+        mode: u32, // Attributes on windows
     },
     utimens {
         path: Cow<'a, Path>,
-        timespec: [enc_timespec; 3], /* 2 on POSIX last is 0, 3 on Windows
-                                      * (Created, Accessed, Written) */
+        timespec: [Timespec; 3], /* 2 on POSIX last is 0, 3 on Windows
+                                  * (Created, Accessed, Written) */
     },
     fsync {
         path: Cow<'a, Path>,
@@ -301,9 +357,9 @@ pub enum VFSCall<'a> {
     },
     truncating_write {
         path: Cow<'a, Path>,
-        offset: int64_t,
+        offset: i64,
         buf: Cow<'a, [u8]>,
-        length: int64_t,
+        length: i64,
     },
     security {
         path: Cow<'a, Path>,

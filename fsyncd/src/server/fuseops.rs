@@ -19,9 +19,9 @@ pub struct fuse_file_info {
     pub flags: c_int,
     pub fuse_flags: fuse_flags,
     pub pad: c_uint, // fuse developers are retards
-    pub fh: uint64_t,
-    pub lock_owner: uint64_t,
-    pub poll_events: uint32_t,
+    pub fh: u64,
+    pub lock_owner: u64,
+    pub poll_events: u32,
 }
 
 pub type fuse_readdir_flags = u32;

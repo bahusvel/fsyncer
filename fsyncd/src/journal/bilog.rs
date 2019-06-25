@@ -146,7 +146,7 @@ impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
             }
             VFSCall::unlink{path} => {
                 #[inline(always)]
-                fn is_type(mode: uint32_t, ftype: uint32_t) -> bool {
+                fn is_type(mode: u32, ftype: u32) -> bool {
                     mode & S_IFMT == ftype
                 }
                 let stbuf = trace!(translate_and_stat(&path, fspath));
@@ -437,8 +437,8 @@ impl Bilog for bilog_chmod<Xor> {
     }
 }
 path_bilog!(bilog_chown {
-    uid: uint32_t,
-    gid: uint32_t,
+    uid: u32,
+    gid: u32,
     checksum: u32
 });
 impl<S: BilogState> bilog_chown<S> {
@@ -507,7 +507,7 @@ impl Bilog for bilog_chown<Xor> {
     }
 }
 path_bilog!(bilog_utimens {
-    timespec: [enc_timespec; 3],
+    timespec: [Timespec; 3],
     checksum: u32
 });
 
@@ -574,15 +574,15 @@ impl Bilog for bilog_utimens<Xor> {
         Ok(set_csum!(bilog_utimens {
             path: path,
             timespec: [
-                enc_timespec {
+                Timespec {
                     high: stbuf.st_atime,
                     low: stbuf.st_atime_nsec,
                 },
-                enc_timespec {
+                Timespec {
                     high: stbuf.st_mtime,
                     low: stbuf.st_mtime_nsec,
                 },
-                enc_timespec { high: 0, low: 0 }
+                Timespec { high: 0, low: 0 }
             ],
             checksum: 0,
             s: PhantomData,
@@ -634,10 +634,10 @@ impl Bilog for bilog_rename<Xor> {
     }
 }
 path_bilog!(bilog_dir {
-    mode: uint32_t,
+    mode: u32,
     dir_exists: bool,
-    uid: uint32_t,
-    gid: uint32_t
+    uid: u32,
+    gid: u32
 });
 impl Bilog for bilog_dir<Xor> {
     type N = bilog_dir<New>;
@@ -713,8 +713,8 @@ bilog_entry!(bilog_symlink {
     from: PathBuf,
     to: PathBuf,
     to_exists: bool,
-    uid: uint32_t,
-    gid: uint32_t
+    uid: u32,
+    gid: u32
 });
 
 impl Bilog for bilog_symlink<Xor> {
@@ -800,8 +800,8 @@ bilog_entry!(bilog_link {
     from: PathBuf,
     to: PathBuf,
     to_exists: bool,
-    uid: uint32_t,
-    gid: uint32_t
+    uid: u32,
+    gid: u32
 });
 impl Bilog for bilog_link<Xor> {
     type N = bilog_link<New>;
@@ -889,11 +889,11 @@ impl Bilog for bilog_link<Xor> {
     }
 }
 path_bilog!(bilog_node {
-    mode: uint32_t,
-    rdev: uint64_t,
+    mode: u32,
+    rdev: u64,
     exists: bool,
-    uid: uint32_t,
-    gid: uint32_t
+    uid: u32,
+    gid: u32
 });
 impl Bilog for bilog_node<Xor> {
     type N = bilog_node<New>;
@@ -974,10 +974,10 @@ impl Bilog for bilog_node<Xor> {
 }
 
 path_bilog!(bilog_file {
-    mode: uint32_t,
+    mode: u32,
     exists: bool,
-    uid: uint32_t,
-    gid: uint32_t
+    uid: u32,
+    gid: u32
 });
 impl Bilog for bilog_file<Xor> {
     type N = bilog_file<New>;
@@ -1054,7 +1054,7 @@ impl Bilog for bilog_file<Xor> {
     }
 }
 path_bilog!( bilog_truncate {
-    size: int64_t,
+    size: i64,
     buf: Vec<u8>,
     checksum: u32
 });
@@ -1139,9 +1139,9 @@ impl Bilog for bilog_truncate<Xor> {
     }
 }
 path_bilog!(bilog_write {
-    offset: int64_t,
+    offset: i64,
     buf: Vec<u8>,
-    length: int64_t,
+    length: i64,
     checksum: u32
 });
 impl<S: BilogState> bilog_write<S> {
@@ -1381,7 +1381,7 @@ impl Bilog for bilog_xattr<Xor> {
         if len == -1 {
             let err = errno();
             let interr: i32 = err.into();
-            if interr == ENOATTR {
+            if interr == ENODATA {
                 return Ok(set_csum!(bilog_xattr {
                     path: path,
                     name: name,

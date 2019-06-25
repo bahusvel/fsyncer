@@ -132,10 +132,24 @@ where
             }
         }
 
-        iter_try!(self.journal.seek(self.header.head));
+        iter_try!(self.journal.file.read_exact_at(
+            &mut buf[..],
+            self.journal.file_off(self.header.head)
+        ));
+
+        let fsize = LittleEndian::read_u32(&buf);
+        let mut buf = Vec::with_capacity(fsize as usize);
+        unsafe { buf.set_len(fsize as usize) };
+
+        iter_try!(self.journal.file.read_exact_at(
+            &mut buf[..],
+            self.journal.file_off(self.header.head)
+        ));
+
+        //iter_try!(self.journal.seek(self.header.head));
 
         let entry: StoreEntry<T> =
-            iter_try!(deserialize_from(&mut self.journal.file)
+            iter_try!(deserialize(&buf)
                 .map_err(|e| io::Error::new(ErrorKind::Other, e)));
 
         // eprintln!(
@@ -478,52 +492,52 @@ impl Journal {
     }
 }
 
-#[test]
-fn journal_rw() {
-    fn inner() -> Result<(), Error> {
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open("test.fj")?;
-        f.set_len(1024 + *HEADER_SIZE)?;
-        let mut j = Journal::new(f, false)?;
-        for _ in 0..100 {
-            j.write_entry("Hello")?;
-        }
-        for e in j.read_reverse::<String>() {
-            eprintln!("{:?}", e?);
-        }
-        eprintln!("Header {:?}", j.header);
-        Ok(())
-    }
-    inner().unwrap();
-}
+// #[test]
+// fn journal_rw() {
+//     fn inner() -> Result<(), Error> {
+//         let f = OpenOptions::new()
+//             .read(true)
+//             .write(true)
+//             .create(true)
+//             .open("test.fj")?;
+//         f.set_len(1024 + *HEADER_SIZE)?;
+//         let mut j = Journal::new(f, false)?;
+//         for _ in 0..100 {
+//             j.write_entry("Hello")?;
+//         }
+//         for e in j.read_reverse::<String>() {
+//             eprintln!("{:?}", e?);
+//         }
+//         eprintln!("Header {:?}", j.header);
+//         Ok(())
+//     }
+//     inner().unwrap();
+// }
 
-#[test]
-fn journal_recover() {
-    fn inner() -> Result<(), Error> {
-        let f = File::open("test.fj")?;
-        let mut j = Journal::open(f, false)?;
-        eprintln!("{:?}", j.header);
-        Ok(())
-    }
+// #[test]
+// fn journal_recover() {
+//     fn inner() -> Result<(), Error> {
+//         let f = File::open("test.fj")?;
+//         let mut j = Journal::open(f, false)?;
+//         eprintln!("{:?}", j.header);
+//         Ok(())
+//     }
 
-    inner().unwrap();
-}
+//     inner().unwrap();
+// }
 
-#[bench]
-fn journal_write(b: &mut Bencher) {
-    fn inner() -> Result<Journal, Error> {
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open("test.fj")?;
-        f.set_len(1024 * 1024 * 1024)?;
-        Journal::new(f, false)
-    }
-    let buf = [1; 4197];
-    let mut j = inner().unwrap();
-    b.iter(|| j.write_entry(&buf[..]).expect("Write failed"));
-}
+// #[bench]
+// fn journal_write(b: &mut Bencher) {
+//     fn inner() -> Result<Journal, Error> {
+//         let f = OpenOptions::new()
+//             .read(true)
+//             .write(true)
+//             .create(true)
+//             .open("test.fj")?;
+//         f.set_len(1024 * 1024 * 1024)?;
+//         Journal::new(f, false)
+//     }
+//     let buf = [1; 4197];
+//     let mut j = inner().unwrap();
+//     b.iter(|| j.write_entry(&buf[..]).expect("Write failed"));
+// }

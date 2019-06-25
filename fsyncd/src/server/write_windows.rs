@@ -1,6 +1,6 @@
 use common::*;
 use error::{Error, FromError};
-use libc::uint32_t;
+use libc::u32;
 use server::{dokan::*, post_op, pre_op, SERVER_PATH, TRANSLATE_SIDS};
 use std::borrow::Cow;
 use std::fs::symlink_metadata;
@@ -467,7 +467,7 @@ pub unsafe extern "stdcall" fn MirrorMoveFile(
     let call = VFSCall::rename(rename {
         from: Cow::Owned(wstr_to_path(path)),
         to: Cow::Owned(wstr_to_path(new_name)),
-        flags: replace as uint32_t,
+        flags: replace as u32,
     });
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {

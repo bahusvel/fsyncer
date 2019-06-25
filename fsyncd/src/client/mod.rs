@@ -373,11 +373,11 @@ pub fn client_main(matches: ArgMatches) {
         );
     }
 
-    let client_path = Path::new(
+    let client_path = canonize_path(Path::new(
         client_matches
             .value_of("mount-path")
             .expect("Destination not specified"),
-    ).canonicalize()
+    ))
     .expect("Failed to normalize path");
 
     eprintln!("Calculating destination hash...");

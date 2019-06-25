@@ -46,7 +46,7 @@ impl<E: Display + Debug> Debug for Error<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "{:?} from: ", self.error)?;
         for t in self.trace.iter() {
-            write!(f, "{}::{} ", t.0, t.1)?;
+            write!(f, "{}:{} ", t.0, t.1)?;
         }
         Ok(())
     }

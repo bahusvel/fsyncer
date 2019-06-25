@@ -1,18 +1,26 @@
 use bincode::{deserialize_from, serialize_into, serialized_size};
 use common::*;
+use error::*;
 use std::collections::{btree_map, hash_map, BTreeMap, HashMap};
 use std::fs;
-use std::io::Error;
+use std::io;
+//use std::ops::Drop;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Block {
     location: u64,
     size: usize,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+// impl Drop for Block {
+//     fn drop(&mut self) {
+//         panic!("Block leaked {:?}", self);
+//     }
+// }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct DataList(BTreeMap<usize, Block>);
 
 impl DataList {
@@ -24,7 +32,7 @@ impl DataList {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 enum FileType {
     Invalid,
     Opened,
@@ -41,21 +49,21 @@ enum FileType {
     Moved(PathBuf),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 enum FileSize {
     Unknown,
     MoreThan(u64),
     Exactly(u64),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct File {
     uid: Option<u32>,
     gid: Option<u32>,
     mode: Option<u32>,
     size: FileSize,
     xattrs: Option<HashMap<Vec<u8>, Option<Vec<u8>>>>,
-    time: Option<[enc_timespec; 3]>,
+    time: Option<[Timespec; 3]>,
     ty: FileType,
     data: Option<DataList>,
 }
@@ -107,22 +115,32 @@ macro_rules! set_fields {
     };
 }
 
-fn move_file_range(
-    file: &mut fs::File,
-    from: u64,
-    to: u64,
-    size: usize,
-) -> Result<(), Error> {
-    use std::cmp::min;
-    const BUF_SIZE: usize = 16 * 1024;
-    let mut buf = [0; BUF_SIZE];
-    for offset in (from..from + size as u64).step_by(BUF_SIZE) {
-        let len = min(from as usize + size - offset as usize, BUF_SIZE);
-        file.read_exact_at(&mut buf[..len], offset)?;
-        file.write_all_at(&mut buf[..len], offset - from + to)?;
-    }
-    Ok(())
-}
+// #[cfg(target_os = "linux")]
+// fn move_file_range(
+//     file: &mut fs::File,
+//     from: u64,
+//     to: u64,
+//     size: usize,
+// ) -> Result<(), io::Error> {
+//     use std::os::unix::io::AsRawFd;
+//     let fd = file.as_raw_fd();
+//     // Splice is not for files, use copy_file_range
+//     let ret = unsafe {
+//         libc::splice(
+//             fd,
+//             &from as *const _ as _,
+//             fd,
+//             &to as *const _ as _,
+//             size,
+//             0,
+//         )
+//     };
+//     if ret == -1 {
+//         return Err(io::Error::last_os_error());
+//     }
+//     assert!(ret == size as isize);
+//     Ok(())
+// }
 
 impl Snapshot {
     pub fn new(to_file: fs::File) -> Self {
@@ -139,17 +157,19 @@ impl Snapshot {
             free_list: free_list,
         }
     }
-    pub fn open(mut from_file: fs::File) -> Result<Self, Error> {
-        use std::io::{ErrorKind, Seek, SeekFrom};
-        from_file.seek(SeekFrom::Start(0))?;
-        let header: Header = deserialize_from(&mut from_file)
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+    pub fn open(mut from_file: fs::File) -> Result<Self, Error<io::Error>> {
+        use std::io::{Seek, SeekFrom};
+        trace!(from_file.seek(SeekFrom::Start(0)));
+        let header: Header = trace!(deserialize_from(&mut from_file)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
 
-        from_file.seek(SeekFrom::Start(header.ft_offset))?;
-        let files = deserialize_from(&mut from_file)
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        trace!(from_file.seek(SeekFrom::Start(header.ft_offset)));
+        let files = trace!(deserialize_from(&mut from_file)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
         let mut free_list = BTreeMap::new();
         free_list.insert(header.ft_offset, std::usize::MAX);
+
+        //debug!(files);
 
         Ok(Snapshot {
             header,
@@ -158,56 +178,68 @@ impl Snapshot {
             files,
         })
     }
-    fn get_or_open(&mut self, path: &Path) -> &mut File {
-        self.files.entry(path.into()).or_insert(
-            set_fields!(File::default() => {
+    fn get_or_open<'a>(
+        files: &'a mut HashMap<PathBuf, File>,
+        path: &Path,
+    ) -> &'a mut File {
+        files
+            .entry(path.into())
+            .or_insert(set_fields!(File::default() => {
             .ty: FileType::Opened,
             .data: Some(DataList::new()),
-            }),
-        )
+            }))
     }
-    fn allocate(&mut self, size: usize) -> u64 {
-        let (offset, entry_size) = self
-            .free_list
+    fn allocate(free_list: &mut BTreeMap<u64, usize>, size: usize) -> Block {
+        let (location, entry_size) = free_list
             .iter()
             .find(|(_, v)| **v >= size)
             .map(|(k, v)| (*k, *v))
             .unwrap();
-        self.free_list.remove(&offset);
+        free_list.remove(&location);
         if entry_size > size {
-            self.free_list
-                .insert(offset + size as u64, entry_size - size);
+            free_list.insert(location + size as u64, entry_size - size);
         }
-        offset
+        Block { location, size }
     }
-    fn deallocate(&mut self, mut offset: u64, mut size: usize) {
-        let prev = self
-            .free_list
-            .range(..offset)
-            .next_back()
-            .map(|(k, v)| (*k, *v));
-        if prev.is_some() {
-            let prev = prev.unwrap();
+    fn deallocate(free_list: &mut BTreeMap<u64, usize>, block: Block) {
+        let Block {
+            location: mut offset,
+            mut size,
+        } = block;
+        std::mem::forget(block);
+        if let Some(prev) =
+            free_list.range(..offset).next_back().map(|(k, v)| (*k, *v))
+        {
             if prev.0 + prev.1 as u64 == offset {
-                self.free_list.remove(&prev.0);
+                free_list.remove(&prev.0);
                 offset = prev.0;
                 size += prev.1;
             }
         }
-        let next = self
-            .free_list
-            .range(offset + size as u64..)
-            .next()
-            .map(|(k, v)| (*k, *v));
-        if next.is_some() {
-            let next = next.unwrap();
-            if next.0 == offset + size as u64 {
-                self.free_list.remove(&next.0);
-                size += next.1;
-            }
+        if let Some(next_size) = free_list.get(&(offset + size as u64)).copied()
+        {
+            free_list.remove(&(offset + size as u64));
+            size += next_size;
         }
-        self.free_list.insert(offset, size);
+        free_list.insert(offset, size);
     }
+    fn move_file_range(
+        file: &mut fs::File,
+        from: u64,
+        to: u64,
+        size: usize,
+    ) -> Result<(), io::Error> {
+        use std::cmp::min;
+        const BUF_SIZE: usize = 16 * 1024;
+        let mut buf = [0; BUF_SIZE];
+        for offset in (from..from + size as u64).step_by(BUF_SIZE) {
+            let len = min(from as usize + size - offset as usize, BUF_SIZE);
+            file.read_exact_at(&mut buf[..len], offset)?;
+            file.write_all_at(&mut buf[..len], offset - from + to)?;
+        }
+        Ok(())
+    }
+
     /*
     This is the most complex part of the algorithm.
     There are a couple of parameters to optimise for:
@@ -221,56 +253,55 @@ impl Snapshot {
         path: &Path,
         offset: usize,
         buff: &[u8],
-    ) -> Result<(), Error> {
-        let file = self.get_or_open(&path);
-        //let data =
-
-        // Previous file data ranges that overlap this write, rust is very
-        // elegant here.
-        let overlaps: Vec<(usize, Block)> = file
+    ) -> Result<(), Error<io::Error>> {
+        let data = &mut Snapshot::get_or_open(&mut self.files, &path)
             .data
             .as_mut()
             .expect("Cannot encode write when there is no data")
-            .0
+            .0;
+
+        // Previous file data ranges that overlap this write, rust is very
+        // elegant here.
+        let overlaps: Vec<(usize, Block)> = data
             .range(..offset + buff.len())
             .rev()
             .take_while(|(k, v)| *k + v.size > offset)
-            .map(|(k, v)| (*k, *v))
+            .map(|(k, v)| (*k, v.clone()))
             .collect();
 
         if overlaps.len() == 0 {
             // No overlap simply allocate from free_list and write
-            let location = self.allocate(buff.len());
-            self.get_or_open(path).data.as_mut().unwrap().0.insert(
-                offset,
-                Block {
-                    location,
-                    size: buff.len(),
-                },
-            );
-            return self.serialised.write_all_at(buff, location as u64);
+            let block = Snapshot::allocate(&mut self.free_list, buff.len());
+            trace!(self.serialised.write_all_at(buff, block.location));
+            data.insert(offset, block);
+            return Ok(());
         }
-        let first = overlaps.first().unwrap();
-        let last = overlaps.last().unwrap();
+
         if overlaps.len() == 1
-            && first.0 <= offset
-            && first.1.size >= buff.len()
+            && overlaps[0].0 <= offset
+            && overlaps[0].1.size >= buff.len()
         {
             // This write fits completely into another write, just write the
             // data there
-            let location = first.1.location + (offset - first.0) as u64;
-            return self.serialised.write_all_at(buff, location as u64);
+            let location =
+                overlaps[0].1.location + (offset - overlaps[0].0) as u64;
+            for overlap in overlaps {
+                std::mem::forget(overlap)
+            }
+            return Ok(trace!(self
+                .serialised
+                .write_all_at(buff, location as u64)));
         }
-
-        eprintln!("Doing write compaction");
-
         // Need to defragment, defragmentation strategy is to copy and
         // deallocate overlaps
+
+        let first = overlaps.first().unwrap();
         let first_exclusive = if offset > first.0 {
             offset - first.0
         } else {
             0
         };
+        let last = overlaps.last().unwrap();
         let last_exclusive = if last.0 + last.1.size > offset + buff.len() {
             (last.0 + last.1.size) - (offset + buff.len())
         } else {
@@ -279,45 +310,44 @@ impl Snapshot {
         let need_space = first_exclusive + buff.len() + last_exclusive;
         // Allocation must happen first to avoid overwriting blocks if they are
         // out of order
-        let location = self.allocate(need_space);
+        let block = Snapshot::allocate(&mut self.free_list, need_space);
         if first_exclusive != 0 {
-            move_file_range(
+            trace!(Snapshot::move_file_range(
                 &mut self.serialised,
                 first.1.location,
-                location,
+                block.location,
                 first_exclusive,
-            )?;
+            ));
         }
-        self.serialised
-            .write_all_at(buff, location + first_exclusive as u64)?;
+        trace!(self
+            .serialised
+            .write_all_at(buff, block.location + first_exclusive as u64));
+
         if last_exclusive != 0 {
-            move_file_range(
+            trace!(Snapshot::move_file_range(
                 &mut self.serialised,
                 last.1.location + (last.1.size - last_exclusive) as u64,
-                location + (first_exclusive + buff.len()) as u64,
+                block.location + (first_exclusive + buff.len()) as u64,
                 last_exclusive,
-            )?;
+            ));
         }
-        let data_blocks = &mut self.get_or_open(path).data.as_mut().unwrap().0;
-        for overlap in overlaps.iter() {
-            data_blocks.remove(&overlap.0);
+        let logical_offset = std::cmp::min(first.0, offset);
+        for overlap in overlaps {
+            Snapshot::deallocate(
+                &mut self.free_list,
+                data.remove(&overlap.0).unwrap(),
+            );
+            std::mem::forget(overlap);
         }
-        data_blocks.insert(
-            first.0,
-            Block {
-                location,
-                size: need_space,
-            },
-        );
-        for overlap in overlaps.iter() {
-            self.deallocate(overlap.1.location, overlap.1.size);
-        }
-        Ok(())
+
+        data.insert(logical_offset, block);
+
+        return Ok(());
     }
     pub fn merge_from<'a, I: Iterator<Item = VFSCall<'a>>>(
         &mut self,
         iter: I,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error<io::Error>> {
         for call in iter {
             match call {
                 VFSCall::rename { from, to, .. } => {
@@ -328,7 +358,17 @@ impl Snapshot {
                             .ty: FileType::Moved(from.into_owned()),
                             .data: Some(DataList::new()),
                         }));
-                    self.files.insert(to.into_owned(), from_file);
+                    self.files
+                        .insert(to.into_owned(), from_file)
+                        .and_then(|f| f.data)
+                        .map_or({}, |d| {
+                            for (_, block) in d.0 {
+                                Snapshot::deallocate(
+                                    &mut self.free_list,
+                                    block,
+                                );
+                            }
+                        });
                 }
                 VFSCall::mknod {
                     path,
@@ -336,45 +376,54 @@ impl Snapshot {
                     rdev,
                     security: FileSecurity::Unix { uid, gid },
                 } => {
-                    self.files.insert(
-                        path.into_owned(),
-                        set_fields!(File::default() => {
-                            .uid: Some(uid),
-                            .gid: Some(gid),
-                            .mode: Some(mode),
-                            .ty: FileType::Special(rdev),
-                            .data: Some(DataList::new()),
-                        }),
-                    );
+                    assert!(self
+                        .files
+                        .insert(
+                            path.into_owned(),
+                            set_fields!(File::default() => {
+                                .uid: Some(uid),
+                                .gid: Some(gid),
+                                .mode: Some(mode),
+                                .ty: FileType::Special(rdev),
+                                .data: Some(DataList::new()),
+                            }),
+                        )
+                        .is_none());
                 }
                 VFSCall::mkdir {
                     path,
                     mode,
                     security: FileSecurity::Unix { uid, gid },
                 } => {
-                    self.files.insert(
-                        path.into_owned(),
-                        set_fields!(File::default() => {
-                            .uid: Some(uid),
-                            .gid: Some(gid),
-                            .mode: Some(mode),
-                            .ty: FileType::Directory,
-                        }),
-                    );
+                    assert!(self
+                        .files
+                        .insert(
+                            path.into_owned(),
+                            set_fields!(File::default() => {
+                                .uid: Some(uid),
+                                .gid: Some(gid),
+                                .mode: Some(mode),
+                                .ty: FileType::Directory,
+                            }),
+                        )
+                        .is_none());
                 }
                 VFSCall::symlink {
                     from,
                     to,
                     security: FileSecurity::Unix { uid, gid },
                 } => {
-                    self.files.insert(
-                        to.into_owned(),
-                        set_fields!(File::default() => {
-                            .uid: Some(uid),
-                            .gid: Some(gid),
-                            .ty: FileType::Symlink(from.into_owned()),
-                        }),
-                    );
+                    assert!(self
+                        .files
+                        .insert(
+                            to.into_owned(),
+                            set_fields!(File::default() => {
+                                .uid: Some(uid),
+                                .gid: Some(gid),
+                                .ty: FileType::Symlink(from.into_owned()),
+                            }),
+                        )
+                        .is_none());
                 }
                 VFSCall::link {
                     from,
@@ -390,15 +439,18 @@ impl Snapshot {
                             ))
                         })
                         .unwrap_or(DataList::new());
-                    self.files.insert(
-                        to.into_owned(),
-                        set_fields!(File::default() => {
-                            .uid: Some(uid),
-                            .gid: Some(gid),
-                            .ty: FileType::Hardlink(from.into_owned()),
-                            .data: Some(data),
-                        }),
-                    );
+                    assert!(self
+                        .files
+                        .insert(
+                            to.into_owned(),
+                            set_fields!(File::default() => {
+                                .uid: Some(uid),
+                                .gid: Some(gid),
+                                .ty: FileType::Hardlink(from.into_owned()),
+                                .data: Some(data),
+                            }),
+                        )
+                        .is_none());
                 }
                 VFSCall::create {
                     path,
@@ -417,39 +469,39 @@ impl Snapshot {
                         }),
                     );
                 }
-                VFSCall::unlink { path }
-                | VFSCall::rmdir { path } => {
+                VFSCall::unlink { path } | VFSCall::rmdir { path } => {
                     let file = self.files.remove(&path as &Path);
                     file.and_then(|f| f.data).map_or({}, |d| {
                         for (_, block) in d.0 {
-                            self.deallocate(block.location, block.size);
+                            Snapshot::deallocate(&mut self.free_list, block);
                         }
                     });
                 }
-                VFSCall::security{
+                VFSCall::security {
                     path,
                     security: FileSecurity::Unix { uid, gid },
                 } => {
-                    let file = self.get_or_open(&path);
+                    let file = Snapshot::get_or_open(&mut self.files, &path);
                     file.uid = Some(uid);
                     file.gid = Some(gid);
                 }
                 VFSCall::chmod { path, mode } => {
-                    self.get_or_open(&path).mode = Some(mode);
+                    Snapshot::get_or_open(&mut self.files, &path).mode =
+                        Some(mode);
                 }
                 VFSCall::truncate { path, size } => {
-                    let file = self.get_or_open(&path);
+                    //eprintln!("There was a truncate {}", size);
+                    let list = &mut self.free_list;
+                    let file = Snapshot::get_or_open(&mut self.files, &path);
                     file.size = FileSize::Exactly(size as u64);
-                    //let t: Vec<(u64, usize)> = Vec::new();
-                    let mut dealloc = Vec::new();
-                    if let Some(ref mut d) = file.data {
+                    if let Some(ref mut d) = file.data.as_mut() {
                         let delete: Vec<usize> =
                             d.0.range(size as usize..)
                                 .map(|(k, _)| *k)
                                 .collect();
                         for offset in delete {
                             let block = d.0.remove(&offset).unwrap();
-                            dealloc.push((block.location, block.size));
+                            Snapshot::deallocate(list, block);
                         }
                         d.0.iter_mut().next_back().map_or(
                             {},
@@ -457,19 +509,19 @@ impl Snapshot {
                                 if offset + block.size > size as usize {
                                     let dealloc_size =
                                         offset + block.size - size as usize;
-                                    dealloc.push((
-                                        block.location
-                                            + (block.size - dealloc_size)
-                                                as u64,
-                                        dealloc_size,
-                                    ));
+                                    Snapshot::deallocate(
+                                        list,
+                                        Block {
+                                            location: block.location
+                                                + (block.size - dealloc_size)
+                                                    as u64,
+                                            size: dealloc_size,
+                                        },
+                                    );
                                     block.size -= dealloc_size;
                                 }
                             },
                         );
-                    }
-                    for (offset, size) in dealloc {
-                        self.deallocate(offset, size);
                     }
                 }
                 VFSCall::fallocate {
@@ -478,7 +530,8 @@ impl Snapshot {
                     length,
                     ..
                 } => {
-                    let size = &mut self.get_or_open(&path).size;
+                    let size =
+                        &mut Snapshot::get_or_open(&mut self.files, &path).size;
                     let nsize = (offset + length) as u64;
                     // This is only valid for posix_fallocate which basically
                     // only extends the file.
@@ -500,7 +553,7 @@ impl Snapshot {
                 VFSCall::setxattr {
                     path, name, value, ..
                 } => {
-                    self.get_or_open(&path)
+                    Snapshot::get_or_open(&mut self.files, &path)
                         .xattrs
                         .get_or_insert(HashMap::new())
                         .insert(
@@ -509,15 +562,16 @@ impl Snapshot {
                         );
                 }
                 VFSCall::removexattr { path, name } => {
-                    self.get_or_open(&path)
+                    Snapshot::get_or_open(&mut self.files, &path)
                         .xattrs
                         .get_or_insert(HashMap::new())
                         .insert(name.to_bytes().into(), None);
                 }
                 VFSCall::utimens { path, timespec } => {
-                    self.get_or_open(&path).time = Some(timespec);
+                    Snapshot::get_or_open(&mut self.files, &path).time =
+                        Some(timespec);
                 }
-                VFSCall::fsync{..} => {} // fsync is not snapshotted
+                VFSCall::fsync { .. } => {} // fsync is not snapshotted
                 VFSCall::truncating_write { .. } => {
                     panic!("This is a bullshit vfscall")
                 }
@@ -526,16 +580,61 @@ impl Snapshot {
         }
         Ok(())
     }
-    pub fn finalize(mut self) -> Result<(), Error> {
-        use std::io::{ErrorKind, Seek, SeekFrom};
+    pub fn compact(&mut self) -> Result<(), Error<io::Error>> {
+        for (_, file) in self.files.iter_mut() {
+            let wasted_space: usize =
+                self.free_list.iter().rev().skip(1).map(|(_, v)| v).sum();
+            let end_of_data = *self.free_list.iter().next_back().unwrap().0;
+            if file.data.is_none() {
+                continue;
+            }
+            debug!(wasted_space, end_of_data);
+            for (_, block) in file.data.as_mut().unwrap().0.iter_mut() {
+                if block.location > end_of_data - wasted_space as u64 {
+                    let mut new_block =
+                        Snapshot::allocate(&mut self.free_list, block.size);
+                    //debug!(block.location, new_loc);
+                    if new_block.location > block.location {
+                        eprintln!("Entry would move up!");
+                        // Don't let blocks move up
+                        Snapshot::deallocate(&mut self.free_list, new_block);
+                        continue;
+                    }
+                    trace!(Snapshot::move_file_range(
+                        &mut self.serialised,
+                        block.location,
+                        new_block.location,
+                        block.size
+                    ));
+                    std::mem::swap(block, &mut new_block);
+                    Snapshot::deallocate(&mut self.free_list, new_block); // This block is now the old block
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn finalize(mut self) -> Result<(), Error<io::Error>> {
+        debug!(self.files);
+        debug!(self.files.iter().next().map(|(_, v)| v
+            .data
+            .as_ref()
+            .unwrap()
+            .0
+            .len()));
+        use std::io::{BufWriter, Seek, SeekFrom};
+        debug!(self.free_list);
+        trace!(self.compact());
+        debug!(self.free_list);
         let end_of_data = *self.free_list.iter().next_back().unwrap().0;
+        trace!(self.serialised.set_len(end_of_data));
         self.header.ft_offset = end_of_data;
-        self.serialised.seek(SeekFrom::Start(0))?;
-        serialize_into(&mut self.serialised, &self.header)
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
-        self.serialised.seek(SeekFrom::Start(end_of_data))?;
-        serialize_into(&mut self.serialised, &self.files)
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        trace!(self.serialised.seek(SeekFrom::Start(0)));
+        trace!(serialize_into(&mut self.serialised, &self.header)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
+        trace!(self.serialised.seek(SeekFrom::Start(end_of_data)));
+        let writer = BufWriter::new(&mut self.serialised);
+        trace!(serialize_into(writer, &self.files)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
         Ok(())
     }
     pub fn apply(&self) -> SnapshotApply {
@@ -579,6 +678,7 @@ impl<'a> Iterator for SnapshotApply<'a> {
                 self.data_iter = None;
             }
         }
+        //debug!(self.current_file);
         if self.current_file.is_none() {
             let (path, file) = self.file_iter.next()?;
             self.xattr_iter = file.xattrs.as_ref().map(|x| x.iter());
@@ -623,7 +723,7 @@ impl<'a> Iterator for SnapshotApply<'a> {
                     })
                 }
                 FileType::Symlink(from) => {
-                    return Some(VFSCall::symlink{
+                    return Some(VFSCall::symlink {
                         from: Cow::Owned(from),
                         to: Cow::Borrowed(cp),
                         security: FileSecurity::Unix {
@@ -659,7 +759,7 @@ impl<'a> Iterator for SnapshotApply<'a> {
             });
         }
         if let Some(mode) = cf.mode.take() {
-            return Some(VFSCall::chmod{
+            return Some(VFSCall::chmod {
                 path: Cow::Borrowed(cp),
                 mode,
             });
@@ -673,7 +773,7 @@ impl<'a> Iterator for SnapshotApply<'a> {
         }
         if let FileSize::MoreThan(fsize) = cf.size {
             cf.size = FileSize::Unknown;
-            return Some(VFSCall::fallocate{
+            return Some(VFSCall::fallocate {
                 path: Cow::Borrowed(cp),
                 length: fsize as i64,
                 offset: 0,
@@ -710,6 +810,7 @@ impl<'a> Iterator for SnapshotApply<'a> {
                 self.xattr_iter = None;
             }
         }
-        None
+        self.current_file = None;
+        self.next()
     }
 }

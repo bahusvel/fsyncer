@@ -62,7 +62,7 @@ pub unsafe extern "C" fn do_mkdir(path: *const c_char, mode: mode_t) -> c_int {
 
 pub unsafe extern "C" fn do_unlink(path: *const c_char) -> c_int {
     let real_path = trans_ppath!(path);
-    let call = VFSCall::unlink{
+    let call = VFSCall::unlink {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
     };
 
@@ -214,7 +214,7 @@ pub unsafe extern "C" fn do_truncate(
     size: off_t,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::truncate{
+    let call = VFSCall::truncate {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         size,
     };
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn do_write(
 ) -> c_int {
     use server::DIFF_WRITES;
     let cpath = CStr::from_ptr(path).to_path();
-    let new_buf = slice::from_raw_parts(buf, size);
+    let new_buf = slice::from_raw_parts_mut(buf as *mut u8, size);
     let call = if DIFF_WRITES {
         let file = std::fs::File::from_raw_fd((*fi).fh as c_int);
         use std::os::unix::fs::FileExt;
@@ -261,12 +261,21 @@ pub unsafe extern "C" fn do_write(
                 }
             }
             Ok(diff_len) => {
-                xor_buf(&mut old_buf[..diff_len], &new_buf[..diff_len]);
-                old_buf[diff_len..].copy_from_slice(&new_buf[diff_len..]);
-                VFSCall::diff_write{
+                xor_buf(&mut new_buf[..diff_len], &old_buf[..diff_len]);
+                let leading_zeroes =
+                    new_buf.iter().take_while(|i| **i == 0).count();
+                let trailing_zeroes = if diff_len == new_buf.len() {
+                    new_buf.iter().rev().take_while(|i| **i == 0).count()
+                } else {
+                    0 // Zeroes past the end of the file extend the file
+                };
+                VFSCall::diff_write {
                     path: Cow::Borrowed(cpath),
-                    buf: Cow::Owned(old_buf),
-                    offset,
+                    buf: Cow::Borrowed(
+                        &new_buf
+                            [leading_zeroes..new_buf.len() - trailing_zeroes],
+                    ),
+                    offset: offset + leading_zeroes as i64,
                 }
             }
         }
@@ -347,7 +356,7 @@ pub unsafe extern "C" fn do_removexattr(
     name: *const c_char,
 ) -> c_int {
     let real_path = trans_ppath!(path);
-    let call = VFSCall::removexattr{
+    let call = VFSCall::removexattr {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         name: Cow::Borrowed(CStr::from_ptr(name)),
     };
@@ -371,7 +380,7 @@ pub unsafe extern "C" fn do_create(
     let real_path = trans_ppath!(path);
     let context = fuse_get_context();
 
-    let call = VFSCall::create{
+    let call = VFSCall::create {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         mode,
         flags: (*fi).flags,
@@ -404,12 +413,12 @@ pub unsafe extern "C" fn do_utimens(
     ts: *const timespec,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let call = VFSCall::utimens{
+    let call = VFSCall::utimens {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
         timespec: [
             (*ts).into(),
             (*ts.offset(1)).into(),
-            enc_timespec { high: 0, low: 0 },
+            Timespec { high: 0, low: 0 },
         ],
     };
 

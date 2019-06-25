@@ -12,8 +12,8 @@ pub unsafe fn xmp_mknod(
     path: *const c_char,
     mode: mode_t,
     rdev: dev_t,
-    uid: uint32_t,
-    gid: uint32_t,
+    uid: u32,
+    gid: u32,
 ) -> c_int {
     let res = if mode & S_IFIFO == S_IFIFO {
         mkfifo(path, mode)
@@ -28,8 +28,8 @@ pub unsafe fn xmp_mknod(
 pub unsafe fn xmp_mkdir(
     path: *const c_char,
     mode: mode_t,
-    uid: uint32_t,
-    gid: uint32_t,
+    uid: u32,
+    gid: u32,
 ) -> c_int {
     if mkdir(path, mode) == -1 {
         return neg_errno();
@@ -51,8 +51,8 @@ pub unsafe fn xmp_rmdir(path: *const c_char) -> c_int {
 pub unsafe fn xmp_symlink(
     from: *const c_char,
     to: *const c_char,
-    uid: uint32_t,
-    gid: uint32_t,
+    uid: u32,
+    gid: u32,
 ) -> c_int {
     if symlink(from, to) == -1 {
         return neg_errno();
@@ -89,8 +89,8 @@ pub unsafe fn xmp_rename(
 pub unsafe fn xmp_link(
     from: *const c_char,
     to: *const c_char,
-    uid: uint32_t,
-    gid: uint32_t,
+    uid: u32,
+    gid: u32,
 ) -> c_int {
     if link(from, to) == -1 {
         return neg_errno();
@@ -229,8 +229,8 @@ pub unsafe fn xmp_create(
     mode: mode_t,
     fd: *mut c_int,
     flags: c_int,
-    uid: uint32_t,
-    gid: uint32_t,
+    uid: u32,
+    gid: u32,
 ) -> c_int {
     *fd = open(path, flags, mode);
     if *fd == -1 {

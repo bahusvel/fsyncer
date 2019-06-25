@@ -1,2 +1,5 @@
 [workspace]
 members = ["fsyncd", "dssc", "dokan", "iolimit"]
+
+[profile.release]
+debug = true

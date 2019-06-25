@@ -52,12 +52,12 @@ macro_rules! flagset {
 #[macro_export]
 macro_rules! debug {
     ($($e:expr),+) => {
-        #[cfg(debug_assertions)]
+        //#[cfg(debug_assertions)]
         #[allow(unused_unsafe)]
         {
             if unsafe {::DEBUG } {
                 $(
-                    print!(concat!(stringify!($e), "={:?} "), $e);
+                    eprint!(concat!(stringify!($e), "={:?} "), $e);
                 )*
                 eprintln!();
             }
@@ -330,8 +330,6 @@ fn main() {
                     SubCommand::with_name("replay")
                         .arg(
                             Arg::with_name("backing-store")
-                                .short("b")
-                                .long("backing-store")
                                 .help(
                                     "Specifies the directory to replay \
                                      journal to",
@@ -355,8 +353,6 @@ fn main() {
                 .subcommand(
                     SubCommand::with_name("apply").arg(
                         Arg::with_name("backing-store")
-                            .short("b")
-                            .long("backing-store")
                             .help(
                                 "Specifies the directory to replay journal to",
                             )

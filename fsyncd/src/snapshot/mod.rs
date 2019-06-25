@@ -1,8 +1,9 @@
 mod forward;
 
 pub use self::forward::Snapshot;
+use common::canonize_path;
 use journal::{EntryContent, Journal, JournalConfig, JournalType};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
@@ -11,19 +12,29 @@ pub fn snapshot_main(matches: ArgMatches) {
     let snapshot_matches = matches.subcommand_matches("snapshot").unwrap();
     let snapshot_path = snapshot_matches.value_of("snapshot-path").unwrap();
     let mut snapshot = if Path::new(snapshot_path).exists() {
-        let file =
-            File::create(snapshot_path).expect("Failed to open snapshot file");
-        Snapshot::open(file).expect("Failed to parse snapshot")
+        Snapshot::open(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(snapshot_path)
+                .expect("Failed to open snapshot file"),
+        )
+        .expect("Failed to parse snapshot")
     } else {
-        let file =
-            File::create(snapshot_path).expect("Failed to open snapshot file");
-        Snapshot::new(file)
+        Snapshot::new(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(snapshot_path)
+                .expect("Failed to open snapshot file"),
+        )
     };
     match snapshot_matches.subcommand_name() {
         Some("merge") => {
             let merge_matches =
                 snapshot_matches.subcommand_matches("merge").unwrap();
-            let journal_path = merge_matches.value_of("journal-path").unwrap();
+            let journal_path = merge_matches.value_of("with").unwrap();
             let f =
                 File::open(journal_path).expect("Failed to open journal file");
             let c = JournalConfig {
@@ -54,11 +65,19 @@ pub fn snapshot_main(matches: ArgMatches) {
             use std::io::Error;
             let apply_matches =
                 snapshot_matches.subcommand_matches("apply").unwrap();
-            let fs_path = apply_matches.value_of("backing-path").unwrap();
+            let fs_path = canonize_path(Path::new(
+                apply_matches.value_of("backing-store").unwrap(),
+            ))
+            .expect("Failed to get absolute path");
             for call in snapshot.apply() {
-                let res = unsafe { dispatch(&call, Path::new(fs_path)) };
+                let res = unsafe { dispatch(&call, &fs_path) };
                 if res < 0 {
-                    panic!("Failed to apply snapshot {:?} error {}({})", call, Error::from_raw_os_error(-res), res)
+                    panic!(
+                        "Failed to apply snapshot {:?} error {}({})",
+                        call,
+                        Error::from_raw_os_error(-res),
+                        res
+                    )
                 }
             }
         }
