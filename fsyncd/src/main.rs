@@ -28,6 +28,7 @@ extern crate serde;
 extern crate url;
 extern crate walkdir;
 extern crate zstd;
+extern crate crc;
 
 #[macro_use]
 pub mod error;

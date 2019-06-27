@@ -7,6 +7,7 @@ use std::io;
 //use std::ops::Drop;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Block {
@@ -29,6 +30,20 @@ impl DataList {
     }
     fn shared(other: &DataList) -> Self {
         DataList(other.0.clone())
+    }
+    fn find_gaps(&self) {
+        let mut last_end = 0;
+        for block in self.0.iter() {
+            if *block.0 != last_end {
+                eprintln!(
+                    "Gap {}-{} ({} bytes)!",
+                    last_end,
+                    block.0,
+                    block.0 - last_end
+                );
+            }
+            last_end = block.0 + block.1.size;
+        }
     }
 }
 
@@ -94,6 +109,9 @@ enum SnapshotType {
 struct Header {
     ty: SnapshotType,
     ft_offset: u64,
+    from: SystemTime,
+    to: SystemTime,
+    checksum: u32,
 }
 
 pub struct Snapshot {
@@ -142,11 +160,28 @@ macro_rules! set_fields {
 //     Ok(())
 // }
 
+fn hash_reader<R: io::Read>(mut reader: R) -> Result<u32, io::Error> {
+    use crc::crc32::{update, IEEE_TABLE};
+    let mut buffer = [0; 4096];
+    let mut digest = 0;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest = update(digest, &IEEE_TABLE, &buffer[..count]);
+    }
+    Ok(digest)
+}
+
 impl Snapshot {
     pub fn new(to_file: fs::File) -> Self {
         let header = Header {
             ty: SnapshotType::Forward,
             ft_offset: 0,
+            from: SystemTime::now(),
+            to: SystemTime::now(),
+            checksum: 0,
         };
         let mut free_list = BTreeMap::new();
         free_list.insert(serialized_size(&header).unwrap(), std::usize::MAX);
@@ -189,12 +224,28 @@ impl Snapshot {
             .data: Some(DataList::new()),
             }))
     }
-    fn allocate(free_list: &mut BTreeMap<u64, usize>, size: usize) -> Block {
-        let (location, entry_size) = free_list
-            .iter()
-            .find(|(_, v)| **v >= size)
-            .map(|(k, v)| (*k, *v))
-            .unwrap();
+    fn allocate(
+        free_list: &mut BTreeMap<u64, usize>,
+        size: usize,
+        hint: Option<u64>,
+    ) -> Block {
+        let (location, entry_size) = hint
+            .and_then(|hint| {
+                free_list
+                    .get(&hint)
+                    .filter(|v| **v >= size)
+                    .map(|v| (hint, *v))
+            })
+            .unwrap_or_else(|| {
+                let otherwise = free_list
+                    .iter()
+                    .find(|(_, v)| **v >= size)
+                    .map(|(k, v)| (*k, *v));
+                if otherwise.is_none() {
+                    debug!(free_list, size);
+                }
+                otherwise.unwrap()
+            });
         free_list.remove(&location);
         if entry_size > size {
             free_list.insert(location + size as u64, entry_size - size);
@@ -232,10 +283,10 @@ impl Snapshot {
         use std::cmp::min;
         const BUF_SIZE: usize = 16 * 1024;
         let mut buf = [0; BUF_SIZE];
-        for offset in (from..from + size as u64).step_by(BUF_SIZE) {
-            let len = min(from as usize + size - offset as usize, BUF_SIZE);
-            file.read_exact_at(&mut buf[..len], offset)?;
-            file.write_all_at(&mut buf[..len], offset - from + to)?;
+        for offset in (0..size).step_by(BUF_SIZE) {
+            let len = min(size - offset, BUF_SIZE);
+            file.read_exact_at(&mut buf[..len], from + offset as u64)?;
+            file.write_all_at(&mut buf[..len], to + offset as u64)?;
         }
         Ok(())
     }
@@ -262,7 +313,7 @@ impl Snapshot {
 
         // Previous file data ranges that overlap this write, rust is very
         // elegant here.
-        let overlaps: Vec<(usize, Block)> = data
+        let mut overlaps: Vec<(usize, Block)> = data
             .range(..offset + buff.len())
             .rev()
             .take_while(|(k, v)| *k + v.size > offset)
@@ -271,31 +322,53 @@ impl Snapshot {
 
         if overlaps.len() == 0 {
             // No overlap simply allocate from free_list and write
-            let block = Snapshot::allocate(&mut self.free_list, buff.len());
+            let block =
+                Snapshot::allocate(&mut self.free_list, buff.len(), None);
             trace!(self.serialised.write_all_at(buff, block.location));
             data.insert(offset, block);
             return Ok(());
         }
 
-        if overlaps.len() == 1
-            && overlaps[0].0 <= offset
-            && overlaps[0].1.size >= buff.len()
-        {
-            // This write fits completely into another write, just write the
-            // data there
-            let location =
-                overlaps[0].1.location + (offset - overlaps[0].0) as u64;
-            for overlap in overlaps {
-                std::mem::forget(overlap)
+        overlaps.reverse();
+
+        let first = overlaps.first().unwrap();
+        if overlaps.len() == 1 {
+            if first.0 <= offset && first.1.size >= buff.len() {
+                // This write fits completely into another write, just write the
+                // data there
+                let location = first.1.location + (offset - first.0) as u64;
+                // for overlap in overlaps {
+                //     std::mem::forget(overlap)
+                // }
+                return Ok(trace!(self
+                    .serialised
+                    .write_all_at(buff, location as u64)));
+            } else if first.0 < offset && first.0 + first.1.size >= offset {
+                /*This write is just after another write, possibly with some
+                overlap, attempt to allocate next to it to merge with last
+                block*/
+                let overlap_size = first.0 + first.1.size - offset;
+                let block = Snapshot::allocate(
+                    &mut self.free_list,
+                    buff.len() - overlap_size,
+                    Some(first.0 as u64 + first.1.size as u64),
+                );
+                if block.location == first.0 as u64 + first.1.size as u64 {
+                    trace!(self.serialised.write_all_at(
+                        &buff[overlap_size..],
+                        block.location - overlap_size as u64
+                    ));
+                    data.get_mut(&first.0).unwrap().size +=
+                        buff.len() - overlap_size;
+                    std::mem::forget(block);
+                    return Ok(());
+                } else {
+                    Snapshot::deallocate(&mut self.free_list, block);
+                }
             }
-            return Ok(trace!(self
-                .serialised
-                .write_all_at(buff, location as u64)));
         }
         // Need to defragment, defragmentation strategy is to copy and
         // deallocate overlaps
-
-        let first = overlaps.first().unwrap();
         let first_exclusive = if offset > first.0 {
             offset - first.0
         } else {
@@ -307,10 +380,23 @@ impl Snapshot {
         } else {
             0
         };
+
+        // if offset == 43253760 {
+        //     debug!(
+        //         offset,
+        //         overlaps,
+        //         buff.len(),
+        //         first,
+        //         last,
+        //         first_exclusive,
+        //         last_exclusive
+        //     );
+        // }
+
         let need_space = first_exclusive + buff.len() + last_exclusive;
         // Allocation must happen first to avoid overwriting blocks if they are
         // out of order
-        let block = Snapshot::allocate(&mut self.free_list, need_space);
+        let block = Snapshot::allocate(&mut self.free_list, need_space, None);
         if first_exclusive != 0 {
             trace!(Snapshot::move_file_range(
                 &mut self.serialised,
@@ -589,15 +675,29 @@ impl Snapshot {
                 continue;
             }
             debug!(wasted_space, end_of_data);
-            for (_, block) in file.data.as_mut().unwrap().0.iter_mut() {
+
+            let mut merged_blocks = DataList::new();
+            let mut run: (usize, Block) = (
+                0,
+                Block {
+                    location: 0,
+                    size: 0,
+                },
+            );
+
+            for (offset, block) in file.data.take().unwrap().0 {
                 if block.location > end_of_data - wasted_space as u64 {
-                    let mut new_block =
-                        Snapshot::allocate(&mut self.free_list, block.size);
+                    let new_block = Snapshot::allocate(
+                        &mut self.free_list,
+                        block.size,
+                        Some(run.1.location + run.1.size as u64),
+                    );
                     //debug!(block.location, new_loc);
                     if new_block.location > block.location {
                         eprintln!("Entry would move up!");
                         // Don't let blocks move up
                         Snapshot::deallocate(&mut self.free_list, new_block);
+                        merged_blocks.0.insert(offset, block);
                         continue;
                     }
                     trace!(Snapshot::move_file_range(
@@ -606,35 +706,67 @@ impl Snapshot {
                         new_block.location,
                         block.size
                     ));
-                    std::mem::swap(block, &mut new_block);
-                    Snapshot::deallocate(&mut self.free_list, new_block); // This block is now the old block
+                    if run.0 == 0 && run.1.location == 0 && run.1.size == 0 {
+                        run = (offset, new_block);
+                    } else if run.0 + run.1.size == offset
+                        && run.1.location + run.1.size as u64
+                            == new_block.location
+                    {
+                        run.1.size += block.size;
+                    } else {
+                        merged_blocks.0.insert(run.0, run.1);
+                        run = (offset, new_block)
+                    }
+                    Snapshot::deallocate(&mut self.free_list, block);
+                } else {
+                    merged_blocks.0.insert(offset, block);
                 }
             }
+            if run.0 != 0 {
+                merged_blocks.0.insert(run.0, run.1);
+            }
+            file.data = Some(merged_blocks);
         }
         Ok(())
     }
     pub fn finalize(mut self) -> Result<(), Error<io::Error>> {
-        debug!(self.files);
-        debug!(self.files.iter().next().map(|(_, v)| v
-            .data
-            .as_ref()
-            .unwrap()
-            .0
-            .len()));
         use std::io::{BufWriter, Seek, SeekFrom};
-        debug!(self.free_list);
+        // debug!(self.files);
+        // debug!(self.files.iter().next().map(|(_, v)| v
+        //     .data
+        //     .as_ref()
+        //     .unwrap()
+        //     .0
+        //     .len()));
+
+        // debug!(self.free_list);
         trace!(self.compact());
-        debug!(self.free_list);
+        // debug!(self.free_list);
+        //debug!(self.files);
+        for file in self.files.iter() {
+            if let Some(data) = &file.1.data {
+                data.find_gaps();
+            }
+        }
+
         let end_of_data = *self.free_list.iter().next_back().unwrap().0;
         trace!(self.serialised.set_len(end_of_data));
-        self.header.ft_offset = end_of_data;
-        trace!(self.serialised.seek(SeekFrom::Start(0)));
-        trace!(serialize_into(&mut self.serialised, &self.header)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
+
         trace!(self.serialised.seek(SeekFrom::Start(end_of_data)));
         let writer = BufWriter::new(&mut self.serialised);
         trace!(serialize_into(writer, &self.files)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
+
+        trace!(self
+            .serialised
+            .seek(SeekFrom::Start(serialized_size(&self.header).unwrap())));
+        self.header.checksum = trace!(hash_reader(&mut self.serialised));
+        self.header.ft_offset = end_of_data;
+
+        trace!(self.serialised.seek(SeekFrom::Start(0)));
+        trace!(serialize_into(&mut self.serialised, &self.header)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
+
         Ok(())
     }
     pub fn apply(&self) -> SnapshotApply {

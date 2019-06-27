@@ -3,7 +3,7 @@ extern crate chrono;
 use self::chrono::{DateTime, Local};
 use clap::ArgMatches;
 use client::dispatch;
-use common::VFSCall;
+use common::{VFSCall, canonize_path};
 use error::Error;
 use journal::{
     BilogEntry, EntryContent, Journal, JournalConfig, JournalEntry,
@@ -90,11 +90,11 @@ where
     };
 
     let replay_matches = journal_matches.subcommand_matches("replay").unwrap();
-    let path = Path::new(
+    let path = canonize_path(Path::new(
         replay_matches
             .value_of("backing-store")
             .expect("backing store is required for replay"),
-    );
+    )).expect("Failed to get absolute path");
     let filter = replay_matches
         .value_of("filter")
         .map(|f| Regex::new(f).expect("Filter is not a valid regex"));
@@ -108,10 +108,10 @@ where
                     e.apply(&path).expect("Failed to generate bilog vfscall");
                 e.describe(false);
                 //debug!(vfscall);
-                let res = unsafe { dispatch(&vfscall, path) };
+                let res = unsafe { dispatch(&vfscall, &path) };
                 if res < 0 {
                     panic!(
-                        "Failed to apply bilog entry {:?} error {}({})",
+                        "Failed to apply entry {:?} error {}({})",
                         e,
                         io::Error::from_raw_os_error(-res),
                         res,
