@@ -123,6 +123,12 @@ cmd: build dirs
 journal: build
 	$(FSYNCD_BIN) journal 
 
+snapshot_merge:
+	(rm test.fs || true) && RUST_BACKTRACE=1 cargo run --bin fsyncd --release -- --debug snapshot test.fs merge test.fj 2>out.txt
+
+snapshot_apply:
+	(rm -rf snapshot_test/* || true) && RUST_BACKTRACE=1 cargo run --bin fsyncd --release -- --debug snapshot test.fs apply snapshot_test
+
 flush_sync_perf: compile_tests
 	for i in `seq 10 10 1000`; do \
 		echo -n "$$i," ; \

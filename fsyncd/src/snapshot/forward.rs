@@ -31,20 +31,20 @@ impl DataList {
     fn shared(other: &DataList) -> Self {
         DataList(other.0.clone())
     }
-    fn find_gaps(&self) {
-        let mut last_end = 0;
-        for block in self.0.iter() {
-            if *block.0 != last_end {
-                eprintln!(
-                    "Gap {}-{} ({} bytes)!",
-                    last_end,
-                    block.0,
-                    block.0 - last_end
-                );
-            }
-            last_end = block.0 + block.1.size;
-        }
-    }
+    // fn find_gaps(&self) {
+    //     let mut last_end = 0;
+    //     for block in self.0.iter() {
+    //         if *block.0 != last_end {
+    //             eprintln!(
+    //                 "Gap {}-{} ({} bytes)!",
+    //                 last_end,
+    //                 block.0,
+    //                 block.0 - last_end
+    //             );
+    //         }
+    //         last_end = block.0 + block.1.size;
+    //     }
+    // }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -116,7 +116,7 @@ struct Header {
 
 pub struct Snapshot {
     header: Header,
-    files: HashMap<PathBuf, File>,
+    files: BTreeMap<PathBuf, File>,
     serialised: fs::File,
     free_list: BTreeMap<u64, usize>,
 }
@@ -187,7 +187,7 @@ impl Snapshot {
         free_list.insert(serialized_size(&header).unwrap(), std::usize::MAX);
         Snapshot {
             header,
-            files: HashMap::new(),
+            files: BTreeMap::new(),
             serialised: to_file,
             free_list: free_list,
         }
@@ -214,7 +214,7 @@ impl Snapshot {
         })
     }
     fn get_or_open<'a>(
-        files: &'a mut HashMap<PathBuf, File>,
+        files: &'a mut BTreeMap<PathBuf, File>,
         path: &Path,
     ) -> &'a mut File {
         files
@@ -305,6 +305,7 @@ impl Snapshot {
         offset: usize,
         buff: &[u8],
     ) -> Result<(), Error<io::Error>> {
+        const MERGE_LIMIT: usize = 1024 * 1024;
         let data = &mut Snapshot::get_or_open(&mut self.files, &path)
             .data
             .as_mut()
@@ -314,26 +315,18 @@ impl Snapshot {
         // Previous file data ranges that overlap this write, rust is very
         // elegant here.
         let mut overlaps: Vec<(usize, Block)> = data
-            .range(..offset + buff.len())
+            .range(..offset + buff.len() + 1)
             .rev()
-            .take_while(|(k, v)| *k + v.size > offset)
+            .take_while(|(k, v)| *k + v.size >= offset)
             .map(|(k, v)| (*k, v.clone()))
             .collect();
-
-        if overlaps.len() == 0 {
-            // No overlap simply allocate from free_list and write
-            let block =
-                Snapshot::allocate(&mut self.free_list, buff.len(), None);
-            trace!(self.serialised.write_all_at(buff, block.location));
-            data.insert(offset, block);
-            return Ok(());
-        }
-
         overlaps.reverse();
 
-        let first = overlaps.first().unwrap();
         if overlaps.len() == 1 {
-            if first.0 <= offset && first.1.size >= buff.len() {
+            let first = &overlaps[0];
+            if first.0 <= offset
+                && first.0 + first.1.size >= offset + buff.len()
+            {
                 // This write fits completely into another write, just write the
                 // data there
                 let location = first.1.location + (offset - first.0) as u64;
@@ -343,7 +336,7 @@ impl Snapshot {
                 return Ok(trace!(self
                     .serialised
                     .write_all_at(buff, location as u64)));
-            } else if first.0 < offset && first.0 + first.1.size >= offset {
+            } else if first.0 < offset {
                 /*This write is just after another write, possibly with some
                 overlap, attempt to allocate next to it to merge with last
                 block*/
@@ -351,15 +344,15 @@ impl Snapshot {
                 let block = Snapshot::allocate(
                     &mut self.free_list,
                     buff.len() - overlap_size,
-                    Some(first.0 as u64 + first.1.size as u64),
+                    Some(first.1.location + first.1.size as u64),
                 );
-                if block.location == first.0 as u64 + first.1.size as u64 {
+                if block.location == first.1.location + first.1.size as u64 {
+                    //debug!(path, first, block, offset, buff.len());
                     trace!(self.serialised.write_all_at(
-                        &buff[overlap_size..],
+                        buff,
                         block.location - overlap_size as u64
                     ));
-                    data.get_mut(&first.0).unwrap().size +=
-                        buff.len() - overlap_size;
+                    data.get_mut(&first.0).unwrap().size += block.size;
                     std::mem::forget(block);
                     return Ok(());
                 } else {
@@ -367,6 +360,29 @@ impl Snapshot {
                 }
             }
         }
+
+        // Don't do front and back merges if they are too big
+        if let Some(first) = overlaps.first() {
+            if first.1.size > MERGE_LIMIT && first.0 + first.1.size == offset {
+                overlaps.remove(0);
+            }
+        }
+        if let Some(last) = overlaps.last() {
+            if last.1.size > MERGE_LIMIT && last.0 == offset + buff.len() {
+                overlaps.remove(overlaps.len() - 1);
+            }
+        }
+
+        if overlaps.len() == 0 {
+            let block =
+                Snapshot::allocate(&mut self.free_list, buff.len(), None);
+            trace!(self.serialised.write_all_at(buff, block.location));
+            data.insert(offset, block);
+            return Ok(());
+        }
+
+        let first = overlaps.first().unwrap();
+        let last = overlaps.last().unwrap();
         // Need to defragment, defragmentation strategy is to copy and
         // deallocate overlaps
         let first_exclusive = if offset > first.0 {
@@ -374,7 +390,6 @@ impl Snapshot {
         } else {
             0
         };
-        let last = overlaps.last().unwrap();
         let last_exclusive = if last.0 + last.1.size > offset + buff.len() {
             (last.0 + last.1.size) - (offset + buff.len())
         } else {
@@ -668,14 +683,17 @@ impl Snapshot {
     }
     pub fn compact(&mut self) -> Result<(), Error<io::Error>> {
         for (_, file) in self.files.iter_mut() {
-            let wasted_space: usize =
-                self.free_list.iter().rev().skip(1).map(|(_, v)| v).sum();
-            let end_of_data = *self.free_list.iter().next_back().unwrap().0;
             if file.data.is_none() {
                 continue;
             }
-            debug!(wasted_space, end_of_data);
-
+            let wasted_space: usize =
+                self.free_list.iter().rev().skip(1).map(|(_, v)| v).sum();
+            let end_of_data = *self.free_list.iter().next_back().unwrap().0;
+            if (wasted_space as f64 / end_of_data as f64) < 0.05 {
+                // Don't bother with compaction of wasted space is below 5%
+                break;
+            }
+            //debug!(wasted_space, end_of_data);
             let mut merged_blocks = DataList::new();
             let mut run: (usize, Block) = (
                 0,
@@ -684,7 +702,6 @@ impl Snapshot {
                     size: 0,
                 },
             );
-
             for (offset, block) in file.data.take().unwrap().0 {
                 if block.location > end_of_data - wasted_space as u64 {
                     let new_block = Snapshot::allocate(
@@ -731,22 +748,26 @@ impl Snapshot {
     }
     pub fn finalize(mut self) -> Result<(), Error<io::Error>> {
         use std::io::{BufWriter, Seek, SeekFrom};
-        // debug!(self.files);
-        // debug!(self.files.iter().next().map(|(_, v)| v
-        //     .data
-        //     .as_ref()
-        //     .unwrap()
-        //     .0
-        //     .len()));
 
-        // debug!(self.free_list);
+        // for file in self.files.iter() {
+        //     if let Some(data) = &file.1.data {
+        //         if data.0.iter().count() > 99 {
+        //             eprintln!("Gaps for file {:?}", file);
+        //             data.find_gaps();
+        //         }
+        //     }
+        // }
+
         trace!(self.compact());
         // debug!(self.free_list);
         //debug!(self.files);
+
         for file in self.files.iter() {
-            if let Some(data) = &file.1.data {
-                data.find_gaps();
-            }
+            eprintln!(
+                "{:?} {} blocks",
+                file.0,
+                file.1.data.as_ref().map_or(0, |d| d.0.iter().count())
+            );
         }
 
         let end_of_data = *self.free_list.iter().next_back().unwrap().0;
@@ -771,7 +792,7 @@ impl Snapshot {
     }
     pub fn apply(&self) -> SnapshotApply {
         SnapshotApply {
-            snapshot: &self,
+            serialised: &self.serialised,
             file_iter: self.files.iter(),
             current_file: None,
             data_iter: None,
@@ -781,8 +802,8 @@ impl Snapshot {
 }
 
 pub struct SnapshotApply<'a> {
-    snapshot: &'a Snapshot,
-    file_iter: hash_map::Iter<'a, PathBuf, File>,
+    serialised: &'a fs::File,
+    file_iter: btree_map::Iter<'a, PathBuf, File>,
     current_file: Option<(&'a PathBuf, File)>,
     data_iter: Option<btree_map::Iter<'a, usize, Block>>,
     xattr_iter: Option<hash_map::Iter<'a, Vec<u8>, Option<Vec<u8>>>>,
@@ -797,8 +818,7 @@ impl<'a> Iterator for SnapshotApply<'a> {
                 let (cp, _) = self.current_file.as_ref().unwrap();
                 let mut buf = Vec::with_capacity(block.1.size);
                 unsafe { buf.set_len(block.1.size) };
-                self.snapshot
-                    .serialised
+                self.serialised
                     .read_exact_at(&mut buf, block.1.location)
                     .expect("Failed to read snapshot data");
                 return Some(VFSCall::write {
