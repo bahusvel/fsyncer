@@ -258,8 +258,9 @@ pub fn zrld(buf: &[u8], size_hint: Option<usize>) -> Vec<u8> {
             i += 2;
             let num = buf[i - 1] as usize;
             unsafe { vec.set_len(vec.len() + num) };
-            for j in vec.len() - num..vec.len() {
-                vec[j] = 0;
+            let len = vec.len();
+            for v in &mut vec[len - num..] {
+                *v = 0;
             }
         }
         let old_i = i;

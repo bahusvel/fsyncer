@@ -113,7 +113,7 @@ impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
         (call, fspath): (&VFSCall, &Path),
     ) -> Result<Self, Self::Error> {
         Ok(match call {
-            VFSCall::mknod{
+            VFSCall::mknod {
                 path,
                 mode,
                 rdev,
@@ -139,12 +139,12 @@ impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
                 dir_exists: true,
                 s: PhantomData,
             }),
-            VFSCall::rmdir{..} => {
+            VFSCall::rmdir { .. } => {
                 let new = bilog_dir::new(call);
                 let old = trace!(bilog_dir::old(Either::Left(&new), fspath));
                 BilogEntry::dir(bilog_dir::xor(&old, &new))
             }
-            VFSCall::unlink{path} => {
+            VFSCall::unlink { path } => {
                 #[inline(always)]
                 fn is_type(mode: u32, ftype: u32) -> bool {
                     mode & S_IFMT == ftype
@@ -201,12 +201,14 @@ impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
                 to_exists: true,
                 s: PhantomData,
             }),
-            VFSCall::rename{from, to, ..} => BilogEntry::rename(bilog_rename {
-                from: from.clone().into_owned(),
-                to: to.clone().into_owned(),
-                from_exists: true,
-                s: PhantomData,
-            }),
+            VFSCall::rename { from, to, .. } => {
+                BilogEntry::rename(bilog_rename {
+                    from: from.clone().into_owned(),
+                    to: to.clone().into_owned(),
+                    from_exists: true,
+                    s: PhantomData,
+                })
+            }
             VFSCall::link {
                 from,
                 to,
@@ -219,28 +221,28 @@ impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
                 gid: *gid,
                 s: PhantomData,
             }),
-            VFSCall::chmod{..} => {
+            VFSCall::chmod { .. } => {
                 let new = bilog_chmod::new(call);
                 let old = trace!(bilog_chmod::old(Either::Left(&new), fspath));
                 BilogEntry::chmod(bilog_chmod::xor(&old, &new))
             }
-            VFSCall::security{..} => {
+            VFSCall::security { .. } => {
                 let new = bilog_chown::new(call);
                 let old = trace!(bilog_chown::old(Either::Left(&new), fspath));
                 BilogEntry::chown(bilog_chown::xor(&old, &new))
             }
-            VFSCall::truncate{..} => {
+            VFSCall::truncate { .. } => {
                 let new = bilog_truncate::new(call);
                 let old =
                     trace!(bilog_truncate::old(Either::Left(&new), fspath));
                 BilogEntry::truncate(bilog_truncate::xor(&old, &new))
             }
-            VFSCall::write{..} => {
+            VFSCall::write { .. } => {
                 let new = bilog_write::new(call);
                 let old = trace!(bilog_write::old(Either::Left(&new), fspath));
                 BilogEntry::write(bilog_write::xor(&old, &new))
             }
-            VFSCall::setxattr{..} | VFSCall::removexattr{..} => {
+            VFSCall::setxattr { .. } | VFSCall::removexattr { .. } => {
                 let new = bilog_xattr::new(call);
                 let old = trace!(bilog_xattr::old(Either::Left(&new), fspath));
                 BilogEntry::xattr(bilog_xattr::xor(&old, &new))
@@ -258,15 +260,15 @@ impl TryFrom<(&VFSCall<'_>, &Path)> for BilogEntry {
                 gid: *gid,
                 s: PhantomData,
             }),
-            VFSCall::utimens{..} => {
+            VFSCall::utimens { .. } => {
                 let new = bilog_utimens::new(call);
                 let old =
                     trace!(bilog_utimens::old(Either::Left(&new), fspath));
                 BilogEntry::utimens(bilog_utimens::xor(&old, &new))
             }
             VFSCall::truncating_write { .. } => panic!("Not a fuse syscall"),
-            VFSCall::fallocate{..} => panic!("Not implemented"),
-            VFSCall::fsync{..} => panic!("Not an IO call"),
+            VFSCall::fallocate { .. } => panic!("Not implemented"),
+            VFSCall::fsync { .. } => panic!("Not an IO call"),
             _ => panic!("Not implemented"),
         })
     }
@@ -369,7 +371,7 @@ impl JournalEntry<'_> for BilogEntry {
                         trace!(FileStore::recover(fspath, *token, &path))
                     }
                     Err(e) => return Err(trace_err!(e)),
-                    Ok(_) => VFSCall::unlink{
+                    Ok(_) => VFSCall::unlink {
                         path: Cow::Borrowed(path),
                     },
                 }
@@ -392,7 +394,7 @@ impl Bilog for bilog_chmod<Xor> {
     type O = bilog_chmod<Old>;
     type X = bilog_chmod<Xor>;
     fn new(call: &VFSCall) -> Self::N {
-        if let VFSCall::chmod{path, mode} = call {
+        if let VFSCall::chmod { path, mode } = call {
             set_csum!(bilog_chmod {
                 path: path.clone().into_owned(),
                 mode: *mode,
@@ -521,10 +523,10 @@ impl Bilog for bilog_utimens<Xor> {
     type O = bilog_utimens<Old>;
     type X = bilog_utimens<Xor>;
     fn new(call: &VFSCall) -> Self::N {
-        if let VFSCall::utimens{path, timespec} = call {
+        if let VFSCall::utimens { path, timespec } = call {
             set_csum!(bilog_utimens {
                 path: path.clone().into_owned(),
-                timespec: timespec.clone(),
+                timespec: *timespec,
                 checksum: 0,
                 s: PhantomData,
             })
@@ -645,7 +647,7 @@ impl Bilog for bilog_dir<Xor> {
     type X = bilog_dir<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::rmdir{path} => bilog_dir {
+            VFSCall::rmdir { path } => bilog_dir {
                 path: path.clone().into_owned(),
                 mode: 0,
                 uid: 0,
@@ -723,7 +725,7 @@ impl Bilog for bilog_symlink<Xor> {
     type X = bilog_symlink<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::unlink{path} => bilog_symlink {
+            VFSCall::unlink { path } => bilog_symlink {
                 from: PathBuf::new(),
                 to: path.clone().into_owned(),
                 uid: 0,
@@ -809,7 +811,7 @@ impl Bilog for bilog_link<Xor> {
     type X = bilog_link<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::unlink{path} => bilog_link {
+            VFSCall::unlink { path } => bilog_link {
                 from: PathBuf::new(),
                 to: path.clone().into_owned(),
                 to_exists: true,
@@ -872,7 +874,7 @@ impl Bilog for bilog_link<Xor> {
                 if from.is_none() {
                     trace!(Err(io::Error::new(
                         ErrorKind::Other,
-                        "File is hardlinked outside fsyncer path",
+                        "Hardlink source could not be found",
                     )));
                 }
 
@@ -901,7 +903,7 @@ impl Bilog for bilog_node<Xor> {
     type X = bilog_node<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::unlink{path} => bilog_node {
+            VFSCall::unlink { path } => bilog_node {
                 path: path.clone().into_owned(),
                 mode: 0,
                 rdev: 0,
@@ -926,7 +928,7 @@ impl Bilog for bilog_node<Xor> {
     }
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String> {
         Ok(if o.exists {
-            VFSCall::unlink{
+            VFSCall::unlink {
                 path: Cow::Borrowed(&x.path),
             }
         } else {
@@ -985,7 +987,7 @@ impl Bilog for bilog_file<Xor> {
     type X = bilog_file<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::unlink{path} => bilog_file {
+            VFSCall::unlink { path } => bilog_file {
                 path: path.clone().into_owned(),
                 mode: 0,
                 exists: true,
@@ -1068,7 +1070,7 @@ impl Bilog for bilog_truncate<Xor> {
     type O = bilog_truncate<Old>;
     type X = bilog_truncate<Xor>;
     fn new(call: &VFSCall) -> Self::N {
-        if let VFSCall::truncate{path, size} = call {
+        if let VFSCall::truncate { path, size } = call {
             set_csum!(bilog_truncate {
                 path: path.clone().into_owned(),
                 size: *size,
@@ -1096,7 +1098,7 @@ impl Bilog for bilog_truncate<Xor> {
                 "Cannot apply bilog entry, state checksum mismatch",
             ));
         }
-        Ok(if nsize > o.size && x.buf.len() != 0 {
+        Ok(if nsize > o.size && x.buf.is_empty() {
             VFSCall::write {
                 path: Cow::Borrowed(&x.path),
                 offset: o.size,
@@ -1154,7 +1156,7 @@ impl Bilog for bilog_write<Xor> {
     type O = bilog_write<Old>;
     type X = bilog_write<Xor>;
     fn new(call: &VFSCall) -> Self::N {
-        if let VFSCall::write{path, offset, buf} = call {
+        if let VFSCall::write { path, offset, buf } = call {
             set_csum!(bilog_write {
                 path: path.clone().into_owned(),
                 offset: *offset,
@@ -1184,7 +1186,7 @@ impl Bilog for bilog_write<Xor> {
         }
     }
     fn apply<'a>(x: &'a Self::X, o: &Self::O) -> Result<VFSCall<'a>, String> {
-        let buf = if o.buf.len() == 0 {
+        let buf = if o.buf.is_empty() {
             //Appending write
             Cow::Borrowed(&x.buf[..])
         } else {
@@ -1207,9 +1209,9 @@ impl Bilog for bilog_write<Xor> {
         } else {
             // New length will be shorter
             VFSCall::truncating_write {
-                    path: Cow::Borrowed(&x.path),
-                    offset: x.offset,
-                    buf: buf,
+                path: Cow::Borrowed(&x.path),
+                offset: x.offset,
+                buf: buf,
                 length: o.length ^ x.length,
             }
         })
@@ -1263,7 +1265,9 @@ impl Bilog for bilog_xattr<Xor> {
     type X = bilog_xattr<Xor>;
     fn new(call: &VFSCall) -> Self::N {
         match call {
-            VFSCall::setxattr{path, name, value, ..} => set_csum!(bilog_xattr {
+            VFSCall::setxattr {
+                path, name, value, ..
+            } => set_csum!(bilog_xattr {
                 path: path.clone().into_owned(),
                 name: name.clone().into_owned(),
                 value: Some(value.clone().into_owned()),
@@ -1271,7 +1275,7 @@ impl Bilog for bilog_xattr<Xor> {
                 checksum: 0,
                 s: PhantomData,
             }),
-            VFSCall::removexattr{path, name} => set_csum!(bilog_xattr {
+            VFSCall::removexattr { path, name } => set_csum!(bilog_xattr {
                 path: path.clone().into_owned(),
                 name: name.clone().into_owned(),
                 value: None,
@@ -1290,29 +1294,26 @@ impl Bilog for bilog_xattr<Xor> {
                 .as_ref()
                 .expect("If new state removes the value, oldstate must have it")
                 .clone()
+        } else if o.value.is_none() {
+            // Newstate sets the value
+            remove = true;
+            n.value
+                .as_ref()
+                .expect(
+                    "If old state doesn't have the value, newstate must set it",
+                )
+                .clone()
         } else {
-            if o.value.is_none() {
-                // Newstate sets the value
-                remove = true;
-                n.value
-                    .as_ref()
-                    .expect(
-                        "If old state doesn't have the value, newstate must \
-                         set it",
-                    )
-                    .clone()
+            let ovalue = o.value.as_ref().unwrap();
+            let nvalue = n.value.as_ref().unwrap();
+            if ovalue.len() > nvalue.len() {
+                let mut buf = ovalue.clone();
+                xor_buf(&mut buf, nvalue);
+                buf
             } else {
-                let ovalue = o.value.as_ref().unwrap();
-                let nvalue = n.value.as_ref().unwrap();
-                if ovalue.len() > nvalue.len() {
-                    let mut buf = ovalue.clone();
-                    xor_buf(&mut buf, nvalue);
-                    buf
-                } else {
-                    let mut buf = nvalue.clone();
-                    xor_buf(&mut buf, ovalue);
-                    buf
-                }
+                let mut buf = nvalue.clone();
+                xor_buf(&mut buf, ovalue);
+                buf
             }
         };
         bilog_xattr {
@@ -1350,7 +1351,7 @@ impl Bilog for bilog_xattr<Xor> {
                 }
             }
         } else {
-            VFSCall::setxattr{
+            VFSCall::setxattr {
                 path: Cow::Borrowed(&x.path),
                 name: Cow::Borrowed(&x.name),
                 value: Cow::Borrowed(

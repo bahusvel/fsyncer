@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use net2::TcpStreamExt;
 use std::fs::File;
 use std::io::{Error, Read, Write};

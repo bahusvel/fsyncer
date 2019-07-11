@@ -84,7 +84,7 @@ pub unsafe fn xmp_rename(
 ) -> c_int {
     use server::CONST_RENAMEAT2;
     //eprintln!("Linux rename");
-    return -syscall(CONST_RENAMEAT2, -1, from, -1, to, flags) as i32;
+    -syscall(CONST_RENAMEAT2, -1, from, -1, to, flags) as i32
 }
 pub unsafe fn xmp_link(
     from: *const c_char,

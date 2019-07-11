@@ -27,6 +27,7 @@ endif
 
 ifeq ($(release), no)
 	FSYNCD_BIN = target/debug/fsyncd
+	FSYNCD_FLAGS += --debug
 	ifneq ($(UNAME), Linux)
 		FSYNCD_BIN = $(shell cygpath -wa target/debug/fsyncd.exe)
 	endif
@@ -57,9 +58,11 @@ ifneq ($(journal),)
 endif
 
 ifneq ($(url),)
-	FSYNCD_FLAGS += $(url)
+	SERVER_FLAGS += $(url)
+	CLIENT_FLAGS += $(url)
 else
-	FSYNCD_FLAGS += tcp://127.0.0.1:2323
+	SERVER_FLAGS += tcp://127.0.0.1:2323
+	CLIENT_FLAGS += tcp://127.0.0.1:2323
 endif
 
 ifneq ($(sync),)
@@ -102,7 +105,7 @@ build:
 
 fs: build dirs
 	fusermount3 -u -z test_src || true
-	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) server $(SERVER_FLAGS) test_src -- $(FUSE_FLAGS) $(END_CMD)
+	$(ENV) $(EXEC_CMD) $(FSYNCD_BIN) $(FSYNCD_FLAGS) server test_src $(SERVER_FLAGS) -- $(FUSE_FLAGS) $(END_CMD)
 	$(POST_CMD)
 
 client: build dirs

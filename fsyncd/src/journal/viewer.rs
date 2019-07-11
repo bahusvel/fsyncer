@@ -3,7 +3,7 @@ extern crate chrono;
 use self::chrono::{DateTime, Local};
 use clap::ArgMatches;
 use client::dispatch;
-use common::{VFSCall, canonize_path};
+use common::{canonize_path, VFSCall};
 use error::Error;
 use journal::{
     BilogEntry, EntryContent, Journal, JournalConfig, JournalEntry,
@@ -35,11 +35,9 @@ fn filter_journal<
                 EntryContent::Payload(e) => e
                     .affected_paths()
                     .iter()
-                    .filter(|p| {
+                    .any(|p| {
                         filter.as_ref().unwrap().is_match(p.to_str().unwrap())
-                    })
-                    .next()
-                    .is_some(),
+                    }),
                 EntryContent::Time(_) => return true,
             };
             (!has_match && inverse) || (has_match && !inverse)
@@ -94,7 +92,8 @@ where
         replay_matches
             .value_of("backing-store")
             .expect("backing store is required for replay"),
-    )).expect("Failed to get absolute path");
+    ))
+    .expect("Failed to get absolute path");
     let filter = replay_matches
         .value_of("filter")
         .map(|f| Regex::new(f).expect("Filter is not a valid regex"));

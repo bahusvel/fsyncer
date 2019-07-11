@@ -46,6 +46,8 @@ fn sleep_until(i: Instant) -> Instant {
 
 impl<W: Write> Write for LimitWriter<W> {
     fn write(&mut self, mut buf: &[u8]) -> Result<usize> {
+        #[allow(clippy::never_loop)]
+        // Loop is used as a goto
         loop {
             if self.bps == 0 {
                 // Unlimited

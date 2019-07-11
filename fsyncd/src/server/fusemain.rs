@@ -54,7 +54,7 @@ pub unsafe extern "C" fn xmp_init(
     (*cfg).auto_cache = 1;
     (*conn).max_write = 32 * 1024;
 
-    return ptr::null_mut();
+    ptr::null_mut()
 }
 
 pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
@@ -95,11 +95,11 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     ops.listxattr = Some(xmp_listxattr);
     //ops.ioctl = Some(xmp_ioctl);
 
-    return fuse_main_real(
+    fuse_main_real(
         argc,
         argv,
         &ops as *const _,
         size_of::<fuse_operations>(),
         ptr::null(),
-    );
+    )
 }

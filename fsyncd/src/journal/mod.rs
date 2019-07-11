@@ -6,6 +6,7 @@ extern crate crc;
 mod bilog;
 mod filestore;
 mod forward;
+mod mdata;
 mod store;
 mod viewer;
 
@@ -75,5 +76,5 @@ fn find_hardlink(
             return Ok(Some(e.path().to_path_buf()));
         }
     }
-    return Ok(None);
+    Ok(None)
 }

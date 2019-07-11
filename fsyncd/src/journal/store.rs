@@ -1,3 +1,4 @@
+#![allow(clippy::cast_lossless)]
 #[cfg(test)]
 extern crate test;
 
@@ -170,7 +171,7 @@ where
     type Item = Result<StoreEntry<T>, Error<io::Error>>;
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf: [u8; 4] = [0; 4];
-        if self.block_buffer.len() == 0 {
+        if self.block_buffer.is_empty() {
             if self.header.head == self.header.tail || self.header.tail == 0 {
                 return None;
             }
@@ -244,15 +245,13 @@ where
             if self.header.tail % BLOCK_SIZE != 0 {
                 // Partial block read
                 self.header.tail = align_down(self.header.tail, BLOCK_SIZE);
-            } else {
-                if self.header.tail != 0 && self.header.tail != self.header.head
-                {
-                    self.header.tail -= BLOCK_SIZE;
-                }
+            } else if self.header.tail != 0
+                && self.header.tail != self.header.head
+            {
+                self.header.tail -= BLOCK_SIZE;
             }
         }
-
-        self.block_buffer.pop().map(|v| Ok(v))
+        self.block_buffer.pop().map(Ok)
     }
 }
 
@@ -440,7 +439,8 @@ impl Journal {
             inner: EntryContent::Payload(entry),
             crc32: 0,
         };
-        Ok(trace!(self.write_inner(e)))
+        trace!(self.write_inner(e));
+        Ok(())
     }
 
     pub fn fstore(&mut self) -> &mut FileStore {
@@ -459,14 +459,16 @@ impl Journal {
     }
 
     pub fn flush(&mut self) -> Result<(), Error<io::Error>> {
-        Ok(trace!(self.file.flush()))
+        trace!(self.file.flush());
+        Ok(())
     }
 
     fn write_header(&mut self) -> Result<(), Error<io::Error>> {
         let mut buf = Vec::with_capacity(*HEADER_SIZE as usize);
         trace!(serialize_into(&mut buf, &self.header)
             .map_err(|e| io::Error::new(ErrorKind::Other, e)));
-        Ok(trace!(self.file.write_all_at(&buf[..], 0)))
+        trace!(self.file.write_all_at(&buf[..], 0));
+        Ok(())
     }
 
     pub fn read_forward<T>(&mut self) -> JournalIterator<Forward, T> {

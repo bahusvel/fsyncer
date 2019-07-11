@@ -286,7 +286,7 @@ impl Snapshot {
         for offset in (0..size).step_by(BUF_SIZE) {
             let len = min(size - offset, BUF_SIZE);
             file.read_exact_at(&mut buf[..len], from + offset as u64)?;
-            file.write_all_at(&mut buf[..len], to + offset as u64)?;
+            file.write_all_at(&buf[..len], to + offset as u64)?;
         }
         Ok(())
     }
@@ -315,7 +315,7 @@ impl Snapshot {
         // Previous file data ranges that overlap this write, rust is very
         // elegant here.
         let mut overlaps: Vec<(usize, Block)> = data
-            .range(..offset + buff.len() + 1)
+            .range(..=offset + buff.len())
             .rev()
             .take_while(|(k, v)| *k + v.size >= offset)
             .map(|(k, v)| (*k, v.clone()))
@@ -333,9 +333,10 @@ impl Snapshot {
                 // for overlap in overlaps {
                 //     std::mem::forget(overlap)
                 // }
-                return Ok(trace!(self
+                trace!(self
                     .serialised
-                    .write_all_at(buff, location as u64)));
+                    .write_all_at(buff, location as u64));
+                return Ok(());
             } else if first.0 < offset {
                 /*This write is just after another write, possibly with some
                 overlap, attempt to allocate next to it to merge with last
@@ -373,7 +374,7 @@ impl Snapshot {
             }
         }
 
-        if overlaps.len() == 0 {
+        if overlaps.is_empty() {
             let block =
                 Snapshot::allocate(&mut self.free_list, buff.len(), None);
             trace!(self.serialised.write_all_at(buff, block.location));
@@ -395,18 +396,6 @@ impl Snapshot {
         } else {
             0
         };
-
-        // if offset == 43253760 {
-        //     debug!(
-        //         offset,
-        //         overlaps,
-        //         buff.len(),
-        //         first,
-        //         last,
-        //         first_exclusive,
-        //         last_exclusive
-        //     );
-        // }
 
         let need_space = first_exclusive + buff.len() + last_exclusive;
         // Allocation must happen first to avoid overwriting blocks if they are
@@ -443,7 +432,7 @@ impl Snapshot {
 
         data.insert(logical_offset, block);
 
-        return Ok(());
+        Ok(())
     }
     pub fn merge_from<'a, I: Iterator<Item = VFSCall<'a>>>(
         &mut self,
@@ -462,7 +451,7 @@ impl Snapshot {
                     self.files
                         .insert(to.into_owned(), from_file)
                         .and_then(|f| f.data)
-                        .map_or({}, |d| {
+                        .map_or((), |d| {
                             for (_, block) in d.0 {
                                 Snapshot::deallocate(
                                     &mut self.free_list,
@@ -539,7 +528,7 @@ impl Snapshot {
                                 "Hardlink from is not a regualar file?",
                             ))
                         })
-                        .unwrap_or(DataList::new());
+                        .unwrap_or_else(DataList::new);
                     assert!(self
                         .files
                         .insert(
@@ -572,7 +561,7 @@ impl Snapshot {
                 }
                 VFSCall::unlink { path } | VFSCall::rmdir { path } => {
                     let file = self.files.remove(&path as &Path);
-                    file.and_then(|f| f.data).map_or({}, |d| {
+                    file.and_then(|f| f.data).map_or((), |d| {
                         for (_, block) in d.0 {
                             Snapshot::deallocate(&mut self.free_list, block);
                         }
@@ -605,7 +594,7 @@ impl Snapshot {
                             Snapshot::deallocate(list, block);
                         }
                         d.0.iter_mut().next_back().map_or(
-                            {},
+                            (),
                             |(offset, block)| {
                                 if offset + block.size > size as usize {
                                     let dealloc_size =

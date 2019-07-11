@@ -11,8 +11,8 @@ const FILESTORE_PATH: &str = ".fsyncer-deleted";
 
 #[derive(Clone, Copy)]
 enum DeletePolicy {
-    JournalBefore,
-    BeforeAffected,
+    // JournalBefore,
+    // BeforeAffected,
     FilestoreEntry,
 }
 
@@ -96,8 +96,7 @@ impl FileStore {
                 DeletePolicy::FilestoreEntry => {
                     let t = this.oldest_token;
                     trace!(this.delete(t));
-                }
-                _ => panic!("Not implemented"),
+                } //_ => panic!("Not implemented"),
             }
         }
 

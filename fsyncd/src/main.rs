@@ -2,7 +2,10 @@
 #![feature(const_string_new)]
 #![feature(test)]
 #![feature(concat_idents)]
-
+#![allow(unknown_lints)]
+#![warn(clippy::all)]
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::mutex_atomic)]
 #[cfg(feature = "profile")]
 extern crate cpuprofiler;
 #[cfg(feature = "profile")]
@@ -17,6 +20,7 @@ extern crate serde_derive;
 extern crate bincode;
 extern crate byteorder;
 extern crate clap;
+extern crate crc;
 extern crate dssc;
 extern crate either;
 extern crate errno;
@@ -28,7 +32,6 @@ extern crate serde;
 extern crate url;
 extern crate walkdir;
 extern crate zstd;
-extern crate crc;
 
 #[macro_use]
 pub mod error;

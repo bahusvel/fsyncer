@@ -171,7 +171,7 @@ pub unsafe extern "C" fn xmp_open(
         return neg_errno();
     }
     (*fi).fh = fd as u64;
-    return 0;
+    0
 }
 
 pub unsafe extern "C" fn xmp_readlink(

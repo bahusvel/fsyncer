@@ -21,7 +21,6 @@ use dssc::{chunkmap::ChunkMap, other::ZstdBlock, Compressor};
 use error::{Error, FromError};
 use net2::TcpStreamExt;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::{fs::File, mem::size_of, net::TcpStream, path::Path};
 use url::Url;
@@ -164,7 +163,7 @@ impl<I: Read + Send + 'static, O: Write + Send + 'static>
             read: reader,
             rcv_buf: Vec::with_capacity(32 * 1024),
             mode: self.init_msg.mode,
-            rt_comp: rt_comp,
+            rt_comp,
         })
     }
 }
@@ -217,7 +216,7 @@ impl<O: Write + Send + 'static> ServerConnection<O> {
     pub fn process_ops(
         &mut self,
         dispatch_threads: usize,
-        path: PathBuf,
+        path: &Path,
     ) -> Result<(), io::Error> {
         fn callback(call: &VFSCall, client_path: &Path) -> i32 {
             let e = unsafe { dispatch(call, client_path) };
@@ -242,7 +241,7 @@ impl<O: Write + Send + 'static> ServerConnection<O> {
             None
         };
 
-        let path = Arc::new(path.to_path_buf());
+        let path = path.to_path_buf();
 
         loop {
             match self.read_msg() {
@@ -258,7 +257,6 @@ impl<O: Write + Send + 'static> ServerConnection<O> {
                         || self.mode == ClientMode::MODE_FLUSHSYNC;
                     let write = self.write.clone();
                     let path = path.clone();
-
                     let f = move || {
                         let res = (callback)(&call, &path);
                         if need_ack {
@@ -268,7 +266,8 @@ impl<O: Write + Send + 'static> ServerConnection<O> {
                                     retcode: ClientAck::RetCode(res),
                                     tid,
                                 }),
-                            ).expect("Failed to send ack");
+                            )
+                            .expect("Failed to send ack");
                         }
                     };
                     if let Some(pool) = pool.as_ref() {
@@ -398,7 +397,8 @@ pub fn client_main(matches: ArgMatches) {
         init_msg.mode != ClientMode::MODE_ASYNC,
         buffer_size,
         init_msg,
-    ).expect("Failed to connect to client");
+    )
+    .expect("Failed to connect to client");
     if need_rsync {
         builder = builder
             .rsync(&client_path)
@@ -409,6 +409,6 @@ pub fn client_main(matches: ArgMatches) {
 
     eprintln!("Connected to {}", url);
     client
-        .process_ops(dispatch_threads, client_path)
+        .process_ops(dispatch_threads, &client_path)
         .expect("Stopped processing ops!");
 }

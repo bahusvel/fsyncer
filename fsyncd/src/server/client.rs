@@ -149,7 +149,7 @@ impl Client {
 
         let net = Arc::new(Mutex::new(ClientNetwork {
             write: writer,
-            rt_comp: rt_comp,
+            rt_comp,
             parked: HashMap::new(),
             status: ClientStatus::ALIVE,
         }));
@@ -162,7 +162,7 @@ impl Client {
         Ok(Client {
             mode: init.mode,
             comp: init.compress,
-            net: net,
+            net,
         })
     }
 
@@ -188,7 +188,8 @@ impl Client {
     }
 
     pub fn uncork(&self) -> Result<(), Error<io::Error>> {
-        Ok(trace!(self.send_msg(FsyncerMsg::Uncork, false)))
+        trace!(self.send_msg(FsyncerMsg::Uncork, false));
+        Ok(())
     }
 
     fn read_msg<R: Read>(read: &mut R) -> Result<FsyncerMsg, Error<io::Error>> {
@@ -202,10 +203,10 @@ impl Client {
             match Client::read_msg(&mut read) {
                 Ok(FsyncerMsg::AckCork(tid)) => {
                     let netlock = net.lock().unwrap();
-                    netlock.parked.get(&tid).map(|t| {
+                    if let Some(t) = netlock.parked.get(&tid) {
                         assert!(Arc::strong_count(t) <= 2);
                         t.notify(ClientAck::Ack)
-                    });
+                    }
                 }
                 Ok(FsyncerMsg::Ack(AckMsg { retcode: code, tid })) => {
                     let mut netlock = net.lock().unwrap();
@@ -214,7 +215,7 @@ impl Client {
                     let cond = netlock
                         .parked
                         .entry(tid)
-                        .or_insert(Arc::new(ClientResponse::new()));
+                        .or_insert_with(|| Arc::new(ClientResponse::new()));
                     assert!(Arc::strong_count(cond) <= 2);
                     cond.notify(code);
                 }
@@ -286,17 +287,14 @@ impl Client {
             Ok(())
         }
 
-        let size = trace!(
-            serialized_size(&msg_data)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-        ) as usize;
+        let size = trace!(serialized_size(&msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)))
+            as usize;
 
         let mut serbuf = Vec::with_capacity(size);
 
-        trace!(
-            serialize_into(&mut serbuf, &msg_data)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-        );
+        trace!(serialize_into(&mut serbuf, &msg_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)));
 
         //eprintln!("Sending {} {}", header.op_length, hbuf.len() + buf.len());
         let mut net = self.net.lock().unwrap();
@@ -316,7 +314,7 @@ impl Client {
             Some(
                 net.parked
                     .entry(tid)
-                    .or_insert(Arc::new(ClientResponse::new()))
+                    .or_insert_with(|| Arc::new(ClientResponse::new()))
                     .clone(),
             )
         } else {
