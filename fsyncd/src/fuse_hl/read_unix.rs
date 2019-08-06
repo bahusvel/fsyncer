@@ -1,8 +1,8 @@
-use common::{neg_errno, trans_cstr};
-use libc::*;
-use server::fuseops::{
+use super::fuseops::{
     fuse_bufvec, fuse_file_info, fuse_fill_dir_t, fuse_readdir_flags,
 };
+use common::{neg_errno, trans_cstr};
+use libc::*;
 use server::SERVER_PATH;
 use std::ffi::CStr;
 use std::ptr;
@@ -37,14 +37,12 @@ pub unsafe extern "C" fn xmp_opendir(
     path: *const c_char,
     fi: *mut fuse_file_info,
 ) -> c_int {
-    let mut d = Box::new(xmp_dirp {
+    let real_path = trans_ppath!(path);
+    let d = Box::new(xmp_dirp {
         offset: 0,
-        dp: ptr::null_mut(),
+        dp: opendir(real_path.as_ptr()),
         entry: ptr::null_mut(),
     });
-    let real_path = trans_ppath!(path);
-
-    d.dp = opendir(real_path.as_ptr());
     if d.dp.is_null() {
         return neg_errno();
     }
@@ -185,13 +183,6 @@ pub unsafe extern "C" fn xmp_readlink(
         return neg_errno();
     }
     *buf.offset(res) = 0;
-    0
-}
-pub unsafe extern "C" fn xmp_access(path: *const c_char, mask: c_int) -> c_int {
-    let real_path = trans_ppath!(path);
-    if access(real_path.as_ptr(), mask) == -1 {
-        return neg_errno();
-    }
     0
 }
 pub unsafe extern "C" fn xmp_getattr(

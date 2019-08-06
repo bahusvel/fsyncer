@@ -24,6 +24,7 @@ extern crate crc;
 extern crate dssc;
 extern crate either;
 extern crate errno;
+extern crate fuse;
 extern crate libc;
 extern crate lz4;
 extern crate net2;
@@ -107,6 +108,8 @@ macro_rules! metablock {
 
 mod client;
 mod common;
+mod fuse_hl;
+mod fuse_ll;
 mod server;
 
 use std::process::exit;
@@ -120,7 +123,7 @@ use std::path::Path;
 metablock!(cfg(target_family = "unix") {
     mod journal;
     mod snapshot;
-    use server::display_fuse_help;
+    use fuse_hl::display_fuse_help;
     use journal::viewer_main;
     use snapshot::snapshot_main;
 });

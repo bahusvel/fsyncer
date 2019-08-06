@@ -1,8 +1,8 @@
+use super::fuse_get_context;
+use super::fuseops::fuse_file_info;
 use common::*;
 use either::Either;
 use libc::*;
-use server::fusemain::fuse_get_context;
-use server::fuseops::fuse_file_info;
 use server::{post_op, pre_op, SERVER_PATH};
 use std::borrow::Cow;
 use std::ffi::CStr;
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn do_chown(
 ) -> c_int {
     let call = VFSCall::security {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
-        security: FileSecurity::Unix { uid: uid, gid: gid },
+        security: FileSecurity::Unix { uid, gid },
     };
 
     let opref = pre_op(&call);
@@ -443,7 +443,7 @@ pub unsafe extern "C" fn do_fsync(
     debug!("fsync", (*fi).fuse_flags);
     let call = VFSCall::fsync {
         path: Cow::Borrowed(CStr::from_ptr(path).to_path()),
-        isdatasync: isdatasync,
+        isdatasync,
     };
     let opref = pre_op(&call);
     if let Some(r) = opref.ret {

@@ -1,19 +1,8 @@
 metablock!(cfg(target_family = "unix") {
-    macro_rules! trans_ppath {
-        ($path:expr) => {
-            trans_cstr(CStr::from_ptr($path), &SERVER_PATH.as_ref().unwrap())
-        };
-    }
-    mod fusemain;
-    mod fuseops;
-    mod read_unix;
-    mod write_unix;
-    use self::fusemain::fuse_main;
+    use fuse_hl::start_fuse;
     use journal::{BilogEntry, Journal, JournalConfig, JournalType};
-    use std::{env, ffi::CString};
+    use std::env;
     use std::fs::OpenOptions;
-    use libc::c_char;
-    pub use self::read_unix::CONST_RENAMEAT2;
     static mut JOURNAL: Option<Mutex<Journal>> = None;
     static mut JOURNAL_TYPE: JournalType = JournalType::Invalid;
     use std::os::unix::net::UnixListener;
@@ -26,7 +15,6 @@ metablock!(cfg(target_os = "windows") {
         };
     }
     extern crate dokan;
-    pub mod write_windows;
     #[no_mangle]
     pub unsafe extern "C" fn win_translate_path(buf: LPWSTR, path_len: ULONG, path: LPCWSTR) {
         use std::slice;
@@ -128,7 +116,7 @@ pub fn uncork_server() {
 }
 
 pub struct OpRef {
-    ret: Option<c_int>,
+    pub ret: Option<c_int>,
     waits: Vec<Arc<ClientResponse<ClientAck>>>,
 }
 
@@ -241,22 +229,6 @@ pub fn post_op(opref: OpRef, ret: i32) -> i32 {
         }
     }
     ret
-}
-
-#[cfg(target_family = "unix")]
-pub fn display_fuse_help() {
-    eprintln!("Fuse options, specify at the end, after --:");
-    let args = vec!["fsyncd", "--help"]
-        .into_iter()
-        .map(|arg| CString::new(arg).unwrap())
-        .collect::<Vec<CString>>();
-    // convert the strings to raw pointers
-    let c_args = args
-        .iter()
-        .map(|arg| arg.as_ptr())
-        .collect::<Vec<*const c_char>>();
-
-    unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
 }
 
 fn check_mount(path: &str) -> Result<bool, Error<io::Error>> {
@@ -557,26 +529,7 @@ pub fn server_main(matches: ArgMatches) -> Result<(), Error<io::Error>> {
 
     #[cfg(target_family = "unix")]
     {
-        // Fuse args parsing
-        let args = vec![
-            "fsyncd".to_string(),
-            String::from(
-                mount_path
-                    .to_str()
-                    .expect("Mount path is not a valid string"),
-            ),
-        ]
-        .into_iter()
-        .chain(env::args().skip_while(|v| v != "--").skip(1))
-        .map(|arg| CString::new(arg).unwrap())
-        .collect::<Vec<CString>>();
-        // convert the strings to raw pointers
-        let c_args = args
-            .iter()
-            .map(|arg| arg.as_ptr())
-            .collect::<Vec<*const c_char>>();
-
-        unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
+        start_fuse(&mount_path, env::args().skip_while(|v| v != "--").skip(1));
         Ok(())
     }
     #[cfg(target_os = "windows")]

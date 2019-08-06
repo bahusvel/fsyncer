@@ -1,10 +1,23 @@
+macro_rules! trans_ppath {
+    ($path:expr) => {
+        trans_cstr(CStr::from_ptr($path), &SERVER_PATH.as_ref().unwrap())
+    };
+}
+
+mod fuseops;
+mod read_unix;
+mod write_unix;
+pub use self::read_unix::CONST_RENAMEAT2;
+
+use self::fuseops::fuse_operations;
+use self::fuseops::{fuse_config, fuse_conn_info};
+use self::read_unix::*;
+use self::write_unix::*;
 use libc::*;
-use server::fuseops::fuse_operations;
-use server::fuseops::{fuse_config, fuse_conn_info};
-use server::read_unix::*;
-use server::write_unix::*;
 use std::mem::size_of;
 use std::ptr;
+use std::path::Path;
+use std::ffi::CString;
 
 #[link(name = "fsyncer", kind = "static")]
 #[link(name = "fuse3")]
@@ -57,7 +70,7 @@ pub unsafe extern "C" fn xmp_init(
     ptr::null_mut()
 }
 
-pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
+unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     let mut ops = fuse_operations::default();
     // Write ops
     ops.mknod = Some(do_mknod);
@@ -80,7 +93,6 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
     // Read ops
     ops.init = Some(xmp_init);
     ops.getattr = Some(xmp_getattr);
-    ops.access = Some(xmp_access);
     ops.readlink = Some(xmp_readlink);
     ops.opendir = Some(xmp_opendir);
     ops.readdir = Some(xmp_readdir);
@@ -102,4 +114,45 @@ pub unsafe fn fuse_main(argc: c_int, argv: *const *const c_char) -> c_int {
         size_of::<fuse_operations>(),
         ptr::null(),
     )
+}
+
+pub fn display_fuse_help() {
+    eprintln!("Fuse options, specify at the end, after --:");
+    let args = vec!["fsyncd", "--help"]
+        .into_iter()
+        .map(|arg| CString::new(arg).unwrap())
+        .collect::<Vec<CString>>();
+    // convert the strings to raw pointers
+    let c_args = args
+        .iter()
+        .map(|arg| arg.as_ptr())
+        .collect::<Vec<*const c_char>>();
+
+    unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
+}
+
+
+pub fn start_fuse<A: IntoIterator<Item=String>>(mount_path: &Path, extra_args: A){
+    // Fuse args parsing
+    let args = vec![
+        "fsyncd".to_string(),
+        String::from(
+            mount_path
+                .to_str()
+                .expect("Mount path is not a valid string"),
+        ),
+        "-o".to_string(),
+        "default_permissions".to_string(),
+    ]
+    .into_iter()
+    .chain(extra_args.into_iter())
+    .map(|arg| CString::new(arg).unwrap())
+    .collect::<Vec<CString>>();
+    // convert the strings to raw pointers
+    let c_args = args
+        .iter()
+        .map(|arg| arg.as_ptr())
+        .collect::<Vec<*const c_char>>();
+
+    unsafe { fuse_main(c_args.len() as c_int, c_args.as_ptr()) };
 }

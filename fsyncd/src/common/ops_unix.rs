@@ -82,7 +82,7 @@ pub unsafe fn xmp_rename(
     to: *const c_char,
     flags: c_uint,
 ) -> c_int {
-    use server::CONST_RENAMEAT2;
+    use fuse_hl::CONST_RENAMEAT2;
     //eprintln!("Linux rename");
     -syscall(CONST_RENAMEAT2, -1, from, -1, to, flags) as i32
 }
